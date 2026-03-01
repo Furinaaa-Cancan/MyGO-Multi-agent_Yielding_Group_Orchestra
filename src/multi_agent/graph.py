@@ -42,6 +42,7 @@ class GraphStats:
 
     def __init__(self):
         self._stats: dict[str, dict] = {}
+        self._retry_outcomes: list[dict] = []
 
     def record(self, node: str, duration_ms: int, success: bool) -> None:
         if node not in self._stats:
@@ -52,6 +53,10 @@ class GraphStats:
         if not success:
             s["errors"] += 1
 
+    def record_retry_outcome(self, retry_round: int, decision: str) -> None:
+        """Track retry effectiveness per round (DDI measurement, Nature 2025)."""
+        self._retry_outcomes.append({"round": retry_round, "decision": decision})
+
     def summary(self) -> dict[str, dict]:
         result = {}
         for node, s in self._stats.items():
@@ -61,6 +66,15 @@ class GraphStats:
                 "count": s["count"],
                 "avg_ms": round(avg),
                 "error_rate": round(error_rate, 3),
+            }
+        # Retry effectiveness metrics (DDI / Agentless cost tracking)
+        if self._retry_outcomes:
+            total_retries = len(self._retry_outcomes)
+            approves = sum(1 for r in self._retry_outcomes if r["decision"] == "approve")
+            result["_retry_effectiveness"] = {
+                "total_retries": total_retries,
+                "retry_success_rate": round(approves / total_retries, 3) if total_retries else 0,
+                "per_round": self._retry_outcomes,
             }
         return result
 
@@ -513,7 +527,7 @@ def _build_node_inner(state: WorkflowState) -> dict:
                 "conversation": [{"role": "orchestrator", "action": "timeout", "elapsed": int(elapsed), "t": time.time()}],
             }
 
-    # Validate builder output (light-weight)
+    # Validate builder output (structured output enforcement — Lanham 2026, ACL 2025)
     errors: list[str] = []
     if not isinstance(result, dict):
         errors.append("output must be a JSON object")
@@ -522,6 +536,11 @@ def _build_node_inner(state: WorkflowState) -> dict:
             errors.append("missing 'status' field")
         if "summary" not in result:
             errors.append("missing 'summary' field")
+        # Type-check optional but structurally important fields
+        if "changed_files" in result and not isinstance(result["changed_files"], list):
+            errors.append("'changed_files' must be a list")
+        if "check_results" in result and not isinstance(result["check_results"], dict):
+            errors.append("'check_results' must be a dict")
 
     if errors:
         return {
@@ -688,6 +707,19 @@ def _review_node_inner(state: WorkflowState) -> dict:
     except Exception:
         decision = result.get("decision", "reject")
 
+    # Empty feedback on reject/request_changes is actionless — force a fallback message
+    if decision in ("reject", "request_changes"):
+        feedback = result.get("feedback", "")
+        if not feedback or not feedback.strip():
+            _log.warning(
+                "Reviewer %s without feedback — injecting generic prompt.",
+                decision,
+            )
+            result["feedback"] = (
+                "Reviewer did not provide specific feedback. "
+                "Please re-examine your implementation against the done criteria."
+            )
+
     # Rubber-stamp detection (NeurIPS 2025, Za et al. — collusion-aware oversight):
     # If reviewer approves without reasoning or substantive summary, flag it.
     if decision == "approve":
@@ -755,6 +787,11 @@ def _decide_node_inner(state: WorkflowState) -> dict:
 
     reviewer_output = state.get("reviewer_output", {})
     decision = reviewer_output.get("decision", "reject")
+
+    # Track retry effectiveness (DDI measurement)
+    retry_count = state.get("retry_count", 0)
+    if retry_count > 0:
+        graph_stats.record_retry_outcome(retry_count, decision)
 
     if decision == "approve":
         final_entry = {"role": "orchestrator", "action": "approved", "t": time.time()}
