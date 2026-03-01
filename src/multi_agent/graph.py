@@ -1129,8 +1129,9 @@ _compiled_cache: dict[str, object] = {}
 
 
 def reset_graph() -> None:
-    """Clear compiled graph cache and connection pool. Used for testing."""
+    """Clear compiled graph cache, connection pool, and stats. Used for testing."""
     _compiled_cache.clear()
+    graph_stats.reset()
     with _conn_lock:
         for conn in _conn_pool.values():
             try:
