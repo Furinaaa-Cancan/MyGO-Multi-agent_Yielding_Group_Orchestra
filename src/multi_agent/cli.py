@@ -1306,9 +1306,15 @@ def export(task_id: str, fmt: str):
     result = {"task_id": task_id}
     if task_file.exists():
         import yaml
-        result["config"] = yaml.safe_load(task_file.read_text(encoding="utf-8")) or {}
+        try:
+            result["config"] = yaml.safe_load(task_file.read_text(encoding="utf-8")) or {}
+        except Exception:
+            result["config"] = {"_error": "corrupted YAML"}
     if history_file.exists():
-        result["conversation"] = _json.loads(history_file.read_text(encoding="utf-8"))
+        try:
+            result["conversation"] = _json.loads(history_file.read_text(encoding="utf-8"))
+        except Exception:
+            result["conversation"] = [{"_error": "corrupted JSON"}]
     else:
         click.echo(f"⚠️  未找到历史记录: {task_id}", err=True)
         result["conversation"] = []
