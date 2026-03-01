@@ -641,3 +641,107 @@ class TestAtomicDriverWrites:
         data = json.loads(outbox.read_text())
         assert data["status"] == "completed"
         assert not list(tmp_path.glob("*.tmp"))
+
+
+# ── R18 regression tests ─────────────────────────────────────────────
+
+
+class TestFormatPriorContextDeps:
+    """R18 E1: format_prior_context always includes dependency sub-task results."""
+
+    def test_dep_included_even_when_old(self):
+        from multi_agent.meta_graph import format_prior_context
+        results = [
+            {"sub_id": "setup-db", "summary": "created schema", "changed_files": ["db.sql"]},
+            {"sub_id": "api-routes", "summary": "added routes"},
+            {"sub_id": "api-tests", "summary": "added tests"},
+            {"sub_id": "api-docs", "summary": "wrote docs"},
+        ]
+        # Sub-task depends on "setup-db" which is result[0] — older than max_items=3
+        ctx = format_prior_context(results, max_items=3, dep_ids=["setup-db"])
+        assert "setup-db" in ctx
+        assert "[依赖]" in ctx
+        assert "db.sql" in ctx
+
+    def test_no_deps_falls_back_to_recent(self):
+        from multi_agent.meta_graph import format_prior_context
+        results = [
+            {"sub_id": "a", "summary": "done-a"},
+            {"sub_id": "b", "summary": "done-b"},
+            {"sub_id": "c", "summary": "done-c"},
+            {"sub_id": "d", "summary": "done-d"},
+        ]
+        ctx = format_prior_context(results, max_items=2, dep_ids=[])
+        assert "a" not in ctx  # too old
+        assert "c" in ctx
+        assert "d" in ctx
+
+    def test_dep_and_recent_deduplicated(self):
+        from multi_agent.meta_graph import format_prior_context
+        results = [
+            {"sub_id": "a", "summary": "done-a"},
+            {"sub_id": "b", "summary": "done-b"},
+        ]
+        # "b" is both a dep and recent — should appear only once
+        ctx = format_prior_context(results, max_items=3, dep_ids=["b"])
+        assert ctx.count("done-b") == 1
+
+    def test_empty_results(self):
+        from multi_agent.meta_graph import format_prior_context
+        assert format_prior_context([], dep_ids=["x"]) == ""
+
+
+class TestStructuredRetryFeedback:
+    """R18 E2: retry feedback uses structured sections instead of raw text."""
+
+    def test_retry_feedback_has_sections(self):
+        from multi_agent.graph import _decide_node_inner
+        state = {
+            "task_id": "task-struct-test",
+            "reviewer_output": {
+                "decision": "reject",
+                "feedback": "Code has bugs in line 42",
+                "summary": "needs fix",
+            },
+            "reviewer_id": "r1",
+            "builder_id": "b1",
+            "builder_output": {
+                "status": "completed",
+                "summary": "implemented",
+                "gate_warnings": ["lint failed"],
+            },
+            "conversation": [],
+            "retry_count": 0,
+            "retry_budget": 2,
+            "done_criteria": ["test"],
+        }
+        result = _decide_node_inner(state)
+        feedback = result["conversation"][0].get("feedback", "")
+        assert "## Reviewer Decision:" in feedback
+        assert "### Feedback" in feedback
+        assert "Code has bugs" in feedback
+        assert "### Quality Gate Warnings" in feedback
+        assert "lint failed" in feedback
+        assert "### Retry Status" in feedback
+
+    def test_retry_without_gate_warnings(self):
+        from multi_agent.graph import _decide_node_inner
+        state = {
+            "task_id": "task-no-gate-test",
+            "reviewer_output": {
+                "decision": "reject",
+                "feedback": "Needs refactoring",
+                "summary": "reject",
+            },
+            "reviewer_id": "r1",
+            "builder_id": "b1",
+            "builder_output": {"status": "completed", "summary": "done"},
+            "conversation": [],
+            "retry_count": 0,
+            "retry_budget": 2,
+            "done_criteria": ["test"],
+        }
+        result = _decide_node_inner(state)
+        feedback = result["conversation"][0].get("feedback", "")
+        assert "## Reviewer Decision:" in feedback
+        assert "Quality Gate Warnings" not in feedback

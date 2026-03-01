@@ -95,19 +95,45 @@ def generate_sub_task_id(parent_task_id: str, sub_id: str) -> str:
     return f"task-{h}"
 
 
-def format_prior_context(prior_results: list[dict], max_items: int = 3) -> str:
+def format_prior_context(
+    prior_results: list[dict],
+    max_items: int = 3,
+    dep_ids: list[str] | None = None,
+) -> str:
     """Format prior sub-task results into a readable context string.
 
-    Only includes the most recent `max_items` results to avoid context bloat.
+    E1 (MAST FM-5 information loss): Always includes results for dependency
+    sub-tasks even if they are older than the last ``max_items``. This prevents
+    critical context loss when sub-task N depends on sub-task 1's output but
+    only the most recent sub-tasks would otherwise appear.
+
     Returns empty string if no prior results.
     """
     if not prior_results:
         return ""
 
-    recent = prior_results[-max_items:]
+    dep_set = set(dep_ids or [])
+    recent_set = {pr.get("sub_id") for pr in prior_results[-max_items:]}
+    # Include: all dependency results + most recent max_items (deduplicated)
+    selected: list[dict] = []
+    seen: set[str] = set()
+    # Dependency results first (may be older)
+    for pr in prior_results:
+        sid = pr.get("sub_id", "")
+        if sid in dep_set and sid not in seen:
+            selected.append(pr)
+            seen.add(sid)
+    # Then recent results
+    for pr in prior_results[-max_items:]:
+        sid = pr.get("sub_id", "")
+        if sid not in seen:
+            selected.append(pr)
+            seen.add(sid)
+
     lines = ["已完成的相关子任务:"]
-    for pr in recent:
-        lines.append(f"  - {pr.get('sub_id', '?')}: {pr.get('summary', '?')}")
+    for pr in selected:
+        dep_marker = " [依赖]" if pr.get("sub_id", "") in dep_set else ""
+        lines.append(f"  - {pr.get('sub_id', '?')}{dep_marker}: {pr.get('summary', '?')}")
         changed = pr.get("changed_files", [])
         if changed:
             lines.append(f"    修改文件: {', '.join(changed)}")
@@ -132,8 +158,9 @@ def build_sub_task_state(
     """
     task_id = generate_sub_task_id(parent_task_id, sub_task.id)
 
-    # Build context from prior completed sub-tasks (max 3)
-    context = format_prior_context(prior_results or [])
+    # Build context from prior completed sub-tasks (max 3 recent + all deps)
+    # E1: Always include dependency results to prevent FM-5 information loss
+    context = format_prior_context(prior_results or [], dep_ids=list(sub_task.deps))
 
     requirement = sub_task.description
     if context:

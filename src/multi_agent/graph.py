@@ -1027,7 +1027,21 @@ def _decide_node_inner(state: WorkflowState) -> dict:
         return esc_result
 
     # Has budget → retry with feedback
-    feedback = reviewer_output.get("feedback", "")
+    raw_feedback = reviewer_output.get("feedback", "")
+
+    # E2: Structure retry feedback (FeedbackEval arXiv 2504.06939:
+    # structured feedback >> free-text for LLM comprehension).
+    decision_label = reviewer_output.get("decision", "reject")
+    sections = [f"## Reviewer Decision: {decision_label.upper()}"]
+    sections.append(f"### Feedback\n{raw_feedback}")
+    # Include gate warnings if present
+    prev_builder = state.get("builder_output")
+    if isinstance(prev_builder, dict):
+        gw = prev_builder.get("gate_warnings")
+        if gw:
+            sections.append(f"### Quality Gate Warnings\n" + "\n".join(f"- {w}" for w in gw))
+    sections.append(f"### Retry Status\nAttempt {retry_count}/{budget}")
+    feedback = "\n\n".join(sections)
 
     # DDI decay warning (Nature Sci Rep 2025, NeurIPS 2024 explore-exploit):
     # Debugging effectiveness decays 60-80% after 2-3 attempts.
@@ -1057,7 +1071,7 @@ def _decide_node_inner(state: WorkflowState) -> dict:
     retry_entry: dict[str, Any] = {
         "role": "orchestrator", "action": "retry", "feedback": feedback, "t": time.time(),
     }
-    prev_builder = state.get("builder_output")
+    # prev_builder already fetched above (E2 structured feedback)
     if isinstance(prev_builder, dict):
         changed = prev_builder.get("changed_files")
         if changed:
