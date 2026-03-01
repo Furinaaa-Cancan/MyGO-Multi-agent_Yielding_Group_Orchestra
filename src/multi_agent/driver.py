@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import shlex
 import shutil
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
 
@@ -128,9 +131,11 @@ def spawn_cli_agent(
     task_file = str(workspace_dir() / "TASK.md")
     outbox_file = str(outbox_dir() / f"{role}.json")
 
+    # D1: Shell-quote paths to prevent injection/breakage from spaces
+    # or metacharacters in project paths (OWASP command injection).
     cmd = command_template.format(
-        task_file=task_file,
-        outbox_file=outbox_file,
+        task_file=shlex.quote(task_file),
+        outbox_file=shlex.quote(outbox_file),
     )
 
     def _run():
@@ -204,6 +209,23 @@ def spawn_cli_agent(
     return t
 
 
+def _atomic_write_json(path: Path, data: dict) -> None:
+    """Write JSON atomically via temp file + os.replace (D3)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.replace(tmp, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def _try_extract_json(text: str, outbox_path: Path) -> None:
     """Try to find and extract a JSON object from CLI output text."""
     # Look for JSON between ```json ... ``` markers
@@ -212,10 +234,7 @@ def _try_extract_json(text: str, outbox_path: Path) -> None:
         try:
             data = json.loads(match.group(1))
             if isinstance(data, dict):
-                outbox_path.parent.mkdir(parents=True, exist_ok=True)
-                with outbox_path.open("w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
-                    f.write("\n")
+                _atomic_write_json(outbox_path, data)
                 return
         except json.JSONDecodeError:
             pass
@@ -224,18 +243,11 @@ def _try_extract_json(text: str, outbox_path: Path) -> None:
     try:
         data = json.loads(text.strip())
         if isinstance(data, dict):
-            outbox_path.parent.mkdir(parents=True, exist_ok=True)
-            with outbox_path.open("w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-                f.write("\n")
+            _atomic_write_json(outbox_path, data)
     except json.JSONDecodeError:
         pass
 
 
 def _write_error(outbox_file: str, error_msg: str) -> None:
     """Write an error marker to outbox so the graph can detect failure."""
-    path = Path(outbox_file)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        json.dump({"status": "error", "summary": error_msg}, f, indent=2)
-        f.write("\n")
+    _atomic_write_json(Path(outbox_file), {"status": "error", "summary": error_msg})

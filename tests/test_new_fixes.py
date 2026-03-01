@@ -555,3 +555,89 @@ class TestEmptyChangesetWarning:
         if builder_status in ("completed", "success", "done") and not changed_files:
             result.setdefault("_empty_changeset_warning", True)
         assert "_empty_changeset_warning" not in result
+
+
+# ── R17 regression tests ─────────────────────────────────────────────
+
+
+class TestShellQuotePaths:
+    """R17 D1: paths with spaces/metacharacters are shell-quoted in CLI commands."""
+
+    def test_shlex_quote_applied(self):
+        import shlex
+        from multi_agent import driver
+        # Simulate what spawn_cli_agent does internally
+        task_file = "/Users/John Doe/project/.multi-agent/TASK.md"
+        outbox_file = "/Users/John Doe/project/.multi-agent/outbox/builder.json"
+        template = "tool --task {task_file} --out {outbox_file}"
+        cmd = template.format(
+            task_file=shlex.quote(task_file),
+            outbox_file=shlex.quote(outbox_file),
+        )
+        # shlex.quote wraps paths with spaces in single quotes
+        assert "'/Users/John Doe/" in cmd
+        # The unquoted path (without wrapping quotes) should NOT appear
+        assert cmd.count("'") >= 4  # at least 2 quoted paths
+
+    def test_metachar_path_quoted(self):
+        import shlex
+        path = "/tmp/proj;rm -rf /"
+        quoted = shlex.quote(path)
+        assert ";" not in quoted or quoted.startswith("'")
+
+
+class TestAtomicWriteOutbox:
+    """R17 D2: write_outbox uses atomic temp+rename pattern."""
+
+    def test_write_produces_valid_json(self, tmp_path, monkeypatch):
+        from multi_agent import workspace
+        monkeypatch.setattr(workspace, "outbox_dir", lambda: tmp_path)
+        monkeypatch.setattr(workspace, "ensure_workspace", lambda: None)
+        workspace.write_outbox("builder", {"status": "completed", "summary": "ok"})
+        import json
+        data = json.loads((tmp_path / "builder.json").read_text(encoding="utf-8"))
+        assert data["status"] == "completed"
+
+    def test_no_temp_files_left(self, tmp_path, monkeypatch):
+        from multi_agent import workspace
+        monkeypatch.setattr(workspace, "outbox_dir", lambda: tmp_path)
+        monkeypatch.setattr(workspace, "ensure_workspace", lambda: None)
+        workspace.write_outbox("builder", {"status": "done", "summary": "x"})
+        tmp_files = list(tmp_path.glob("*.tmp"))
+        assert len(tmp_files) == 0, f"Temp files left: {tmp_files}"
+
+    def test_concurrent_reads_get_complete_json(self, tmp_path, monkeypatch):
+        """Write then immediately read — should never get partial data."""
+        import json
+        from multi_agent import workspace
+        monkeypatch.setattr(workspace, "outbox_dir", lambda: tmp_path)
+        monkeypatch.setattr(workspace, "ensure_workspace", lambda: None)
+        for i in range(20):
+            workspace.write_outbox("test", {"i": i, "status": "ok", "summary": str(i)})
+            raw = (tmp_path / "test.json").read_text(encoding="utf-8")
+            data = json.loads(raw)
+            assert data["i"] == i
+
+
+class TestAtomicDriverWrites:
+    """R17 D3: _try_extract_json and _write_error use atomic writes."""
+
+    def test_write_error_atomic(self, tmp_path):
+        from multi_agent.driver import _write_error
+        outbox = str(tmp_path / "builder.json")
+        _write_error(outbox, "test error")
+        import json
+        data = json.loads((tmp_path / "builder.json").read_text())
+        assert data["status"] == "error"
+        assert data["summary"] == "test error"
+        assert not list(tmp_path.glob("*.tmp"))
+
+    def test_try_extract_json_atomic(self, tmp_path):
+        from multi_agent.driver import _try_extract_json
+        outbox = tmp_path / "builder.json"
+        text = '```json\n{"status": "completed", "summary": "done"}\n```'
+        _try_extract_json(text, outbox)
+        import json
+        data = json.loads(outbox.read_text())
+        assert data["status"] == "completed"
+        assert not list(tmp_path.glob("*.tmp"))

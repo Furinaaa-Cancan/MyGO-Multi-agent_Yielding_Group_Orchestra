@@ -5,7 +5,9 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import os
 import shutil
+import tempfile
 import time
 from pathlib import Path
 
@@ -125,12 +127,25 @@ def read_outbox(agent_id: str, *, validate: bool = False) -> dict | None:
 
 @retry_file_op()
 def write_outbox(agent_id: str, data: dict) -> Path:
-    """Write agent output to outbox/{agent_id}.json."""
+    """Write agent output to outbox/{agent_id}.json.
+
+    D2: Uses atomic write (temp file + os.replace) to prevent the watcher
+    from reading partial JSON during write (TOCTOU race condition).
+    """
     ensure_workspace()
     path = outbox_dir() / f"{agent_id}.json"
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.write("\n")
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp", prefix=f".{agent_id}-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+        os.replace(tmp, str(path))  # atomic on POSIX
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     return path
 
 
