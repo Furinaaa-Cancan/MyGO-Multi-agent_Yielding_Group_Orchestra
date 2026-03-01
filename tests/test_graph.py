@@ -91,7 +91,7 @@ class TestDecideNode:
             retry_budget=2,
         )
         result = decide_node(state)
-        assert result["error"] == "BUDGET_EXHAUSTED"
+        assert result["error"].startswith("BUDGET_EXHAUSTED")
         assert result["final_status"] == "escalated"
         mock_archive.assert_called_once()
 
@@ -154,7 +154,7 @@ class TestDecideNodeRequestChanges:
         )
         result = decide_node(state)
         assert result["final_status"] == "escalated"
-        assert result["error"] == "BUDGET_EXHAUSTED"
+        assert result["error"].startswith("BUDGET_EXHAUSTED")
 
     @patch("multi_agent.graph.write_dashboard")
     def test_reject_consumes_budget(self, mock_dash):
@@ -1435,12 +1435,22 @@ class TestTrimConversationEdgeCases:
         # Non-string feedback should be silently skipped
         assert marker["key_feedback"] == []
 
-    def test_feedback_snippets_limited_to_three(self):
+    def test_feedback_keeps_all_retry_rc_snippets(self):
+        """All retry/request_changes feedback should be preserved (not capped at 3)."""
         conv = [{"role": "user", "action": "retry", "feedback": f"fb-{i}", "t": i}
                 for i in range(MAX_CONVERSATION_SIZE + 20)]
         result = trim_conversation(conv)
         marker = [e for e in result if e.get("action") == "trimmed"][0]
-        assert len(marker["key_feedback"]) <= 3
+        # All retry feedback from removed entries should be kept
+        assert len(marker["key_feedback"]) > 3
+
+    def test_feedback_excludes_non_retry_actions(self):
+        """Only retry/request_changes feedback is kept, not arbitrary actions."""
+        conv = [{"role": "user", "action": "assigned", "feedback": f"fb-{i}", "t": i}
+                for i in range(MAX_CONVERSATION_SIZE + 10)]
+        result = trim_conversation(conv)
+        marker = [e for e in result if e.get("action") == "trimmed"][0]
+        assert marker["key_feedback"] == []
 
 
 class TestDoWConstants:

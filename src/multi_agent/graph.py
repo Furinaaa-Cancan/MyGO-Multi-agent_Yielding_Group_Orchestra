@@ -147,15 +147,17 @@ def trim_conversation(conversation: list[dict]) -> list[dict]:
     keep_head = 5
     keep_tail = MAX_CONVERSATION_SIZE - keep_head - 1
     removed = conversation[keep_head:-keep_tail]
-    # Build lightweight summary of what was removed
+    # Build lightweight summary of what was removed.
+    # Keep ALL retry/request_changes feedback (not just 3) to prevent
+    # critical bug context loss (RepairAgent ICSE 2025, Redis 2026).
     action_counts: dict[str, int] = {}
     feedback_snippets: list[str] = []
     for e in removed:
         a = e.get("action", "unknown")
         action_counts[a] = action_counts.get(a, 0) + 1
         fb = e.get("feedback", "")
-        if fb and isinstance(fb, str) and len(feedback_snippets) < 3:
-            feedback_snippets.append(fb[:80])
+        if fb and isinstance(fb, str) and a in ("retry", "request_changes"):
+            feedback_snippets.append(fb[:120])
     summary_parts = [f"{a}×{c}" for a, c in action_counts.items()]
     trimmed_marker = {
         "role": "system", "action": "trimmed",
@@ -188,10 +190,13 @@ def save_state_snapshot(task_id: str, node_name: str, state: dict) -> None:
     except Exception:
         return
 
-    # Cleanup old snapshots
-    existing = sorted(snap_dir.glob(f"{task_id}-*.json"), key=lambda p: p.stat().st_mtime)
-    while len(existing) > MAX_SNAPSHOTS:
-        existing.pop(0).unlink(missing_ok=True)
+    # Cleanup old snapshots — sort by filename (embeds timestamp) for reliability
+    try:
+        existing = sorted(snap_dir.glob(f"{task_id}-*.json"), key=lambda p: p.name)
+        while len(existing) > MAX_SNAPSHOTS:
+            existing.pop(0).unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 # ── Event Hooks ──────────────────────────────────────────
@@ -526,10 +531,13 @@ def _build_node_inner(state: WorkflowState) -> dict:
         total_elapsed = time.time() - task_started
         if total_elapsed > MAX_TASK_DURATION_SEC:
             return {
-                "error": f"TOTAL_TIMEOUT: task running {int(total_elapsed)}s exceeds {MAX_TASK_DURATION_SEC}s limit",
+                "error": (f"TOTAL_TIMEOUT: task running {int(total_elapsed)}s exceeds "
+                          f"{MAX_TASK_DURATION_SEC}s limit (node=build, "
+                          f"agent={state.get('builder_id', '?')})"),
                 "final_status": "failed",
                 "conversation": [{"role": "orchestrator", "action": "total_timeout",
-                                  "elapsed": int(total_elapsed), "t": time.time()}],
+                                  "node": "build", "elapsed": int(total_elapsed),
+                                  "t": time.time()}],
             }
 
     builder_id = state.get("builder_id", "?")
@@ -707,9 +715,12 @@ def _review_node_inner(state: WorkflowState) -> dict:
         if total_elapsed > MAX_TASK_DURATION_SEC:
             return {
                 "reviewer_output": {"decision": "reject",
-                                    "feedback": f"TOTAL_TIMEOUT: task running {int(total_elapsed)}s exceeds limit"},
+                                    "feedback": (f"TOTAL_TIMEOUT: task running {int(total_elapsed)}s "
+                                                 f"exceeds limit (node=review, "
+                                                 f"agent={state.get('reviewer_id', '?')})")},
                 "conversation": [{"role": "orchestrator", "action": "total_timeout",
-                                  "elapsed": int(total_elapsed), "t": time.time()}],
+                                  "node": "review", "elapsed": int(total_elapsed),
+                                  "t": time.time()}],
             }
 
     reviewer_id = state.get("reviewer_id", "?")
@@ -924,7 +935,12 @@ def _decide_node_inner(state: WorkflowState) -> dict:
     budget = state.get("retry_budget", 2)
 
     if retry_count > budget:
-        final_entry = {"role": "orchestrator", "action": "escalated", "reason": "budget exhausted", "t": time.time()}
+        last_feedback = reviewer_output.get("feedback", "")
+        # Truncate for diagnostic summary (Auto-Diagnose, ICSE 2026 SEIP)
+        feedback_summary = (last_feedback[:200] + "…") if len(last_feedback) > 200 else last_feedback
+        final_entry = {"role": "orchestrator", "action": "escalated",
+                       "reason": "budget exhausted",
+                       "last_feedback": feedback_summary, "t": time.time()}
         full_convo = state.get("conversation", []) + [final_entry]
         write_dashboard(
             task_id=state["task_id"],
@@ -936,7 +952,7 @@ def _decide_node_inner(state: WorkflowState) -> dict:
         )
         archive_conversation(state["task_id"], full_convo)
         esc_result = {
-            "error": "BUDGET_EXHAUSTED",
+            "error": f"BUDGET_EXHAUSTED: {feedback_summary}" if feedback_summary else "BUDGET_EXHAUSTED",
             "retry_count": retry_count,
             "final_status": "escalated",
             "conversation": [final_entry],

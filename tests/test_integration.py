@@ -126,7 +126,7 @@ class TestBudgetExhausted:
              patch("multi_agent.graph.archive_conversation"):
             result = decide_node(state)
         assert result["final_status"] == "escalated"
-        assert result["error"] == "BUDGET_EXHAUSTED"
+        assert result["error"].startswith("BUDGET_EXHAUSTED")
 
 
 class TestBuildTimeout:
