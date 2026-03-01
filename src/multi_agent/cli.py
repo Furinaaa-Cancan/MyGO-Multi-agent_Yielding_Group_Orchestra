@@ -1140,6 +1140,7 @@ def init(force: bool):
 @handle_errors
 def render(requirement: str, skill: str, role: str, builder_output_file: str | None):
     """预览 prompt（不执行任何操作）."""
+    _validate_skill_id(skill)
     import json
     from multi_agent.contract import load_contract
     from multi_agent.prompt import render_builder_prompt, render_reviewer_prompt
