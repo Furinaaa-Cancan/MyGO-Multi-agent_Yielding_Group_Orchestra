@@ -103,6 +103,7 @@ def _make_config(task_id: str) -> dict:
 
 
 _SAFE_TASK_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
+_SAFE_SKILL_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 
 
 def _validate_task_id(task_id: str) -> str:
@@ -118,6 +119,17 @@ def _validate_task_id(task_id: str) -> str:
             param_hint="--task-id",
         )
     return task_id
+
+
+def _validate_skill_id(skill_id: str) -> str:
+    """Validate skill_id to prevent path traversal via --skill."""
+    if not _SAFE_SKILL_ID_RE.match(skill_id):
+        raise click.BadParameter(
+            f"Invalid skill_id: {skill_id!r}. "
+            f"Must match [a-zA-Z0-9][a-zA-Z0-9._-]{{0,63}}.",
+            param_hint="--skill",
+        )
+    return skill_id
 
 
 def _generate_task_id(requirement: str) -> str:
@@ -183,6 +195,7 @@ def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer
 
     if task_id:
         _validate_task_id(task_id)
+    _validate_skill_id(skill)
 
     # Task 6: Apply project config defaults (CLI flags override)
     proj = load_project_config()

@@ -282,6 +282,16 @@ class TestDuplicateSubTaskId:
         errors = validate_decompose_result(dr)
         assert any("duplicate" in e.lower() for e in errors)
 
+    def test_validate_skill_id_rejects_path_traversal(self):
+        from multi_agent.cli import _validate_skill_id
+        import click
+        for bad in ["../../etc", "../passwd", "a/b", "", " ", "a;rm"]:
+            with pytest.raises(click.BadParameter):
+                _validate_skill_id(bad)
+        # Valid skills accepted
+        assert _validate_skill_id("code-implement") == "code-implement"
+        assert _validate_skill_id("test-and-review") == "test-and-review"
+
     def test_agent_profile_rejects_path_traversal_id(self):
         from multi_agent.schema import AgentProfile
         import pytest as _pt
