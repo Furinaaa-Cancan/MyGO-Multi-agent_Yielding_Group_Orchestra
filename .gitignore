@@ -13,6 +13,12 @@ __pycache__/
 .multi-agent/outbox/
 .multi-agent/tasks/
 .multi-agent/history/
+.multi-agent/logs/
+.multi-agent/snapshots/
+.multi-agent/cache/
 .multi-agent/store.db
+.multi-agent/store.db-shm
+.multi-agent/store.db-wal
 .multi-agent/dashboard.md
 .multi-agent/TASK.md
+.multi-agent/lock
