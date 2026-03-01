@@ -134,6 +134,7 @@ def spawn_cli_agent(
     )
 
     def _run():
+        proc = None
         try:
             # Task 9: stream stderr in real-time instead of capture_output
             proc = subprocess.Popen(
@@ -144,18 +145,34 @@ def spawn_cli_agent(
                 stderr=subprocess.PIPE,
                 text=True,
             )
-            # Read stdout in a thread to avoid deadlock when both
-            # stdout and stderr pipes fill up (Python subprocess docs).
+            # Drain stdout and stderr in background threads to avoid deadlock
+            # when both pipes fill up (Python subprocess docs).
+            # Previous design blocked on _stream_stderr, making proc.wait(timeout)
+            # unreachable if the process hung producing infinite stderr.
             stdout_lines: list[str] = []
+            stderr_lines: list[str] = []
+
             def _drain_stdout():
                 if proc.stdout:
                     stdout_lines.append(proc.stdout.read())
+
+            def _drain_stderr():
+                stderr_lines.append(_stream_stderr(proc, agent_id, role))
+
             stdout_thread = threading.Thread(target=_drain_stdout, daemon=True)
+            stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
             stdout_thread.start()
-            stderr_text = _stream_stderr(proc, agent_id, role)
-            stdout_thread.join(timeout=timeout_sec)
-            stdout_text = stdout_lines[0] if stdout_lines else ""
+            stderr_thread.start()
+
+            # Wait for process with enforced timeout — this is now reachable
+            # regardless of how much stderr/stdout the process produces.
             proc.wait(timeout=timeout_sec)
+
+            # Give pipe-drain threads a short grace period to finish reading
+            stdout_thread.join(timeout=5)
+            stderr_thread.join(timeout=5)
+            stdout_text = stdout_lines[0] if stdout_lines else ""
+            stderr_text = stderr_lines[0] if stderr_lines else ""
 
             # If the CLI tool didn't write the outbox file itself,
             # try to extract JSON from stdout and write it
@@ -170,8 +187,9 @@ def spawn_cli_agent(
                 else:
                     _write_error(outbox_file, f"{agent_id} CLI produced no parseable JSON output")
         except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()  # reap zombie
+            if proc:
+                proc.kill()
+                proc.wait()  # reap zombie
             _write_error(outbox_file, f"{agent_id} CLI timed out after {timeout_sec}s")
         except Exception as e:
             _write_error(outbox_file, f"{agent_id} CLI error: {e}")

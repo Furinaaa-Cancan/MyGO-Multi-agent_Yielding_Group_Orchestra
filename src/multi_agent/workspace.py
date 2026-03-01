@@ -105,17 +105,21 @@ def read_outbox(agent_id: str, *, validate: bool = False) -> dict | None:
             text = path.read_text(encoding=enc)
             data = json.loads(text)
             if not isinstance(data, dict):
+                _log.warning("Outbox %s is not a JSON object (got %s), ignoring.", path, type(data).__name__)
                 return None
             if validate:
                 errors = validate_outbox_data(agent_id, data)
                 if errors:
+                    _log.warning("Outbox %s validation failed: %s", agent_id, "; ".join(errors))
                     return None
             return data
         except (UnicodeDecodeError, OSError):
             continue
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError) as exc:
+            _log.warning("Outbox %s JSON parse error (enc=%s): %s", path, enc, exc)
             continue
 
+    _log.warning("Outbox %s unreadable after trying all encodings.", path)
     return None
 
 

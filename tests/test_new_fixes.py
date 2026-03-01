@@ -353,3 +353,86 @@ class TestDuplicateSubTaskId:
         ])
         errors = validate_decompose_result(dr)
         assert any("circular" in e.lower() for e in errors)
+
+
+class TestLoadContractDefenseInDepth:
+    """R15 B1: load_contract validates skill_id to prevent path traversal
+    even when called programmatically (not via CLI)."""
+
+    def test_rejects_path_traversal(self):
+        import pytest
+        from multi_agent.contract import load_contract
+        with pytest.raises(ValueError, match="Invalid skill_id"):
+            load_contract("../../etc")
+
+    def test_rejects_slash(self):
+        import pytest
+        from multi_agent.contract import load_contract
+        with pytest.raises(ValueError, match="Invalid skill_id"):
+            load_contract("foo/bar")
+
+    def test_rejects_empty(self):
+        import pytest
+        from multi_agent.contract import load_contract
+        with pytest.raises(ValueError, match="Invalid skill_id"):
+            load_contract("")
+
+    def test_accepts_valid_skill_id(self, tmp_path):
+        """Valid skill_id passes validation (may fail on FileNotFoundError after)."""
+        import pytest
+        from multi_agent.contract import load_contract
+        with pytest.raises(FileNotFoundError):
+            load_contract("code-implement", base=tmp_path)
+
+    def test_accepts_dotted_skill_id(self, tmp_path):
+        """Dotted skill_ids like 'v2.code-impl' should pass validation."""
+        import pytest
+        from multi_agent.contract import load_contract
+        with pytest.raises(FileNotFoundError):
+            load_contract("v2.code-impl", base=tmp_path)
+
+
+class TestReadOutboxLogging:
+    """R15 B3: read_outbox logs warnings on validation failure and corrupt JSON."""
+
+    def test_corrupt_json_logs_warning(self, tmp_path, caplog, monkeypatch):
+        import logging
+        from multi_agent import workspace
+        monkeypatch.setattr(workspace, "outbox_dir", lambda: tmp_path)
+        (tmp_path / "builder.json").write_text("{invalid json", encoding="utf-8")
+        with caplog.at_level(logging.WARNING):
+            result = workspace.read_outbox("builder")
+        assert result is None
+        assert any("JSON parse error" in r.message for r in caplog.records)
+
+    def test_non_dict_logs_warning(self, tmp_path, caplog, monkeypatch):
+        import json, logging
+        from multi_agent import workspace
+        monkeypatch.setattr(workspace, "outbox_dir", lambda: tmp_path)
+        (tmp_path / "builder.json").write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+        with caplog.at_level(logging.WARNING):
+            result = workspace.read_outbox("builder")
+        assert result is None
+        assert any("not a JSON object" in r.message for r in caplog.records)
+
+    def test_validation_failure_logs_warning(self, tmp_path, caplog, monkeypatch):
+        import json, logging
+        from multi_agent import workspace
+        monkeypatch.setattr(workspace, "outbox_dir", lambda: tmp_path)
+        (tmp_path / "builder.json").write_text(json.dumps({"foo": "bar"}), encoding="utf-8")
+        with caplog.at_level(logging.WARNING):
+            result = workspace.read_outbox("builder", validate=True)
+        assert result is None
+        assert any("validation failed" in r.message for r in caplog.records)
+
+    def test_valid_outbox_no_warning(self, tmp_path, caplog, monkeypatch):
+        import json, logging
+        from multi_agent import workspace
+        monkeypatch.setattr(workspace, "outbox_dir", lambda: tmp_path)
+        (tmp_path / "builder.json").write_text(
+            json.dumps({"status": "completed", "summary": "done"}), encoding="utf-8"
+        )
+        with caplog.at_level(logging.WARNING):
+            result = workspace.read_outbox("builder", validate=True)
+        assert result is not None
+        assert not any("WARNING" in r.levelname for r in caplog.records)
