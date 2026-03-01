@@ -40,6 +40,34 @@
 }
 ```
 
+### 字段说明
+| 字段 | 说明 |
+|------|------|
+| status | `"completed"` = 任务完成; `"blocked"` = 遇到无法自行解决的阻碍 |
+| summary | 一句话概括做了什么（不超过 100 字） |
+| changed_files | 所有新增或修改的文件绝对路径列表 |
+| check_results | 每个 quality_gate 的检查结果: `"pass"` / `"fail"` / `"skip"` |
+| risks | 潜在风险列表，没有则为空数组 |
+| handoff_notes | 给 reviewer 的说明，便于审查 |
+
+### ✅ 好的输出示例
+```json
+{
+  "status": "completed",
+  "summary": "实现了 POST /users endpoint，包含参数校验和错误处理",
+  "changed_files": ["/src/routers/users.py", "/tests/test_users.py"],
+  "check_results": {"lint": "pass", "unit_test": "pass"},
+  "risks": ["未处理并发创建同名用户的情况"],
+  "handoff_notes": "新增了 10 个单元测试，覆盖正常和异常路径"
+}
+```
+
+### ❌ 常见错误
+- summary 写得太长或太模糊（如 "做完了"）
+- changed_files 遗漏了实际修改的文件
+- check_results 没有运行就填 "pass"
+- status 应该用 "blocked" 时却用了 "completed"
+
 ## 规则
 - 只做上述范围内的改动
 - 文件路径使用绝对路径
@@ -49,10 +77,19 @@
 
 ---
 
-## ⚠️ 重试 (第 {{ retry_count }} 次 / 共 {{ retry_budget }} 次)
+## ⚠️ 这是第 {{ retry_count }} 次重试 (共 {{ retry_budget }} 次机会)
 
-### 上一轮审查反馈
+### 上一轮审查反馈（完整）
 {{ retry_feedback }}
 
-请针对以上反馈修改后重新提交。
+{% if previous_summary %}
+### 上一次提交摘要
+{{ previous_summary }}
+{% endif %}
+
+### 重试策略
+- **只修改 reviewer 指出的问题**，不要重新实现整个功能
+- 逐条对照上面的反馈进行修改
+- 修改后重新运行质量检查
+- 在 summary 中说明针对哪些反馈做了什么修改
 {% endif %}

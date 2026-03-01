@@ -2,6 +2,7 @@
 
 import pytest
 from pathlib import Path
+from unittest.mock import patch
 
 from multi_agent.router import (
     load_agents, eligible_agents, pick_agent, pick_reviewer,
@@ -166,3 +167,96 @@ class TestPickReviewer:
         reviewer = pick_reviewer(agents, contract, builder_id="windsurf")
         assert reviewer.id != "windsurf"
         assert "review" in reviewer.capabilities
+
+
+class TestRouterEdgeCases:
+    """Task 41: Router edge case tests."""
+
+    def test_single_agent_builder_ok(self):
+        agents = [AgentProfile(id="solo", capabilities=["implementation"])]
+        contract = _make_contract()
+        with patch("multi_agent.router.get_defaults", return_value={}):
+            result = resolve_builder(agents, contract)
+        assert result == "solo"
+
+    def test_single_agent_reviewer_raises(self):
+        agents = [AgentProfile(id="solo", capabilities=["implementation", "review"])]
+        contract = _make_contract()
+        with patch("multi_agent.router.get_defaults", return_value={}):
+            with pytest.raises(ValueError):
+                resolve_reviewer(agents, contract, builder_id="solo")
+
+    def test_three_agents_sorted_by_reliability(self):
+        agents = [
+            AgentProfile(id="low", capabilities=["implementation"], reliability=0.5),
+            AgentProfile(id="high", capabilities=["implementation"], reliability=0.99),
+            AgentProfile(id="mid", capabilities=["implementation"], reliability=0.75),
+        ]
+        contract = _make_contract()
+        with patch("multi_agent.router.get_defaults", return_value={}):
+            result = resolve_builder(agents, contract)
+        assert result == "high"  # highest reliability
+
+    def test_supported_agents_constraint(self):
+        agents = _make_agents()
+        contract = _make_contract(supported_agents=["kiro"])
+        result = eligible_agents(agents, contract, ["implementation"])
+        assert len(result) == 1
+        assert result[0].id == "kiro"
+
+    def test_all_excluded_raises(self):
+        agents = [
+            AgentProfile(id="a", capabilities=["implementation"]),
+            AgentProfile(id="b", capabilities=["implementation"]),
+        ]
+        contract = _make_contract()
+        with pytest.raises(ValueError):
+            pick_agent(agents, contract, ["implementation"], exclude=["a", "b"])
+
+    def test_capability_filter(self):
+        agents = [
+            AgentProfile(id="no-review", capabilities=["implementation"]),
+            AgentProfile(id="has-review", capabilities=["implementation", "review"]),
+        ]
+        contract = _make_contract()
+        result = eligible_agents(agents, contract, ["review"])
+        assert len(result) == 1
+        assert result[0].id == "has-review"
+
+    def test_v1_json_format_compat(self):
+        reg = load_registry(PROFILES_PATH)
+        assert reg["version"] == 1
+        agents = load_agents(PROFILES_PATH)
+        assert len(agents) > 0
+
+
+class TestAgentHealthCheck:
+    """Task 72: Agent health check tests."""
+
+    def test_healthy_agent(self):
+        from multi_agent.router import check_agent_health
+        agents = [AgentProfile(id="ws", capabilities=["implementation"], reliability=0.9)]
+        results = check_agent_health(agents)
+        assert len(results) == 1
+        assert results[0]["status"] == "healthy"
+        assert results[0]["issues"] == []
+
+    def test_low_reliability_degraded(self):
+        from multi_agent.router import check_agent_health
+        agents = [AgentProfile(id="bad", capabilities=["impl"], reliability=0.3)]
+        results = check_agent_health(agents)
+        assert results[0]["status"] == "degraded"
+        assert any("reliability" in i for i in results[0]["issues"])
+
+    def test_cli_no_command_degraded(self):
+        from multi_agent.router import check_agent_health
+        agents = [AgentProfile(id="cli-agent", driver="cli", command="", capabilities=["impl"])]
+        results = check_agent_health(agents)
+        assert results[0]["status"] == "degraded"
+        assert any("no command" in i for i in results[0]["issues"])
+
+    def test_no_capabilities_degraded(self):
+        from multi_agent.router import check_agent_health
+        agents = [AgentProfile(id="empty", capabilities=[])]
+        results = check_agent_health(agents)
+        assert any("no capabilities" in i for i in results[0]["issues"])

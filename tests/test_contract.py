@@ -49,3 +49,47 @@ class TestPreconditions:
         c = load_contract("code-implement", base=SKILLS_DIR)
         errors = validate_preconditions(c, "ASSIGNED")
         assert len(errors) > 0
+
+
+class TestContractBoundary:
+    """Task 48: Contract loading boundary tests."""
+
+    def test_load_contract_yaml_format_error(self, tmp_path):
+        skill_dir = tmp_path / "bad-skill"
+        skill_dir.mkdir()
+        (skill_dir / "contract.yaml").write_text(":::\nbad: [yaml")
+        with pytest.raises(Exception):
+            load_contract("bad-skill", base=tmp_path)
+
+    def test_list_skills_empty_dir(self, tmp_path):
+        skills = list_skills(base=tmp_path)
+        assert skills == []
+
+    def test_list_skills_dir_without_contract(self, tmp_path):
+        (tmp_path / "no-contract").mkdir()
+        skills = list_skills(base=tmp_path)
+        assert "no-contract" not in skills
+
+    def test_validate_preconditions_multiple(self):
+        c = load_contract("code-implement", base=SKILLS_DIR)
+        errors = validate_preconditions(c, "DRAFT")
+        assert len(errors) > 0
+
+    def test_validate_preconditions_empty(self):
+        from multi_agent.schema import SkillContract
+        c = SkillContract(id="no-pre", version="1.0.0")
+        errors = validate_preconditions(c, "ANYTHING")
+        assert errors == []
+
+    def test_load_contract_parses_quality_gates(self):
+        c = load_contract("code-implement", base=SKILLS_DIR)
+        assert isinstance(c.quality_gates, list)
+        assert len(c.quality_gates) > 0
+
+    def test_load_contract_parses_timeouts(self):
+        c = load_contract("code-implement", base=SKILLS_DIR)
+        assert c.timeouts.run_sec > 0
+
+    def test_load_contract_parses_retry(self):
+        c = load_contract("code-implement", base=SKILLS_DIR)
+        assert c.retry.max_attempts >= 1

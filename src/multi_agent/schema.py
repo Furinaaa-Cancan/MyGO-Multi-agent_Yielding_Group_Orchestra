@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # ── Enums ─────────────────────────────────────────────────
@@ -74,6 +74,8 @@ class TaskError(BaseModel):
 
 
 class Task(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     task_id: str
     trace_id: str
     skill_id: str
@@ -97,6 +99,7 @@ class Task(BaseModel):
     input_payload: dict[str, Any] | None = None
     metadata: dict[str, Any] | None = None
     error: TaskError | None = None
+    parent_task_id: str | None = None
 
     @field_validator("task_id")
     @classmethod
@@ -179,6 +182,8 @@ class SkillContract(BaseModel):
 # ── Agent Output ──────────────────────────────────────────
 
 class BuilderOutput(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     status: str  # "completed" | "blocked"
     summary: str = ""
     changed_files: list[str] = Field(default_factory=list)
@@ -188,6 +193,8 @@ class BuilderOutput(BaseModel):
 
 
 class ReviewerOutput(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     decision: ReviewDecision = ReviewDecision.REJECT
     summary: str = ""
     issues: list[str] = Field(default_factory=list)
@@ -198,17 +205,27 @@ class ReviewerOutput(BaseModel):
 
 class SubTask(BaseModel):
     """A single decomposed sub-task from a larger requirement."""
+    model_config = ConfigDict(extra="ignore")
     id: str                   # e.g. "auth-login"
     description: str          # what to implement
     done_criteria: list[str] = Field(default_factory=list)
     deps: list[str] = Field(default_factory=list)  # IDs of sub-tasks this depends on
     skill_id: str = "code-implement"
+    priority: Priority = Priority.NORMAL
+    estimated_minutes: int = 30
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    parent_task_id: str | None = None
 
 
 class DecomposeResult(BaseModel):
     """Output of task decomposition — a list of sub-tasks."""
+    model_config = ConfigDict(extra="ignore")
     sub_tasks: list[SubTask]
     reasoning: str = ""  # why this decomposition was chosen
+    total_estimated_minutes: int = 0
+    version: str = "1.0"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = Field(default_factory=_now_utc)
 
 
 # ── Agent Profile ─────────────────────────────────────────

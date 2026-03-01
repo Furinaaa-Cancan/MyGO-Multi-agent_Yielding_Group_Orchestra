@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shutil
 import subprocess
@@ -10,6 +11,12 @@ import threading
 from pathlib import Path
 
 from multi_agent.config import workspace_dir, outbox_dir
+
+logger = logging.getLogger(__name__)
+
+# Task 10: concurrency lock — prevents duplicate CLI agent spawns
+_cli_lock = threading.Lock()
+_active_agents: dict[str, threading.Thread] = {}
 
 
 def get_agent_driver(agent_id: str) -> dict:
@@ -22,6 +29,15 @@ def get_agent_driver(agent_id: str) -> dict:
     return {"driver": "file", "command": ""}
 
 
+def get_latest_log(agent_id: str) -> Path | None:
+    """Get the most recent log file for the given agent. Returns None if no logs exist."""
+    logs_dir = workspace_dir() / "logs"
+    if not logs_dir.exists():
+        return None
+    logs = sorted(logs_dir.glob(f"{agent_id}-*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return logs[0] if logs else None
+
+
 def can_use_cli(command_template: str) -> bool:
     """Check if the CLI binary in a command template is available on PATH.
 
@@ -32,6 +48,58 @@ def can_use_cli(command_template: str) -> bool:
     if not binary:
         return False
     return shutil.which(binary) is not None
+
+
+def _stream_stdout(proc: subprocess.Popen, agent_id: str, role: str) -> str:
+    """Read stdout line-by-line, print in real-time, return accumulated text."""
+    lines: list[str] = []
+    if proc.stdout:
+        for line in proc.stdout:
+            line = line.rstrip("\n")
+            lines.append(line)
+            logger.debug("[%s/%s stdout] %s", agent_id, role, line)
+    return "\n".join(lines)
+
+
+def classify_stderr(text: str) -> str:
+    """Classify stderr content severity: 'error', 'warning', or 'info'."""
+    lower = text.lower()
+    if any(kw in lower for kw in ("error", "fatal", "traceback", "exception")):
+        return "error"
+    if any(kw in lower for kw in ("warning", "warn", "deprecat")):
+        return "warning"
+    return "info"
+
+
+def _stream_stderr(proc: subprocess.Popen, agent_id: str, role: str) -> str:
+    """Read stderr line-by-line, log in real-time with severity, write to log file, return accumulated text."""
+    import time as _time
+    lines: list[str] = []
+    # Write stderr to log file
+    logs_dir = workspace_dir() / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    ts = int(_time.time())
+    log_path = logs_dir / f"{agent_id}-{role}-{ts}.log"
+    log_file = None
+    try:
+        log_file = log_path.open("w", encoding="utf-8")
+        if proc.stderr:
+            for line in proc.stderr:
+                line = line.rstrip("\n")
+                lines.append(line)
+                log_file.write(line + "\n")
+                log_file.flush()
+                severity = classify_stderr(line)
+                if severity == "error":
+                    logger.error("[%s/%s stderr] %s", agent_id, role, line)
+                elif severity == "warning":
+                    logger.warning("[%s/%s stderr] %s", agent_id, role, line)
+                else:
+                    logger.info("[%s/%s stderr] %s", agent_id, role, line)
+    finally:
+        if log_file:
+            log_file.close()
+    return "\n".join(lines)
 
 
 def spawn_cli_agent(
@@ -47,7 +115,16 @@ def spawn_cli_agent(
     The watcher will detect the outbox file and resume the graph.
 
     Returns the thread (for testing). Caller does NOT need to join it.
+    If same agent+role is already running, returns the existing thread.
     """
+    # Task 10: concurrency protection
+    lock_key = f"{agent_id}:{role}"
+    with _cli_lock:
+        existing = _active_agents.get(lock_key)
+        if existing and existing.is_alive():
+            logger.info("CLI agent %s already running as %s, returning existing thread", agent_id, role)
+            return existing
+
     task_file = str(workspace_dir() / "TASK.md")
     outbox_file = str(outbox_dir() / f"{role}.json")
 
@@ -58,33 +135,43 @@ def spawn_cli_agent(
 
     def _run():
         try:
-            result = subprocess.run(
+            # Task 9: stream stderr in real-time instead of capture_output
+            proc = subprocess.Popen(
                 cmd,
                 shell=True,
                 cwd=project_dir or str(Path.cwd()),
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=timeout_sec,
             )
+            stderr_text = _stream_stderr(proc, agent_id, role)
+            stdout_text = proc.stdout.read() if proc.stdout else ""
+            proc.wait(timeout=timeout_sec)
+
             # If the CLI tool didn't write the outbox file itself,
             # try to extract JSON from stdout and write it
             outbox_path = Path(outbox_file)
-            if not outbox_path.exists() and result.stdout.strip():
-                _try_extract_json(result.stdout, outbox_path)
+            if not outbox_path.exists() and stdout_text.strip():
+                _try_extract_json(stdout_text, outbox_path)
             # If outbox still missing after extraction attempt → report error
             if not outbox_path.exists():
-                stderr_hint = (result.stderr or "").strip()[:200]
-                if result.returncode != 0:
-                    _write_error(outbox_file, f"{agent_id} CLI exited with code {result.returncode}: {stderr_hint}")
+                stderr_hint = stderr_text.strip()[:200]
+                if proc.returncode != 0:
+                    _write_error(outbox_file, f"{agent_id} CLI exited with code {proc.returncode}: {stderr_hint}")
                 else:
                     _write_error(outbox_file, f"{agent_id} CLI produced no parseable JSON output")
         except subprocess.TimeoutExpired:
-            # Write a timeout error to outbox so the graph can handle it
+            proc.kill()
             _write_error(outbox_file, f"{agent_id} CLI timed out after {timeout_sec}s")
         except Exception as e:
             _write_error(outbox_file, f"{agent_id} CLI error: {e}")
+        finally:
+            with _cli_lock:
+                _active_agents.pop(lock_key, None)
 
     t = threading.Thread(target=_run, daemon=True, name=f"cli-{agent_id}-{role}")
+    with _cli_lock:
+        _active_agents[lock_key] = t
     t.start()
     return t
 

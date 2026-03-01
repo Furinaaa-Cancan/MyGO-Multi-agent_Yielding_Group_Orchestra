@@ -1,0 +1,30 @@
+{
+  "sub_tasks": [
+    {
+      "id": "user-model",
+      "description": "创建 User 数据模型和数据库迁移",
+      "deps": [],
+      "skill_id": "code-implement",
+      "done_criteria": ["User 模型包含 id, email, password_hash, created_at 字段", "数据库迁移脚本可执行"],
+      "estimated_minutes": 20
+    },
+    {
+      "id": "user-api",
+      "description": "实现 POST /users 和 GET /users/:id 接口",
+      "deps": ["user-model"],
+      "skill_id": "code-implement",
+      "done_criteria": ["POST /users 创建用户并返回 201", "GET /users/:id 返回用户信息", "输入校验: 邮箱格式、密码长度"],
+      "estimated_minutes": 30
+    },
+    {
+      "id": "user-tests",
+      "description": "编写用户 API 的单元测试和集成测试",
+      "deps": ["user-api"],
+      "skill_id": "test-and-review",
+      "done_criteria": ["覆盖正常路径和异常路径", "测试覆盖率 > 80%"],
+      "estimated_minutes": 25
+    }
+  ],
+  "reasoning": "用户认证模块拆分为三个子任务: 数据模型 → API 实现 → 测试。按依赖顺序执行，确保每步可独立验证。",
+  "total_estimated_minutes": 75
+}

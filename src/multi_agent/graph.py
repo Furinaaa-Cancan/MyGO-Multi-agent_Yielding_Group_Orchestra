@@ -8,12 +8,16 @@ from typing import Annotated, Any
 
 from typing_extensions import TypedDict
 
+from langgraph.errors import GraphInterrupt
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt
 from langgraph.checkpoint.sqlite import SqliteSaver
 
+import logging
+_log = logging.getLogger(__name__)
+
 from multi_agent.config import store_db_path
-from multi_agent.contract import load_contract
+from multi_agent.contract import load_contract, validate_preconditions
 from multi_agent.dashboard import write_dashboard
 from multi_agent.prompt import render_builder_prompt, render_reviewer_prompt
 from multi_agent.router import load_agents, resolve_builder, resolve_reviewer
@@ -27,6 +31,196 @@ from multi_agent.workspace import (
     clear_outbox,
     write_inbox,
 )
+
+MAX_SNAPSHOTS = 10
+MAX_CONVERSATION_SIZE = 50
+
+
+class GraphStats:
+    """Collect graph execution statistics per node."""
+
+    def __init__(self):
+        self._stats: dict[str, dict] = {}
+
+    def record(self, node: str, duration_ms: int, success: bool) -> None:
+        if node not in self._stats:
+            self._stats[node] = {"count": 0, "total_ms": 0, "errors": 0}
+        s = self._stats[node]
+        s["count"] += 1
+        s["total_ms"] += duration_ms
+        if not success:
+            s["errors"] += 1
+
+    def summary(self) -> dict[str, dict]:
+        result = {}
+        for node, s in self._stats.items():
+            avg = s["total_ms"] / s["count"] if s["count"] else 0
+            error_rate = s["errors"] / s["count"] if s["count"] else 0
+            result[node] = {
+                "count": s["count"],
+                "avg_ms": round(avg),
+                "error_rate": round(error_rate, 3),
+            }
+        return result
+
+    def save(self, path=None) -> None:
+        """Save stats to .multi-agent/stats.json."""
+        import json as _json
+        from multi_agent.config import workspace_dir as _ws
+        p = path or (_ws() / "stats.json")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            p.write_text(_json.dumps(self.summary(), indent=2), encoding="utf-8")
+        except OSError:
+            pass
+
+
+graph_stats = GraphStats()
+
+
+def log_timing(task_id: str, node: str, start: float, end: float) -> None:
+    """Append a timing entry to .multi-agent/logs/timing-{task_id}.jsonl."""
+    import json as _json
+    from multi_agent.config import workspace_dir as _ws
+    logs_dir = _ws() / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "node": node,
+        "start": start,
+        "end": end,
+        "duration_ms": int((end - start) * 1000),
+    }
+    path = logs_dir / f"timing-{task_id}.jsonl"
+    try:
+        with path.open("a", encoding="utf-8") as f:
+            f.write(_json.dumps(entry) + "\n")
+    except OSError:
+        pass
+
+
+def trim_conversation(conversation: list[dict]) -> list[dict]:
+    """Keep conversation within MAX_CONVERSATION_SIZE, preserving first and last entries."""
+    if len(conversation) <= MAX_CONVERSATION_SIZE:
+        return conversation
+    keep_head = 5
+    keep_tail = MAX_CONVERSATION_SIZE - keep_head - 1
+    trimmed_marker = {"role": "system", "action": "trimmed",
+                      "details": f"Removed {len(conversation) - MAX_CONVERSATION_SIZE} entries",
+                      "t": time.time()}
+    return conversation[:keep_head] + [trimmed_marker] + conversation[-keep_tail:]
+
+
+def save_state_snapshot(task_id: str, node_name: str, state: dict) -> None:
+    """Save a state snapshot for debugging. Keeps only the latest MAX_SNAPSHOTS."""
+    import json as _json
+    from multi_agent.config import workspace_dir as _ws_dir
+    snap_dir = _ws_dir() / "snapshots"
+    snap_dir.mkdir(parents=True, exist_ok=True)
+
+    ts = int(time.time() * 1000)
+    safe_state = {}
+    for k, v in state.items():
+        try:
+            _json.dumps(v)
+            safe_state[k] = v
+        except (TypeError, ValueError):
+            safe_state[k] = str(v)
+
+    path = snap_dir / f"{task_id}-{node_name}-{ts}.json"
+    try:
+        path.write_text(_json.dumps(safe_state, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        return
+
+    # Cleanup old snapshots
+    existing = sorted(snap_dir.glob(f"{task_id}-*.json"), key=lambda p: p.stat().st_mtime)
+    while len(existing) > MAX_SNAPSHOTS:
+        existing.pop(0).unlink(missing_ok=True)
+
+
+# ── Event Hooks ──────────────────────────────────────────
+
+import logging as _logging
+
+_hook_logger = _logging.getLogger(__name__ + ".hooks")
+
+
+class EventHooks:
+    """Registry for graph execution event callbacks.
+
+    Usage:
+        hooks = EventHooks()
+        hooks.on_node_enter("plan", lambda state: print("plan started"))
+        hooks.on_node_exit("build", lambda state, result: log(result))
+        hooks.on_error(lambda node, state, err: alert(err))
+    """
+
+    def __init__(self):
+        self._enter: dict[str, list] = {}   # node_name → [callbacks]
+        self._exit: dict[str, list] = {}    # node_name → [callbacks]
+        self._error: list = []              # global error handlers
+
+    def on_node_enter(self, node: str, callback) -> None:
+        self._enter.setdefault(node, []).append(callback)
+
+    def on_node_exit(self, node: str, callback) -> None:
+        self._exit.setdefault(node, []).append(callback)
+
+    def on_error(self, callback) -> None:
+        self._error.append(callback)
+
+    def fire_enter(self, node: str, state: dict) -> None:
+        for cb in self._enter.get(node, []):
+            try:
+                cb(state)
+            except Exception as e:
+                _hook_logger.warning("Hook enter/%s error: %s", node, e)
+
+    def fire_exit(self, node: str, state: dict, result: dict) -> None:
+        for cb in self._exit.get(node, []):
+            try:
+                cb(state, result)
+            except Exception as e:
+                _hook_logger.warning("Hook exit/%s error: %s", node, e)
+
+    def fire_error(self, node: str, state: dict, error: Exception) -> None:
+        for cb in self._error:
+            try:
+                cb(node, state, error)
+            except Exception as e:
+                _hook_logger.warning("Hook error handler error: %s", e)
+
+
+# Global hooks instance — importable by consumers
+graph_hooks = EventHooks()
+
+
+def register_hook(event: str, callback) -> None:
+    """Register a callback for a graph event (public API).
+
+    Supported events: plan_start, build_submit, review_submit,
+    decide_approve, decide_reject, task_failed.
+    Maps to EventHooks.on_node_enter/on_node_exit internally.
+    """
+    _event_map = {
+        "plan_start": ("enter", "plan"),
+        "build_submit": ("exit", "build"),
+        "review_submit": ("exit", "review"),
+        "decide_approve": ("exit", "decide"),
+        "decide_reject": ("exit", "decide"),
+        "task_failed": ("error", None),
+    }
+    mapping = _event_map.get(event)
+    if mapping is None:
+        graph_hooks.on_node_enter(event, callback)
+        return
+    kind, node = mapping
+    if kind == "enter":
+        graph_hooks.on_node_enter(node, callback)
+    elif kind == "exit":
+        graph_hooks.on_node_exit(node, callback)
+    elif kind == "error":
+        graph_hooks.on_error(callback)
 
 
 # ── State ─────────────────────────────────────────────────
@@ -51,9 +245,14 @@ class WorkflowState(TypedDict, total=False):
     retry_count: int
     retry_budget: int
     started_at: float
+    build_started_at: float | None
+    review_started_at: float | None
 
     # Accumulate
     conversation: Annotated[list[dict], add]
+
+    # Hierarchy
+    parent_task_id: str | None
 
     # Terminal
     error: str | None
@@ -99,8 +298,55 @@ def _write_task_md(state: dict, builder_id: str, reviewer_id: str, current_role:
 
 def plan_node(state: WorkflowState) -> dict:
     """Load skill contract → resolve builder → generate prompt → write inbox."""
+    _t0 = time.time()
+    _ok = False
+    try:
+        result = _plan_node_inner(state)
+        _ok = result.get("final_status") != "failed"
+        return result
+    except GraphInterrupt:
+        _ok = True
+        raise
+    except Exception as e:
+        _log.exception("plan_node failed: %s", e)
+        graph_hooks.fire_error("plan", state, e)
+        return {
+            "error": f"plan_node: {e}",
+            "final_status": "failed",
+            "conversation": [{"role": "orchestrator", "action": "internal_error",
+                              "details": str(e), "t": time.time()}],
+        }
+    finally:
+        _t1 = time.time()
+        tid = state.get("task_id", "")
+        log_timing(tid, "plan", _t0, _t1)
+        graph_stats.record("plan", int((_t1 - _t0) * 1000), _ok)
+        try:
+            save_state_snapshot(tid, "plan", dict(state))
+        except Exception:
+            pass
+
+
+def _plan_node_inner(state: WorkflowState) -> dict:
+    graph_hooks.fire_enter("plan", state)
     skill_id = state["skill_id"]
     contract = load_contract(skill_id)
+
+    # A0: Precondition check — fail early without consuming retry budget
+    precondition_errors = validate_preconditions(contract, "RUNNING")
+    if precondition_errors:
+        msg = "; ".join(precondition_errors)
+        result = {
+            "error": f"Precondition failed: {msg}",
+            "final_status": "failed",
+            "conversation": [
+                {"role": "orchestrator", "action": "precondition_failed",
+                 "details": precondition_errors, "t": time.time()}
+            ],
+        }
+        graph_hooks.fire_exit("plan", state, result)
+        return result
+
     agents = load_agents()
 
     # On retry, reuse existing role assignments to keep consistency
@@ -134,8 +380,11 @@ def plan_node(state: WorkflowState) -> dict:
 
     retry_count = state.get("retry_count", 0)
     retry_feedback = ""
+    previous_summary = ""
     if retry_count > 0 and state.get("reviewer_output"):
         retry_feedback = state["reviewer_output"].get("feedback", "")
+    if retry_count > 0 and state.get("builder_output"):
+        previous_summary = state["builder_output"].get("summary", "")
 
     prompt = render_builder_prompt(
         task=task,
@@ -144,6 +393,7 @@ def plan_node(state: WorkflowState) -> dict:
         retry_count=retry_count,
         retry_feedback=retry_feedback,
         retry_budget=task.retry_budget,
+        previous_summary=previous_summary,
     )
 
     # Write to ROLE-based inbox (builder.md, not windsurf.md)
@@ -163,7 +413,7 @@ def plan_node(state: WorkflowState) -> dict:
         status_msg=f"🔵 等待 **{builder_id}** 执行 builder 任务",
     )
 
-    return {
+    result = {
         "current_role": "builder",
         "builder_id": builder_id,
         "reviewer_id": reviewer_id,
@@ -172,12 +422,45 @@ def plan_node(state: WorkflowState) -> dict:
             {"role": "orchestrator", "action": "assigned", "agent": builder_id, "t": time.time()}
         ],
     }
+    graph_hooks.fire_exit("plan", state, result)
+    return result
 
 
 # ── Node 2: Build ─────────────────────────────────────────
 
 def build_node(state: WorkflowState) -> dict:
     """Interrupt for builder → validate output → prepare reviewer."""
+    _t0 = time.time()
+    _ok = False
+    try:
+        result = _build_node_inner(state)
+        _ok = result.get("final_status") != "failed"
+        return result
+    except GraphInterrupt:
+        _ok = True
+        raise
+    except Exception as e:
+        _log.exception("build_node failed: %s", e)
+        graph_hooks.fire_error("build", state, e)
+        return {
+            "error": f"build_node: {e}",
+            "final_status": "failed",
+            "conversation": [{"role": "orchestrator", "action": "internal_error",
+                              "details": str(e), "t": time.time()}],
+        }
+    finally:
+        _t1 = time.time()
+        tid = state.get("task_id", "")
+        log_timing(tid, "build", _t0, _t1)
+        graph_stats.record("build", int((_t1 - _t0) * 1000), _ok)
+        try:
+            save_state_snapshot(tid, "build", dict(state))
+        except Exception:
+            pass
+
+
+def _build_node_inner(state: WorkflowState) -> dict:
+    graph_hooks.fire_enter("build", state)
     builder_id = state.get("builder_id", "?")
     reviewer_id = state.get("reviewer_id", "?")
 
@@ -188,11 +471,22 @@ def build_node(state: WorkflowState) -> dict:
         "agent": builder_id,
     })
 
-    # A3: Timeout enforcement — check elapsed time
-    started = state.get("started_at", 0)
+    # Check for cancellation immediately after interrupt returns
+    if _is_cancelled(state.get("task_id", "")):
+        return {
+            "final_status": "cancelled",
+            "conversation": [{"role": "orchestrator", "action": "cancelled", "t": time.time()}],
+        }
+
+    # A3: Timeout enforcement — use build_started_at for precise timing
+    build_started = time.time()
+    # Fallback to started_at for backward compatibility with old state
+    ref_time = state.get("build_started_at") or state.get("started_at", 0)
+    if not ref_time:
+        ref_time = build_started
     timeout = state.get("timeout_sec", 1800)
-    if started and timeout:
-        elapsed = time.time() - started
+    if ref_time and timeout:
+        elapsed = time.time() - ref_time
         if elapsed > timeout:
             return {
                 "error": f"TIMEOUT: builder took {int(elapsed)}s (limit: {timeout}s)",
@@ -278,25 +572,81 @@ def build_node(state: WorkflowState) -> dict:
         status_msg=f"🟡 等待 **{reviewer_id}** 审查",
     )
 
-    return {
+    build_result = {
         "builder_output": result,
+        "build_started_at": build_started,
         "current_role": "reviewer",
         "conversation": [
             {"role": "builder", "output": result.get("summary", ""), "t": time.time()}
         ],
     }
+    graph_hooks.fire_exit("build", state, build_result)
+    return build_result
 
 
 # ── Node 3: Review ────────────────────────────────────────
 
 def review_node(state: WorkflowState) -> dict:
     """Interrupt for reviewer → record decision."""
+    _t0 = time.time()
+    _ok = False
+    try:
+        result = _review_node_inner(state)
+        _ok = result.get("final_status") != "failed"
+        return result
+    except GraphInterrupt:
+        _ok = True
+        raise
+    except Exception as e:
+        _log.exception("review_node failed: %s", e)
+        graph_hooks.fire_error("review", state, e)
+        return {
+            "error": f"review_node: {e}",
+            "final_status": "failed",
+            "conversation": [{"role": "orchestrator", "action": "internal_error",
+                              "details": str(e), "t": time.time()}],
+        }
+    finally:
+        _t1 = time.time()
+        tid = state.get("task_id", "")
+        log_timing(tid, "review", _t0, _t1)
+        graph_stats.record("review", int((_t1 - _t0) * 1000), _ok)
+        try:
+            save_state_snapshot(tid, "review", dict(state))
+        except Exception:
+            pass
+
+
+def _review_node_inner(state: WorkflowState) -> dict:
+    graph_hooks.fire_enter("review", state)
     reviewer_id = state.get("reviewer_id", "?")
 
     result = interrupt({
         "role": "reviewer",
         "agent": reviewer_id,
     })
+
+    # Check for cancellation immediately after interrupt returns
+    if _is_cancelled(state.get("task_id", "")):
+        return {
+            "final_status": "cancelled",
+            "conversation": [{"role": "orchestrator", "action": "cancelled", "t": time.time()}],
+        }
+
+    # Timeout enforcement — use review_started_at for precise timing
+    review_started = time.time()
+    ref_time = state.get("review_started_at") or state.get("started_at", 0)
+    if not ref_time:
+        ref_time = review_started
+    timeout = state.get("timeout_sec", 1800)
+    if ref_time and timeout:
+        elapsed = time.time() - ref_time
+        if elapsed > timeout:
+            return {
+                "reviewer_output": {"decision": "reject", "feedback": f"TIMEOUT: reviewer took {int(elapsed)}s (limit: {timeout}s)"},
+                "review_started_at": review_started,
+                "conversation": [{"role": "orchestrator", "action": "timeout", "elapsed": int(elapsed), "t": time.time()}],
+            }
 
     # Basic validation
     if not isinstance(result, dict):
@@ -319,16 +669,57 @@ def review_node(state: WorkflowState) -> dict:
     except Exception:
         decision = result.get("decision", "reject")
 
-    return {
+    review_result = {
         "reviewer_output": result,
+        "review_started_at": review_started,
         "conversation": [{"role": "reviewer", "decision": decision, "t": time.time()}],
     }
+    graph_hooks.fire_exit("review", state, review_result)
+    return review_result
 
 
 # ── Node 4: Decide ────────────────────────────────────────
 
 def decide_node(state: WorkflowState) -> dict:
-    """Route based on reviewer decision: approve → end, reject → retry or escalate."""
+    """Route based on reviewer decision: approve → end, reject/request_changes → retry or escalate."""
+    _t0 = time.time()
+    _ok = False
+    try:
+        result = _decide_node_inner(state)
+        _ok = result.get("final_status") != "failed"
+        return result
+    except GraphInterrupt:
+        _ok = True
+        raise
+    except Exception as e:
+        _log.exception("decide_node failed: %s", e)
+        graph_hooks.fire_error("decide", state, e)
+        return {
+            "error": f"decide_node: {e}",
+            "final_status": "failed",
+            "conversation": [{"role": "orchestrator", "action": "internal_error",
+                              "details": str(e), "t": time.time()}],
+        }
+    finally:
+        _t1 = time.time()
+        tid = state.get("task_id", "")
+        log_timing(tid, "decide", _t0, _t1)
+        graph_stats.record("decide", int((_t1 - _t0) * 1000), _ok)
+        try:
+            save_state_snapshot(tid, "decide", dict(state))
+        except Exception:
+            pass
+
+
+def _decide_node_inner(state: WorkflowState) -> dict:
+    graph_hooks.fire_enter("decide", state)
+
+    # Task 74: trim conversation if oversized
+    convo = state.get("conversation", [])
+    trimmed = trim_conversation(convo)
+    if len(trimmed) < len(convo):
+        state = {**state, "conversation": trimmed}
+
     reviewer_output = state.get("reviewer_output", {})
     decision = reviewer_output.get("decision", "reject")
 
@@ -344,12 +735,36 @@ def decide_node(state: WorkflowState) -> dict:
             status_msg="✅ 审查通过，任务完成",
         )
         archive_conversation(state["task_id"], full_convo)
-        return {
+        approve_result = {
             "final_status": "approved",
             "conversation": [final_entry],
         }
+        graph_hooks.fire_exit("decide", state, approve_result)
+        return approve_result
 
-    # Reject → check retry budget
+    # request_changes: soft reject — always retry, does NOT consume retry budget
+    if decision == "request_changes":
+        feedback = reviewer_output.get("feedback", "")
+        retry_count = state.get("retry_count", 0)  # do NOT increment
+        budget = state.get("retry_budget", 2)
+        write_dashboard(
+            task_id=state["task_id"],
+            done_criteria=state.get("done_criteria", []),
+            current_agent=state.get("builder_id", ""),
+            current_role="builder",
+            conversation=state.get("conversation", []),
+            status_msg=f"🔧 需修改 ({retry_count}/{budget})",
+        )
+        rc_result = {
+            "conversation": [
+                {"role": "orchestrator", "action": "request_changes",
+                 "feedback": feedback, "t": time.time()}
+            ],
+        }
+        graph_hooks.fire_exit("decide", state, rc_result)
+        return rc_result
+
+    # Reject → check retry budget (consumes budget)
     retry_count = state.get("retry_count", 0) + 1
     budget = state.get("retry_budget", 2)
 
@@ -365,12 +780,14 @@ def decide_node(state: WorkflowState) -> dict:
             error=f"重试预算耗尽 ({retry_count - 1}/{budget})",
         )
         archive_conversation(state["task_id"], full_convo)
-        return {
+        esc_result = {
             "error": "BUDGET_EXHAUSTED",
             "retry_count": retry_count,
             "final_status": "escalated",
             "conversation": [final_entry],
         }
+        graph_hooks.fire_exit("decide", state, esc_result)
+        return esc_result
 
     # Has budget → retry with feedback
     feedback = reviewer_output.get("feedback", "")
@@ -380,15 +797,34 @@ def decide_node(state: WorkflowState) -> dict:
         current_agent=state.get("builder_id", ""),
         current_role="builder",
         conversation=state.get("conversation", []),
-        status_msg=f"🔄 重试 ({retry_count}/{budget})",
+        status_msg=f"🔄 重试 ❌ 驳回 ({retry_count}/{budget})",
     )
 
-    return {
+    retry_result = {
         "retry_count": retry_count,
         "conversation": [
             {"role": "orchestrator", "action": "retry", "feedback": feedback, "t": time.time()}
         ],
     }
+    graph_hooks.fire_exit("decide", state, retry_result)
+    return retry_result
+
+
+# ── Cancel Detection ──────────────────────────────────
+
+def _is_cancelled(task_id: str) -> bool:
+    """Check if a task has been cancelled by reading its YAML status."""
+    from multi_agent.config import tasks_dir
+    import yaml
+    path = tasks_dir() / f"{task_id}.yaml"
+    if not path.exists():
+        return False
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return data.get("status") == "cancelled"
+    except Exception:
+        return False
 
 
 # ── Routing ───────────────────────────────────────────
@@ -434,19 +870,62 @@ def build_graph() -> StateGraph:
     return g
 
 
-def compile_graph(*, db_path: str | None = None):
-    """Compile graph with SQLite checkpointer."""
+# Task 11: singleton connection pool — reuse connections per db_path
+_conn_pool: dict[str, "sqlite3.Connection"] = {}
+_conn_lock = __import__("threading").Lock()
+
+
+def _get_connection(path: str) -> "sqlite3.Connection":
+    """Get or create a SQLite connection for the given path (singleton per path)."""
     import atexit
     import sqlite3
+
+    with _conn_lock:
+        if path in _conn_pool:
+            conn = _conn_pool[path]
+            # Verify connection is still usable
+            try:
+                conn.execute("SELECT 1")
+                return conn
+            except sqlite3.ProgrammingError:
+                del _conn_pool[path]
+        conn = sqlite3.connect(path, check_same_thread=False)
+        _conn_pool[path] = conn
+        atexit.register(conn.close)
+        return conn
+
+
+_compiled_cache: dict[str, object] = {}
+
+
+def reset_graph() -> None:
+    """Clear compiled graph cache and connection pool. Used for testing."""
+    _compiled_cache.clear()
+    with _conn_lock:
+        for conn in _conn_pool.values():
+            try:
+                conn.close()
+            except Exception:
+                pass
+        _conn_pool.clear()
+
+
+def compile_graph(*, db_path: str | None = None):
+    """Compile graph with SQLite checkpointer (connection-pooled, cached)."""
     from pathlib import Path as _Path
 
-    g = build_graph()
     path = db_path or str(store_db_path())
+
+    if path in _compiled_cache:
+        return _compiled_cache[path]
+
+    g = build_graph()
 
     # Ensure parent directory exists
     _Path(path).parent.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(path, check_same_thread=False)
-    atexit.register(conn.close)
+    conn = _get_connection(path)
     checkpointer = SqliteSaver(conn)
-    return g.compile(checkpointer=checkpointer)
+    compiled = g.compile(checkpointer=checkpointer)
+    _compiled_cache[path] = compiled
+    return compiled

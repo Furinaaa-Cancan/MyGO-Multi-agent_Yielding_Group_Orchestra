@@ -110,3 +110,101 @@ class TestWriteDashboard:
         assert result == p
         assert p.exists()
         assert "task-abc" in p.read_text()
+
+    def test_creates_parent_dirs(self, tmp_path):
+        p = tmp_path / "sub" / "dir" / "dashboard.md"
+        write_dashboard(
+            task_id="task-abc",
+            done_criteria=[],
+            current_agent="w",
+            current_role="builder",
+            conversation=[],
+            path=p,
+        )
+        assert p.exists()
+
+    def test_custom_path(self, tmp_path):
+        p = tmp_path / "custom.md"
+        write_dashboard(
+            task_id="task-abc",
+            done_criteria=[],
+            current_agent="w",
+            current_role="builder",
+            conversation=[],
+            path=p,
+        )
+        assert p.exists()
+
+
+class TestDashboardBoundary:
+    """Task 42: Dashboard rendering boundary tests."""
+
+    def test_empty_conversation_header_only(self):
+        content = generate_dashboard(
+            task_id="task-abc", done_criteria=[], current_agent="w",
+            current_role="builder", conversation=[],
+        )
+        assert "task-abc" in content
+
+    def test_multiple_conversation_entries(self):
+        content = generate_dashboard(
+            task_id="task-abc", done_criteria=[], current_agent="w",
+            current_role="builder",
+            conversation=[
+                {"role": "orchestrator", "action": "assigned", "t": 1000000},
+                {"role": "builder", "output": "done", "t": 1000010},
+                {"role": "reviewer", "decision": "approve", "t": 1000020},
+            ],
+        )
+        assert "orchestrator" in content
+        assert "builder" in content
+        assert "reviewer" in content
+
+    def test_done_criteria_with_special_chars(self):
+        content = generate_dashboard(
+            task_id="task-abc",
+            done_criteria=["use `backtick` | pipe | **bold**"],
+            current_agent="w", current_role="builder", conversation=[],
+        )
+        assert "`backtick`" in content
+
+    def test_status_msg_empty_uses_default(self):
+        content = generate_dashboard(
+            task_id="task-abc", done_criteria=[], current_agent="w",
+            current_role="builder", conversation=[],
+        )
+        assert "w" in content
+        assert "builder" in content
+
+    def test_timeout_remaining_not_crash(self):
+        content = generate_dashboard(
+            task_id="task-abc", done_criteria=[], current_agent="w",
+            current_role="builder", conversation=[],
+            status_msg="🔵 等待 builder (超时还剩 300s)",
+        )
+        assert "300s" in content
+
+    def test_error_status_shows_red(self):
+        content = generate_dashboard(
+            task_id="task-abc", done_criteria=[], current_agent="w",
+            current_role="builder", conversation=[],
+            error="TIMEOUT exceeded",
+        )
+        assert "❌" in content
+        assert "TIMEOUT exceeded" in content
+
+    def test_empty_done_criteria_no_crash(self):
+        content = generate_dashboard(
+            task_id="task-abc", done_criteria=[], current_agent="w",
+            current_role="builder", conversation=[],
+        )
+        assert "task-abc" in content
+
+    def test_many_done_criteria(self):
+        criteria = [f"criterion_{i}" for i in range(20)]
+        content = generate_dashboard(
+            task_id="task-abc", done_criteria=criteria, current_agent="w",
+            current_role="builder", conversation=[],
+        )
+        assert "criterion_0" in content
+        assert "criterion_19" in content

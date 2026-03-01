@@ -1,0 +1,12 @@
+{
+  "task_id": "task-precon-01",
+  "skill_id": "code-implement",
+  "requirement": "implement something",
+  "done_criteria": [
+    "tests pass"
+  ],
+  "timeout_sec": 1800,
+  "retry_budget": 2,
+  "retry_count": 0,
+  "conversation": []
+}

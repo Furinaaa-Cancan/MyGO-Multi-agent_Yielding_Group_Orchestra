@@ -1,0 +1,11 @@
+{
+  "decision": "reject",
+  "summary": "缺少输入校验和错误处理，测试覆盖不足",
+  "issues": [
+    "POST /users 未校验邮箱格式，可接受无效邮箱",
+    "密码未做长度限制，可接受空密码",
+    "缺少数据库连接失败时的错误处理",
+    "测试只覆盖了正常路径，缺少异常路径测试"
+  ],
+  "feedback": "1. /src/routers/users.py 第 15 行: 添加 email 格式校验 (使用 pydantic EmailStr 或正则)\n2. /src/routers/users.py 第 18 行: 添加密码长度校验 (最少 8 字符)\n3. /src/routers/users.py 第 25 行: 用 try/except 包裹数据库操作，返回 500 错误\n4. /tests/test_users.py: 添加无效邮箱、空密码、数据库异常的测试用例"
+}

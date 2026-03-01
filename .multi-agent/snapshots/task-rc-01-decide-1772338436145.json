@@ -1,0 +1,16 @@
+{
+  "task_id": "task-rc-01",
+  "skill_id": "code-implement",
+  "done_criteria": [
+    "implement something"
+  ],
+  "retry_count": 0,
+  "retry_budget": 2,
+  "builder_id": "windsurf",
+  "reviewer_id": "cursor",
+  "conversation": [],
+  "reviewer_output": {
+    "decision": "reject",
+    "feedback": "fix tests"
+  }
+}

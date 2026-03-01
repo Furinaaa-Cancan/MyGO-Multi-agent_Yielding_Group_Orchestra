@@ -8,7 +8,7 @@
 
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-148%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-567%20passed-brightgreen.svg)]()
 
 [English](#english) | [中文](#中文)
 
@@ -181,6 +181,45 @@ Add any tool in `agents.yaml`. No code changes needed.
           └─────────┘
 ```
 
+### Decompose Flow (--decompose)
+
+```
+  ┌──────────────┐
+  │  Requirement  │
+  └──────┬───────┘
+         │ ma go "..." --decompose
+  ┌──────▼───────┐
+  │  Decompose   │  Break into sub-tasks via IDE/CLI
+  └──────┬───────┘
+         │
+    ┌────▼────────────────────────────────┐
+    │  sub-task₁      sub-task₂     ...   │  (parallel groups)
+    │  ┌─────────┐   ┌─────────┐          │
+    │  │ build → │   │ build → │          │
+    │  │ review  │   │ review  │          │
+    │  └────┬────┘   └────┬────┘          │
+    └───────┼─────────────┼───────────────┘
+            │             │
+       ┌────▼─────────────▼────┐
+       │    Aggregate Results   │
+       └───────────────────────┘
+```
+
+### File Interaction
+
+```
+  CLI (ma go)              TASK.md              IDE AI              outbox/*.json
+     │                        │                    │                     │
+     │── render prompt ──────▶│                    │                     │
+     │                        │◄── @TASK.md ──────│                     │
+     │                        │    read & execute  │                     │
+     │                        │                    │── write result ────▶│
+     │                        │                    │                     │
+     │◄──────────────── Watcher auto-detects ─────────────────────────── │
+     │                        │                    │                     │
+     │── next phase ─────────▶│                    │                     │
+```
+
 ### Workspace
 
 ```
@@ -211,6 +250,9 @@ Add any tool in `agents.yaml`. No code changes needed.
 | `ma done --file output.json` | Submit from specific file |
 | `ma status` | Show current task state |
 | `ma cancel` | Cancel active task |
+| `ma render "req"` | Preview rendered prompt (dry-run) |
+| `ma init` | Initialize project structure |
+| `ma history` | Show task history |
 
 ## Research Foundation
 
@@ -241,7 +283,7 @@ Add any tool in `agents.yaml`. No code changes needed.
 
 ```bash
 pytest tests/ -v
-# 148 tests passed
+# 567 tests passed
 ```
 
 ## License
@@ -388,6 +430,9 @@ ma go "实现 POST /users" --builder windsurf --reviewer cursor
 | `ma done` | 手动提交输出 |
 | `ma status` | 查看任务状态（含锁/driver 模式） |
 | `ma cancel` | 取消任务 |
+| `ma render "需求"` | 预览渲染后的 prompt（不执行） |
+| `ma init` | 初始化项目结构 |
+| `ma history` | 查看任务历史 |
 
 ### 支持的工具
 
@@ -414,7 +459,7 @@ ma go "实现 POST /users" --builder windsurf --reviewer cursor
 ## 测试
 
 ```bash
-pytest tests/ -v   # 148 tests passed
+pytest tests/ -v   # 567 tests passed
 ```
 
 ## 许可证

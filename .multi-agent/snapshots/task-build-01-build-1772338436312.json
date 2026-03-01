@@ -1,0 +1,12 @@
+{
+  "task_id": "task-build-01",
+  "skill_id": "code-implement",
+  "builder_id": "windsurf",
+  "reviewer_id": "cursor",
+  "done_criteria": [
+    "works"
+  ],
+  "timeout_sec": 1800,
+  "started_at": 1772338436.312104,
+  "conversation": []
+}

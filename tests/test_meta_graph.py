@@ -4,25 +4,51 @@ from multi_agent.meta_graph import (
     generate_sub_task_id,
     build_sub_task_state,
     aggregate_results,
+    format_prior_context,
+    generate_aggregate_report,
 )
 from multi_agent.schema import SubTask
 
 
 class TestGenerateSubTaskId:
     def test_deterministic(self):
-        id1 = generate_sub_task_id("parent-123", "auth-login")
-        id2 = generate_sub_task_id("parent-123", "auth-login")
+        id1 = generate_sub_task_id("task-parent-123", "auth-login")
+        id2 = generate_sub_task_id("task-parent-123", "auth-login")
         assert id1 == id2
 
     def test_different_for_different_sub(self):
-        id1 = generate_sub_task_id("parent-123", "auth-login")
-        id2 = generate_sub_task_id("parent-123", "auth-register")
+        id1 = generate_sub_task_id("task-parent-123", "auth-login")
+        id2 = generate_sub_task_id("task-parent-123", "auth-register")
         assert id1 != id2
 
     def test_format(self):
-        tid = generate_sub_task_id("parent-123", "step-1")
+        tid = generate_sub_task_id("task-auth-impl", "login")
         assert tid.startswith("task-")
-        assert len(tid) == 11  # "task-" + 6 hex chars
+        assert "auth" in tid
+        assert "login" in tid
+
+    def test_readable_id(self):
+        tid = generate_sub_task_id("task-auth-impl", "login")
+        assert tid == "task-auth-impl-login"
+
+    def test_special_chars_cleaned(self):
+        tid = generate_sub_task_id("task-parent", "Hello World!")
+        assert tid.startswith("task-")
+        assert " " not in tid
+        assert "!" not in tid
+
+    def test_long_input_truncated(self):
+        import re
+        _ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
+        tid = generate_sub_task_id("task-very-long-parent-name-here", "a" * 50)
+        assert _ID_RE.match(tid)
+        assert len(tid) <= 64
+
+    def test_fallback_to_hash(self):
+        # sub_id with only special chars → cleaned to empty → fallback
+        tid = generate_sub_task_id("task-x", "!!!")
+        assert tid.startswith("task-")
+        assert len(tid) >= 5
 
 
 class TestBuildSubTaskState:
@@ -115,3 +141,166 @@ class TestAggregateResults:
         ]
         agg = aggregate_results("parent-123", results)
         assert len(agg["all_changed_files"]) == 3  # deduped
+
+
+class TestFormatPriorContext:
+    """Task 18: Verify prior context formatting."""
+
+    def test_empty_results(self):
+        assert format_prior_context([]) == ""
+
+    def test_single_result(self):
+        prior = [{"sub_id": "a", "summary": "Done A", "changed_files": ["/a.py"]}]
+        ctx = format_prior_context(prior)
+        assert "a" in ctx
+        assert "Done A" in ctx
+        assert "/a.py" in ctx
+
+    def test_includes_reviewer_feedback(self):
+        prior = [{"sub_id": "a", "summary": "Done", "reviewer_feedback": "Add tests"}]
+        ctx = format_prior_context(prior)
+        assert "Add tests" in ctx
+        assert "Reviewer" in ctx
+
+    def test_max_3_items(self):
+        prior = [
+            {"sub_id": f"t{i}", "summary": f"Done {i}"} for i in range(5)
+        ]
+        ctx = format_prior_context(prior)
+        # Only t2, t3, t4 should appear (last 3)
+        assert "t2" in ctx
+        assert "t3" in ctx
+        assert "t4" in ctx
+        assert "t0" not in ctx
+        assert "t1" not in ctx
+
+    def test_custom_max_items(self):
+        prior = [{"sub_id": f"t{i}", "summary": f"D{i}"} for i in range(5)]
+        ctx = format_prior_context(prior, max_items=2)
+        assert "t3" in ctx
+        assert "t4" in ctx
+        assert "t2" not in ctx
+
+    def test_no_reviewer_feedback_omits_line(self):
+        prior = [{"sub_id": "a", "summary": "Done"}]
+        ctx = format_prior_context(prior)
+        assert "Reviewer" not in ctx
+
+
+class TestBuildSubTaskStateEnhanced:
+    """Task 18 + Task 5: Verify acceptance_criteria merge and parent_task_id."""
+
+    def test_acceptance_criteria_merged(self):
+        st = SubTask(
+            id="auth", description="Auth",
+            done_criteria=["login works"],
+            acceptance_criteria=["tests pass", "no regressions"],
+        )
+        state = build_sub_task_state(st, "parent-abc")
+        assert "login works" in state["done_criteria"]
+        assert "tests pass" in state["done_criteria"]
+        assert "no regressions" in state["done_criteria"]
+
+    def test_parent_task_id_set(self):
+        st = SubTask(id="step-1", description="Do something")
+        state = build_sub_task_state(st, "parent-abc")
+        assert state["parent_task_id"] == "parent-abc"
+
+    def test_prior_results_with_feedback(self):
+        st = SubTask(id="step-2", description="Next step")
+        prior = [
+            {"sub_id": "step-1", "summary": "Done", "reviewer_feedback": "Needs cleanup"},
+        ]
+        state = build_sub_task_state(st, "parent-abc", prior_results=prior)
+        assert "Needs cleanup" in state["requirement"]
+        assert "Reviewer" in state["requirement"]
+
+
+class TestDurationStats:
+    """Task 30: Verify duration stats in aggregate_results."""
+
+    def test_duration_stats_present(self):
+        results = [
+            {"sub_id": "a", "status": "approved", "summary": "Done",
+             "changed_files": [], "retry_count": 0, "duration_sec": 120},
+            {"sub_id": "b", "status": "approved", "summary": "Done",
+             "changed_files": [], "retry_count": 0, "duration_sec": 300},
+        ]
+        agg = aggregate_results("parent", results)
+        assert agg["total_duration_sec"] == 420
+        assert agg["avg_duration_sec"] == 210.0
+        assert agg["slowest_sub_task"] == "b"
+        assert agg["slowest_duration_sec"] == 300
+
+    def test_duration_zero_for_skipped(self):
+        results = [
+            {"sub_id": "a", "status": "approved", "summary": "",
+             "changed_files": [], "retry_count": 0, "duration_sec": 60},
+            {"sub_id": "b", "status": "skipped", "summary": "",
+             "changed_files": [], "retry_count": 0, "duration_sec": 0},
+        ]
+        agg = aggregate_results("parent", results)
+        assert agg["total_duration_sec"] == 60
+        assert agg["slowest_sub_task"] == "a"
+
+    def test_empty_results_duration(self):
+        agg = aggregate_results("parent", [])
+        assert agg["total_duration_sec"] == 0
+        assert agg["avg_duration_sec"] == 0
+
+
+class TestGenerateAggregateReport:
+    """Task 26: Verify Markdown report generation."""
+
+    def test_report_contains_all_sections(self):
+        results = [
+            {"sub_id": "auth-login", "status": "approved", "summary": "实现登录",
+             "changed_files": ["/src/login.py"], "retry_count": 0, "duration_sec": 120},
+            {"sub_id": "auth-reg", "status": "failed", "summary": "注册失败",
+             "changed_files": [], "retry_count": 2, "duration_sec": 300},
+        ]
+        agg = aggregate_results("parent-123", results)
+        report = generate_aggregate_report(agg)
+        assert "# 任务分解执行报告" in report
+        assert "## 概要" in report
+        assert "## 详情" in report
+        assert "auth-login" in report
+        assert "auth-reg" in report
+        assert "✅ 通过" in report
+        assert "❌ 失败" in report
+        assert "## 修改文件" in report
+        assert "/src/login.py" in report
+
+    def test_report_with_duration(self):
+        results = [
+            {"sub_id": "a", "status": "approved", "summary": "Done",
+             "changed_files": [], "retry_count": 0, "duration_sec": 754},
+        ]
+        agg = aggregate_results("parent", results)
+        report = generate_aggregate_report(agg)
+        assert "总耗时" in report
+        assert "最慢子任务" in report
+
+    def test_report_empty_results(self):
+        agg = aggregate_results("parent", [])
+        report = generate_aggregate_report(agg)
+        assert "# 任务分解执行报告" in report
+        assert "总子任务: 0" in report
+
+    def test_report_skipped_status(self):
+        results = [
+            {"sub_id": "a", "status": "skipped", "summary": "Dep failed",
+             "changed_files": [], "retry_count": 0, "duration_sec": 0},
+        ]
+        agg = aggregate_results("parent", results)
+        report = generate_aggregate_report(agg)
+        assert "⏭️ 跳过" in report
+
+    def test_report_no_files_section_when_empty(self):
+        results = [
+            {"sub_id": "a", "status": "approved", "summary": "Done",
+             "changed_files": [], "retry_count": 0, "duration_sec": 0},
+        ]
+        agg = aggregate_results("parent", results)
+        report = generate_aggregate_report(agg)
+        assert "## 修改文件" not in report

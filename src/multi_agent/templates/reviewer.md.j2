@@ -28,28 +28,56 @@
 
 ## Builder 提交的报告
 
-- **状态**: {{ builder_output.get("status", "unknown") }}
-- **摘要**: {{ builder_output.get("summary", "") }}
-- **修改文件**: {{ builder_output.get("changed_files", []) | join(", ") }}
-- **风险**: {{ builder_output.get("risks", []) | join(", ") or "无" }}
-- **交接说明**: {{ builder_output.get("handoff_notes", "") }}
+| 项目 | 内容 |
+|------|------|
+| 状态 | {{ builder_output.get("status", "unknown") }} |
+| 摘要 | {{ builder_output.get("summary", "") }} |
+| 修改文件 | {{ builder_output.get("changed_files", []) | join(", ") or "无" }} |
+| 风险 | {{ builder_output.get("risks", []) | join(", ") or "无" }} |
+| 交接说明 | {{ builder_output.get("handoff_notes", "") or "无" }} |
+
+{% if builder_output.get("check_results") %}
+### 质量检查结果明细
+| 检查项 | 结果 |
+|--------|------|
+{% for gate, result in builder_output.get("check_results", {}).items() %}| {{ gate }} | {{ result }} |
+{% endfor %}{% endif %}
+
+## 检查清单 (逐条核对)
+- [ ] 代码是否实现了所有 done_criteria
+- [ ] 是否有未处理的错误路径
+- [ ] 是否有安全风险（注入、越权、信息泄露等）
+- [ ] 代码风格是否与项目一致
+- [ ] 是否有遗漏的测试用例
+- [ ] changed_files 是否完整（有无遗漏文件）
+- [ ] check_results 是否可信（自己运行验证）
+
+## Decision 判断标准
+- **approve**: 所有检查项通过，代码质量合格
+- **request_changes**: 存在小问题，修改后可通过
+- **reject**: 严重问题，需要重新实现
 
 ## 产出要求
 完成审查后，请输出以下 JSON:
 
 ```json
 {
-  "decision": "approve 或 reject",
+  "decision": "approve 或 reject 或 request_changes",
   "summary": "审查结论",
   "issues": ["问题1", "问题2"],
-  "feedback": "给 builder 的详细修改建议（如果 reject）"
+  "feedback": "给 builder 的详细修改建议（如果 reject/request_changes）"
 }
 ```
+
+### Feedback 写作指引
+- 反馈必须**具体**、**可操作**、**指向具体代码位置**
+- 好的反馈: "文件 /src/users.py 第 42 行缺少输入校验，建议添加 email 格式检查"
+- 差的反馈: "代码有问题" "需要改进"
 
 ## 规则
 - **不要仅信任 builder 的自我报告** — 必须自己验证实际代码改动
 - 打开上面列出的修改文件，检查代码是否正确、完整、安全
 - 运行测试和 lint 来独立验证 builder 报告的检查结果
 - 逐条检查完成标准是否满足
-- 如果 reject，必须给出具体的修改建议
+- 如果 reject/request_changes，必须给出具体的修改建议
 - **自检**: 确认你的审查意见是准确且有建设性的

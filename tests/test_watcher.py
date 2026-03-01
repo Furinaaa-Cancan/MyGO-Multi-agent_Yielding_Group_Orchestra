@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from multi_agent.watcher import OutboxPoller
+from multi_agent.watcher import OutboxPoller, MAX_OUTBOX_SIZE
 
 
 @pytest.fixture
@@ -18,8 +18,40 @@ def tmp_outbox(tmp_path, monkeypatch):
     return outbox
 
 
+class TestAdaptivePolling:
+    """Task 89: Adaptive polling interval tests."""
+
+    def test_initial_interval(self):
+        poller = OutboxPoller(poll_interval=2.0, min_interval=0.5, max_interval=5.0)
+        assert poller._current_interval == 2.0
+        assert poller._idle_count == 0
+
+    def test_idle_count_increases(self):
+        poller = OutboxPoller(poll_interval=2.0, min_interval=0.5, max_interval=5.0)
+        # Simulate idle polls
+        for _ in range(15):
+            poller._idle_count += 1
+            if poller._idle_count >= 10:
+                poller._current_interval = min(
+                    poller._current_interval * 1.5, poller.max_interval
+                )
+        assert poller._current_interval > 2.0
+        assert poller._current_interval <= 5.0
+
+    def test_activity_resets_interval(self):
+        poller = OutboxPoller(poll_interval=2.0, min_interval=0.5, max_interval=5.0)
+        poller._idle_count = 20
+        poller._current_interval = 5.0
+        # Simulate activity detection
+        poller._idle_count = 0
+        poller._current_interval = poller.min_interval
+        assert poller._current_interval == 0.5
+        assert poller._idle_count == 0
+
+
 class TestCheckOnce:
-    def test_detects_new_file(self, tmp_outbox):
+    @patch.object(OutboxPoller, "_wait_stable", return_value=True)
+    def test_detects_new_file(self, mock_stable, tmp_outbox):
         poller = OutboxPoller()
         # No files yet
         assert poller.check_once() == []
@@ -34,7 +66,8 @@ class TestCheckOnce:
         assert results[0][0] == "builder"
         assert results[0][1]["status"] == "completed"
 
-    def test_ignores_already_seen(self, tmp_outbox):
+    @patch.object(OutboxPoller, "_wait_stable", return_value=True)
+    def test_ignores_already_seen(self, mock_stable, tmp_outbox):
         poller = OutboxPoller()
         (tmp_outbox / "builder.json").write_text(
             json.dumps({"status": "completed", "summary": "done"}),
@@ -45,7 +78,8 @@ class TestCheckOnce:
         # Second check — same mtime, not re-detected
         assert len(poller.check_once()) == 0
 
-    def test_detects_updated_file(self, tmp_outbox):
+    @patch.object(OutboxPoller, "_wait_stable", return_value=True)
+    def test_detects_updated_file(self, mock_stable, tmp_outbox):
         poller = OutboxPoller()
         path = tmp_outbox / "builder.json"
         path.write_text(json.dumps({"status": "v1", "summary": "first"}))
@@ -58,7 +92,8 @@ class TestCheckOnce:
         assert len(results) == 1
         assert results[0][1]["status"] == "v2"
 
-    def test_partial_write_retries(self, tmp_outbox):
+    @patch.object(OutboxPoller, "_wait_stable", return_value=True)
+    def test_partial_write_retries(self, mock_stable, tmp_outbox):
         """CRITICAL: partial JSON must NOT mark file as seen."""
         poller = OutboxPoller()
         path = tmp_outbox / "builder.json"
@@ -81,7 +116,8 @@ class TestCheckOnce:
         assert len(results) == 1  # NOW detected
         assert results[0][1]["status"] == "completed"
 
-    def test_ignores_non_dict_json(self, tmp_outbox):
+    @patch.object(OutboxPoller, "_wait_stable", return_value=True)
+    def test_ignores_non_dict_json(self, mock_stable, tmp_outbox):
         poller = OutboxPoller()
         (tmp_outbox / "builder.json").write_text("[1, 2, 3]")
         results = poller.check_once()
@@ -89,7 +125,8 @@ class TestCheckOnce:
         # Should NOT mark as seen (non-dict)
         assert "builder" not in poller._known
 
-    def test_multiple_roles(self, tmp_outbox):
+    @patch.object(OutboxPoller, "_wait_stable", return_value=True)
+    def test_multiple_roles(self, mock_stable, tmp_outbox):
         poller = OutboxPoller()
         (tmp_outbox / "builder.json").write_text(
             json.dumps({"status": "completed", "summary": "b"})
@@ -107,3 +144,119 @@ class TestCheckOnce:
         )
         poller = OutboxPoller()
         assert poller.check_once() == []
+
+    @patch.object(OutboxPoller, "_wait_stable", return_value=True)
+    def test_skips_oversized_file(self, mock_stable, tmp_outbox):
+        """Task 67: Files exceeding MAX_OUTBOX_SIZE are skipped."""
+        poller = OutboxPoller()
+        path = tmp_outbox / "builder.json"
+        path.write_text(json.dumps({"status": "done", "summary": "x"}))
+        real_stat = Path.stat
+        def fake_stat(self_path, **kwargs):
+            s = real_stat(self_path, **kwargs)
+            if self_path.name == "builder.json":
+                import os
+                return os.stat_result((s.st_mode, s.st_ino, s.st_dev, s.st_nlink,
+                                       s.st_uid, s.st_gid, MAX_OUTBOX_SIZE + 1,
+                                       int(s.st_atime), int(s.st_mtime), int(s.st_ctime)))
+            return s
+        with patch.object(Path, "stat", fake_stat):
+            results = poller.check_once()
+        assert results == []
+
+
+class TestWaitStable:
+    """Task 8: Verify _wait_stable method."""
+
+    def test_stable_file(self, tmp_path):
+        """File that doesn't change returns True."""
+        path = tmp_path / "test.json"
+        path.write_text('{"ok": true}')
+        result = OutboxPoller._wait_stable(path, settle_time=0.01, max_wait=0.1)
+        assert result is True
+
+    def test_missing_file(self, tmp_path):
+        """Non-existent file returns False."""
+        path = tmp_path / "nonexistent.json"
+        result = OutboxPoller._wait_stable(path, settle_time=0.01, max_wait=0.05)
+        assert result is False
+
+    def test_growing_file(self, tmp_path):
+        """File that keeps growing returns False after max_wait."""
+        path = tmp_path / "growing.json"
+        path.write_text("x")
+        call_count = [0]
+        real_stat = Path.stat
+        def fake_stat(self_path, **kwargs):
+            s = real_stat(self_path, **kwargs)
+            if self_path.name == "growing.json":
+                call_count[0] += 1
+                import os
+                return os.stat_result((s.st_mode, s.st_ino, s.st_dev, s.st_nlink,
+                                       s.st_uid, s.st_gid, 100 * call_count[0],
+                                       int(s.st_atime), int(s.st_mtime), int(s.st_ctime)))
+            return s
+        with patch.object(Path, "stat", fake_stat):
+            result = OutboxPoller._wait_stable(path, settle_time=0.01, max_wait=0.05)
+        assert result is False
+
+
+class TestWatcherBoundary:
+    """Task 43: Watcher boundary tests."""
+
+    @patch.object(OutboxPoller, "_wait_stable", return_value=True)
+    def test_ignores_non_json_files(self, mock_stable, tmp_outbox):
+        poller = OutboxPoller()
+        (tmp_outbox / "notes.txt").write_text("hello")
+        (tmp_outbox / "data.csv").write_text("a,b,c")
+        results = poller.check_once()
+        assert results == []
+
+    @patch.object(OutboxPoller, "_wait_stable", return_value=True)
+    def test_empty_json_object(self, mock_stable, tmp_outbox):
+        poller = OutboxPoller()
+        (tmp_outbox / "builder.json").write_text("{}")
+        results = poller.check_once()
+        assert len(results) == 1
+        assert results[0][1] == {}
+
+    @patch.object(OutboxPoller, "_wait_stable", return_value=True)
+    def test_large_valid_json(self, mock_stable, tmp_outbox):
+        poller = OutboxPoller()
+        data = {"status": "completed", "summary": "x" * 100000}
+        (tmp_outbox / "builder.json").write_text(json.dumps(data))
+        results = poller.check_once()
+        assert len(results) == 1
+
+    @patch.object(OutboxPoller, "_wait_stable", return_value=True)
+    def test_watch_stop_after(self, mock_stable, tmp_outbox):
+        poller = OutboxPoller(poll_interval=0.01)
+        (tmp_outbox / "builder.json").write_text(
+            json.dumps({"status": "completed", "summary": "done"})
+        )
+        collected = []
+        def cb(role, data):
+            collected.append((role, data))
+        poller.watch(callback=cb, stop_after=1)
+        assert len(collected) == 1
+
+    @patch.object(OutboxPoller, "_wait_stable", return_value=True)
+    def test_callback_exception_propagates(self, mock_stable, tmp_outbox):
+        poller = OutboxPoller(poll_interval=0.01)
+        (tmp_outbox / "builder.json").write_text(
+            json.dumps({"status": "completed", "summary": "done"})
+        )
+        def bad_cb(role, data):
+            raise RuntimeError("callback error")
+        with pytest.raises(RuntimeError, match="callback error"):
+            poller.watch(callback=bad_cb, stop_after=1)
+
+    @patch.object(OutboxPoller, "_wait_stable", return_value=True)
+    def test_symlink_in_outbox(self, mock_stable, tmp_outbox, tmp_path):
+        poller = OutboxPoller()
+        real_file = tmp_path / "real.json"
+        real_file.write_text(json.dumps({"status": "done", "summary": "ok"}))
+        link = tmp_outbox / "builder.json"
+        link.symlink_to(real_file)
+        results = poller.check_once()
+        assert len(results) == 1

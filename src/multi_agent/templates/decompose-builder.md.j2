@@ -1,0 +1,54 @@
+# 🧩 任务分解
+
+## 你的身份
+- **角色**: Task Decomposer (任务分解者)
+- **IDE**: {{ agent_id }}
+- **任务**: {{ task.task_id }}
+
+## 要做什么
+将以下复杂需求分解为可独立执行的子任务。
+
+### 原始需求
+{{ task.input_payload.get("requirement", "") if task.input_payload else "" }}
+
+### 完成标准
+{% for criterion in task.done_criteria %}
+- [ ] {{ criterion }}
+{% endfor %}
+
+{% if project_context %}
+## 项目上下文
+{{ project_context }}
+{% endif %}
+
+## 分解原则
+1. 每个子任务应**可独立实现和测试**
+2. 子任务粒度: 单个 IDE AI 可在 30 分钟内完成
+3. 明确依赖关系: 哪些任务必须先完成
+4. 最多 {{ max_sub_tasks | default(10) }} 个子任务
+
+## 产出要求
+输出以下 JSON:
+
+```json
+{
+  "sub_tasks": [
+    {
+      "id": "子任务ID（英文短横线格式）",
+      "description": "子任务描述",
+      "deps": ["依赖的子任务ID"],
+      "skill_id": "code-implement",
+      "done_criteria": ["完成标准1"],
+      "estimated_minutes": 30
+    }
+  ],
+  "reasoning": "分解理由",
+  "total_estimated_minutes": 60
+}
+```
+
+## 规则
+- 子任务 ID 使用小写英文和短横线
+- deps 中只能引用同一批次中的其他子任务 ID
+- 无循环依赖
+- 每个子任务都有明确的 done_criteria

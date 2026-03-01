@@ -1,0 +1,9 @@
+command: raise_error
+error: boom
+
+Traceback (most recent call last):
+  File "/Volumes/Seagate/Multi-Agent/src/multi_agent/cli.py", line 43, in wrapper
+    return f(*args, **kwargs)
+  File "/Volumes/Seagate/Multi-Agent/tests/test_new_fixes.py", line 234, in raise_error
+    raise RuntimeError("boom")
+RuntimeError: boom

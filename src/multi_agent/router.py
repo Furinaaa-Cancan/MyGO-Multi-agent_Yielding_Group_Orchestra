@@ -49,6 +49,8 @@ def load_agents(path: Path | None = None) -> list[AgentProfile]:
     agents_data = reg.get("agents", [])
     result = []
     for a in agents_data:
+        if not isinstance(a, dict) or "id" not in a:
+            continue  # skip malformed entries
         # agents.yaml v2 uses simpler format (no reliability/cost fields required)
         profile = AgentProfile(
             id=a["id"],
@@ -161,6 +163,27 @@ def _eligible(
         candidates.append(agent)
     candidates.sort(key=lambda a: (a.reliability * a.queue_health, -a.cost), reverse=True)
     return candidates
+
+
+def check_agent_health(agents: list[AgentProfile]) -> list[dict]:
+    """Check health of all registered agents.
+
+    Returns list of {id, status, issues} for each agent.
+    """
+    results: list[dict] = []
+    for agent in agents:
+        issues: list[str] = []
+        if agent.reliability < 0.5:
+            issues.append(f"low reliability: {agent.reliability}")
+        if agent.queue_health < 0.5:
+            issues.append(f"low queue_health: {agent.queue_health}")
+        if agent.driver == "cli" and not agent.command:
+            issues.append("CLI driver but no command configured")
+        if not agent.capabilities:
+            issues.append("no capabilities defined")
+        status = "healthy" if not issues else "degraded"
+        results.append({"id": agent.id, "status": status, "issues": issues})
+    return results
 
 
 # Legacy API kept for test compatibility

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import functools
 import json
+import logging
+import shutil
+import time
 from pathlib import Path
 
 from multi_agent.config import (
@@ -13,15 +17,51 @@ from multi_agent.config import (
     history_dir,
 )
 
+_log = logging.getLogger(__name__)
+
+FILE_OP_RETRIES = 3
+FILE_OP_DELAY = 0.1
+
+
+def retry_file_op(retries: int = FILE_OP_RETRIES, delay: float = FILE_OP_DELAY):
+    """Retry decorator for file operations that may fail due to transient OS errors."""
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            last_err = None
+            for attempt in range(retries):
+                try:
+                    return fn(*args, **kwargs)
+                except OSError as e:
+                    last_err = e
+                    if attempt < retries - 1:
+                        _log.warning(
+                            "%s failed (attempt %d/%d): %s",
+                            fn.__name__, attempt + 1, retries, e,
+                        )
+                        time.sleep(delay * (attempt + 1))
+            raise last_err  # type: ignore[misc]
+        return wrapper
+    return decorator
+
 
 def ensure_workspace() -> Path:
     """Create .multi-agent/ and all subdirectories if they don't exist."""
     ws = workspace_dir()
     for d in [ws, inbox_dir(), outbox_dir(), tasks_dir(), history_dir()]:
         d.mkdir(parents=True, exist_ok=True)
+    # Task 14: check disk space and warn if low
+    try:
+        ok, avail = check_disk_space()
+        if not ok:
+            import warnings
+            warnings.warn(f"磁盘空间不足: 仅剩 {avail} MB，建议至少 100 MB")
+    except Exception:
+        pass
     return ws
 
 
+@retry_file_op()
 def write_inbox(agent_id: str, content: str) -> Path:
     """Write a prompt file to inbox/{agent_id}.md."""
     ensure_workspace()
@@ -30,21 +70,50 @@ def write_inbox(agent_id: str, content: str) -> Path:
     return path
 
 
-def read_outbox(agent_id: str) -> dict | None:
-    """Read and parse outbox/{agent_id}.json. Returns None if not found or corrupt."""
+def validate_outbox_data(role: str, data: dict) -> list[str]:
+    """Validate outbox data for a given role. Returns list of errors (empty = valid)."""
+    errors: list[str] = []
+    if role == "builder":
+        if "status" not in data:
+            errors.append("missing 'status' field")
+        if "summary" not in data:
+            errors.append("missing 'summary' field")
+    elif role == "reviewer":
+        if "decision" not in data:
+            errors.append("missing 'decision' field")
+    return errors
+
+
+def read_outbox(agent_id: str, *, validate: bool = False) -> dict | None:
+    """Read and parse outbox/{agent_id}.json. Returns None if not found or corrupt.
+
+    When validate=True, checks that the data has required fields for the role.
+    Tries UTF-8 first, then UTF-8-BOM, then latin-1 as encoding fallbacks.
+    """
     path = outbox_dir() / f"{agent_id}.json"
     if not path.exists():
         return None
-    try:
-        with path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-        if not isinstance(data, dict):
-            return None
-        return data
-    except (json.JSONDecodeError, OSError):
-        return None
+
+    for enc in ("utf-8", "utf-8-sig", "latin-1"):
+        try:
+            text = path.read_text(encoding=enc)
+            data = json.loads(text)
+            if not isinstance(data, dict):
+                return None
+            if validate:
+                errors = validate_outbox_data(agent_id, data)
+                if errors:
+                    return None
+            return data
+        except (UnicodeDecodeError, OSError):
+            continue
+        except (json.JSONDecodeError, ValueError):
+            continue
+
+    return None
 
 
+@retry_file_op()
 def write_outbox(agent_id: str, data: dict) -> Path:
     """Write agent output to outbox/{agent_id}.json."""
     ensure_workspace()
@@ -69,6 +138,7 @@ def clear_inbox(agent_id: str) -> None:
         path.unlink()
 
 
+@retry_file_op()
 def save_task_yaml(task_id: str, data: dict) -> Path:
     """Save task state to tasks/{task_id}.yaml."""
     import yaml
@@ -123,6 +193,124 @@ def clear_runtime() -> None:
             p.unlink()
 
 
+MAX_FILE_SIZE_MB = 50
+
+
+def check_workspace_health() -> list[str]:
+    """Check workspace health. Returns list of issues (empty = healthy)."""
+    issues: list[str] = []
+    ws = workspace_dir()
+
+    # Check required directories
+    for d_fn in (inbox_dir, outbox_dir, tasks_dir, history_dir):
+        d = d_fn()
+        if not d.exists():
+            issues.append(f"Missing directory: {d.relative_to(ws)}")
+
+    # Check store.db writable
+    from multi_agent.config import store_db_path
+    db = store_db_path()
+    if db.exists():
+        try:
+            with db.open("a"):
+                pass
+        except OSError:
+            issues.append(f"store.db is not writable: {db}")
+
+    # Check orphan lock
+    lock = ws / ".lock"
+    if lock.exists():
+        lock_content = lock.read_text(encoding="utf-8").strip()
+        if lock_content:
+            task_file = tasks_dir() / f"{lock_content}.yaml"
+            if not task_file.exists():
+                issues.append(f"Orphan lock: task '{lock_content}' has no YAML file")
+
+    # Check oversized files
+    if ws.exists():
+        for f in ws.rglob("*"):
+            if f.is_file():
+                try:
+                    size_mb = f.stat().st_size / (1024 * 1024)
+                    if size_mb > MAX_FILE_SIZE_MB:
+                        issues.append(f"Oversized file ({size_mb:.1f}MB): {f.relative_to(ws)}")
+                except OSError:
+                    pass
+
+    return issues
+
+
+def get_workspace_stats() -> dict:
+    """Get workspace size statistics."""
+    ws = workspace_dir()
+    if not ws.exists():
+        return {"total_size_mb": 0, "file_count": 0, "largest_file": "", "oldest_file": ""}
+
+    total_size = 0
+    file_count = 0
+    largest_size = 0
+    largest_name = ""
+    oldest_time = float("inf")
+    oldest_name = ""
+
+    for f in ws.rglob("*"):
+        if not f.is_file():
+            continue
+        try:
+            st = f.stat()
+            total_size += st.st_size
+            file_count += 1
+            if st.st_size > largest_size:
+                largest_size = st.st_size
+                largest_name = str(f.relative_to(ws))
+            if st.st_mtime < oldest_time:
+                oldest_time = st.st_mtime
+                oldest_name = str(f.relative_to(ws))
+        except OSError:
+            pass
+
+    return {
+        "total_size_mb": round(total_size / (1024 * 1024), 2),
+        "file_count": file_count,
+        "largest_file": largest_name,
+        "oldest_file": oldest_name,
+    }
+
+
+def check_disk_space(min_mb: int = 100) -> tuple[bool, int]:
+    """Check available disk space. Returns (is_sufficient, available_mb)."""
+    usage = shutil.disk_usage(workspace_dir().parent)
+    available_mb = usage.free // (1024 * 1024)
+    return (available_mb >= min_mb, available_mb)
+
+
+def cleanup_old_files(max_age_days: int = 7) -> int:
+    """Remove old files from tasks/, history/, and logs/. Returns count of deleted files."""
+    ws = workspace_dir()
+    active_task = read_lock()
+    deleted = 0
+    cutoff = time.time() - (max_age_days * 86400)
+
+    for subdir in ("tasks", "history", "logs"):
+        d = ws / subdir
+        if not d.exists():
+            continue
+        for f in d.iterdir():
+            if not f.is_file():
+                continue
+            # Don't delete active task files
+            if active_task and active_task in f.name:
+                continue
+            try:
+                if f.stat().st_mtime < cutoff:
+                    f.unlink()
+                    deleted += 1
+            except OSError:
+                pass
+    return deleted
+
+
+@retry_file_op()
 def archive_conversation(task_id: str, conversation: list[dict]) -> Path:
     """Archive conversation history to history/{task_id}.json."""
     ensure_workspace()

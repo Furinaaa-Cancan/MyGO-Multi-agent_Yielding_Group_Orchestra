@@ -17,9 +17,56 @@ from multi_agent.schema import SubTask
 
 
 def generate_sub_task_id(parent_task_id: str, sub_id: str) -> str:
-    """Generate a unique task ID for a sub-task."""
+    """Generate a readable task ID for a sub-task.
+
+    Format: task-{parent_short}-{sub_id_cleaned}
+    Falls back to hash-based ID if the result doesn't match _ID_RE.
+    """
+    import re
+
+    _ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
+
+    # Extract short parent name: remove "task-" prefix, take last segment
+    parent_short = parent_task_id.removeprefix("task-")
+    # Keep only first 12 chars of parent
+    parent_short = parent_short[:12].rstrip("-")
+
+    # Clean sub_id: lowercase, replace non-alphanumeric with hyphen
+    cleaned = re.sub(r"[^a-z0-9]+", "-", sub_id.lower()).strip("-")
+    cleaned = cleaned[:20].rstrip("-")
+
+    readable = f"task-{parent_short}-{cleaned}" if parent_short else f"task-{cleaned}"
+    # Collapse multiple hyphens
+    readable = re.sub(r"-{2,}", "-", readable)
+
+    if _ID_RE.match(readable):
+        return readable
+
+    # Fallback to hash-based ID
     h = hashlib.sha256(f"{parent_task_id}-{sub_id}".encode()).hexdigest()[:6]
     return f"task-{h}"
+
+
+def format_prior_context(prior_results: list[dict], max_items: int = 3) -> str:
+    """Format prior sub-task results into a readable context string.
+
+    Only includes the most recent `max_items` results to avoid context bloat.
+    Returns empty string if no prior results.
+    """
+    if not prior_results:
+        return ""
+
+    recent = prior_results[-max_items:]
+    lines = ["已完成的相关子任务:"]
+    for pr in recent:
+        lines.append(f"  - {pr.get('sub_id', '?')}: {pr.get('summary', '?')}")
+        changed = pr.get("changed_files", [])
+        if changed:
+            lines.append(f"    修改文件: {', '.join(changed)}")
+        feedback = pr.get("reviewer_feedback", "")
+        if feedback:
+            lines.append(f"    Reviewer 反馈: {feedback}")
+    return "\n".join(lines)
 
 
 def build_sub_task_state(
@@ -37,25 +84,23 @@ def build_sub_task_state(
     """
     task_id = generate_sub_task_id(parent_task_id, sub_task.id)
 
-    # Build context from prior completed sub-tasks
-    context_lines = []
-    if prior_results:
-        context_lines.append("已完成的相关子任务:")
-        for pr in prior_results:
-            context_lines.append(f"  - {pr.get('sub_id', '?')}: {pr.get('summary', '?')}")
-            changed = pr.get("changed_files", [])
-            if changed:
-                context_lines.append(f"    修改文件: {', '.join(changed)}")
+    # Build context from prior completed sub-tasks (max 3)
+    context = format_prior_context(prior_results or [])
 
     requirement = sub_task.description
-    if context_lines:
-        requirement = requirement + "\n\n" + "\n".join(context_lines)
+    if context:
+        requirement = requirement + "\n\n" + context
+
+    # Merge acceptance_criteria into done_criteria
+    done = list(sub_task.done_criteria or [sub_task.description])
+    if hasattr(sub_task, "acceptance_criteria") and sub_task.acceptance_criteria:
+        done.extend(sub_task.acceptance_criteria)
 
     return {
         "task_id": task_id,
         "requirement": requirement,
         "skill_id": sub_task.skill_id,
-        "done_criteria": sub_task.done_criteria or [sub_task.description],
+        "done_criteria": done,
         "timeout_sec": timeout,
         "retry_budget": retry_budget,
         "retry_count": 0,
@@ -63,6 +108,7 @@ def build_sub_task_state(
         "builder_explicit": builder,
         "reviewer_explicit": reviewer,
         "conversation": [],
+        "parent_task_id": parent_task_id,
     }
 
 
@@ -90,6 +136,18 @@ def aggregate_results(
         if status not in ("approved", "completed"):
             failed.append(sub_id)
 
+    # Task 30: duration stats
+    durations = [sr.get("duration_sec", 0) for sr in sub_results]
+    total_duration = sum(durations)
+    avg_duration = total_duration / len(sub_results) if sub_results else 0
+    slowest_idx = max(range(len(durations)), key=lambda i: durations[i]) if durations else -1
+    slowest_sub = sub_results[slowest_idx].get("sub_id", "?") if slowest_idx >= 0 else ""
+    slowest_dur = durations[slowest_idx] if slowest_idx >= 0 else 0
+
+    # Task 5: estimated vs actual time comparison
+    total_estimated_min = sum(sr.get("estimated_minutes", 0) for sr in sub_results)
+    actual_total_min = round(total_duration / 60, 1) if total_duration else 0
+
     return {
         "task_id": parent_task_id,
         "total_sub_tasks": len(sub_results),
@@ -99,4 +157,78 @@ def aggregate_results(
         "all_changed_files": sorted(set(all_files)),
         "summary": "\n".join(all_summaries),
         "final_status": "failed" if failed else "approved",
+        "total_duration_sec": total_duration,
+        "avg_duration_sec": round(avg_duration, 1),
+        "slowest_sub_task": slowest_sub,
+        "slowest_duration_sec": slowest_dur,
+        "estimated_total_minutes": total_estimated_min,
+        "actual_total_minutes": actual_total_min,
+        "sub_results": sub_results,
     }
+
+
+def generate_aggregate_report(agg: dict) -> str:
+    """Generate a Markdown report from aggregated sub-task results.
+
+    Task 26: Returns formatted Markdown with summary table and file list.
+    """
+    lines = [
+        "# 任务分解执行报告",
+        "",
+        "## 概要",
+        f"- 总子任务: {agg.get('total_sub_tasks', 0)}",
+        f"- 完成: {agg.get('completed', 0)}",
+        f"- 失败: {len(agg.get('failed', []))}",
+        f"- 总重试: {agg.get('total_retries', 0)}",
+    ]
+
+    # Duration stats (Task 30)
+    total_dur = agg.get("total_duration_sec", 0)
+    if total_dur > 0:
+        mins, secs = divmod(int(total_dur), 60)
+        lines.append(f"- 总耗时: {mins} 分 {secs} 秒")
+        lines.append(f"- 平均耗时: {agg.get('avg_duration_sec', 0)} 秒")
+        slowest = agg.get("slowest_sub_task", "")
+        if slowest:
+            lines.append(f"- 最慢子任务: {slowest} ({agg.get('slowest_duration_sec', 0):.0f} 秒)")
+
+    # Task 5: estimated vs actual time
+    est = agg.get("estimated_total_minutes", 0)
+    act = agg.get("actual_total_minutes", 0)
+    if est > 0:
+        lines.append(f"- 预估总时间: {est} 分钟")
+        lines.append(f"- 实际总时间: {act} 分钟")
+        if act > 0:
+            ratio = act / est
+            lines.append(f"- 准确率: {ratio:.1%}")
+
+    lines.append("")
+    lines.append("## 详情")
+    lines.append("")
+    lines.append("| # | 子任务 | 状态 | 重试 | 摘要 |")
+    lines.append("|---|--------|------|------|------|")
+
+    sub_results = agg.get("sub_results", [])
+    for i, sr in enumerate(sub_results, 1):
+        sub_id = sr.get("sub_id", "?")
+        status = sr.get("status", "unknown")
+        retries = sr.get("retry_count", 0)
+        summary = sr.get("summary", "")
+        if status in ("approved", "completed"):
+            emoji = "✅ 通过"
+        elif status == "skipped":
+            emoji = "⏭️ 跳过"
+        else:
+            emoji = "❌ 失败"
+        lines.append(f"| {i} | {sub_id} | {emoji} | {retries} | {summary} |")
+
+    files = agg.get("all_changed_files", [])
+    if files:
+        lines.append("")
+        lines.append("## 修改文件")
+        lines.append("")
+        for f in files:
+            lines.append(f"- {f}")
+
+    lines.append("")
+    return "\n".join(lines)

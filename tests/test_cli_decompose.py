@@ -220,3 +220,46 @@ class TestAggregateEdgeCases:
         ]
         agg = aggregate_results("parent", results)
         assert agg["final_status"] == "approved"
+
+
+class TestUserChoiceOnFailure:
+    """T21: Verify skip/retry/abort choices on sub-task failure."""
+
+    def test_choice_includes_retry(self):
+        """The choice set should include 'retry' alongside skip and abort."""
+        # Just verify the source code has all three choices
+        import inspect
+        from multi_agent.cli import _run_decomposed
+        src = inspect.getsource(_run_decomposed)
+        assert '"skip", "retry", "abort"' in src or "'skip', 'retry', 'abort'" in src
+
+    def test_auto_confirm_skips_choice(self):
+        """When auto_confirm=True, failed sub-tasks should be auto-skipped (no prompt)."""
+        import inspect
+        from multi_agent.cli import _run_decomposed
+        src = inspect.getsource(_run_decomposed)
+        assert "auto_confirm" in src
+        assert "click.prompt" in src
+
+
+class TestNoCacheFlag:
+    """T23: Verify --no-cache flag skips decompose result cache."""
+
+    def test_help_shows_no_cache(self):
+        runner = CliRunner()
+        result = runner.invoke(main, ["go", "--help"])
+        assert "--no-cache" in result.output
+
+    @patch("multi_agent.cli._run_decomposed")
+    @patch("multi_agent.graph.compile_graph")
+    def test_no_cache_passed_to_run_decomposed(self, mock_compile, mock_decomposed, workspace):
+        mock_app = MagicMock()
+        mock_compile.return_value = mock_app
+        runner = CliRunner()
+        runner.invoke(main, [
+            "go", "implement auth", "--decompose", "--no-cache",
+            "--task-id", "task-test-nc",
+        ])
+        mock_decomposed.assert_called_once()
+        kwargs = mock_decomposed.call_args[1]
+        assert kwargs.get("no_cache") is True

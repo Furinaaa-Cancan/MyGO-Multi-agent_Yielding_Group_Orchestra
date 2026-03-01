@@ -1,0 +1,12 @@
+{
+  "builder_id": "windsurf",
+  "reviewer_id": "cursor",
+  "started_at": 0,
+  "timeout_sec": 1800,
+  "skill_id": "code-implement",
+  "task_id": "task-cancel-build",
+  "done_criteria": [
+    "test"
+  ],
+  "conversation": []
+}

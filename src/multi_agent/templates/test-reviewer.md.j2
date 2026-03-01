@@ -1,0 +1,63 @@
+# 🔍 Test Reviewer 任务
+
+## 你的身份
+- **角色**: Test Reviewer (测试审查者)
+- **IDE**: {{ agent_id }}
+- **任务**: {{ task.task_id }}
+- **Skill**: {{ contract.id }} v{{ contract.version }}
+
+## 审查目标
+审查 **{{ builder_id }}** 编写的测试是否充分、正确。
+
+### 完成标准 (逐条核对)
+{% for criterion in task.done_criteria %}
+- [ ] {{ criterion }}
+{% endfor %}
+
+### 质量检查结果 (由 builder 提交)
+{% for gate, result in builder_output.get("check_results", {}).items() %}
+- {{ gate }}: {{ result }}
+{% endfor %}
+{% if builder_output.get("gate_warnings") %}
+
+### ⚠️ 质量门警告 (系统自动检测)
+{% for warning in builder_output.get("gate_warnings", []) %}
+- {{ warning }}
+{% endfor %}
+{% endif %}
+
+## Builder 提交的报告
+
+| 项目 | 内容 |
+|------|------|
+| 状态 | {{ builder_output.get("status", "unknown") }} |
+| 摘要 | {{ builder_output.get("summary", "") }} |
+| 修改文件 | {{ builder_output.get("changed_files", []) | join(", ") or "无" }} |
+
+## 测试审查检查清单
+- [ ] 测试覆盖了所有 done_criteria 中的要求
+- [ ] 包含正常路径和异常路径测试
+- [ ] 边界条件已覆盖（空值、极值）
+- [ ] Mock 使用正确（mock 了外部依赖，没有 mock 被测代码）
+- [ ] 测试命名清晰，能看出测试意图
+- [ ] 断言充分（不是只检查 "不报错"）
+- [ ] 测试可独立运行，无隐式依赖
+- [ ] 没有重复或冗余的测试
+
+## 产出要求
+完成审查后，请输出以下 JSON:
+
+```json
+{
+  "decision": "approve 或 reject 或 request_changes",
+  "summary": "测试审查结论",
+  "issues": ["问题1", "问题2"],
+  "feedback": "给 builder 的修改建议"
+}
+```
+
+## 规则
+- 自己运行测试验证是否全部通过
+- 检查测试覆盖率是否达标
+- 确认 mock 正确性：不应该 mock 掉被测代码本身
+- 如果 reject，必须指出具体缺失的测试场景

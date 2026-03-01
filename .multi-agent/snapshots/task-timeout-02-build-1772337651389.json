@@ -1,0 +1,16 @@
+{
+  "builder_id": "windsurf",
+  "reviewer_id": "cursor",
+  "started_at": 1.0,
+  "build_started_at": 1772337651.386689,
+  "timeout_sec": 1800,
+  "skill_id": "code-implement",
+  "task_id": "task-timeout-02",
+  "done_criteria": [
+    "test"
+  ],
+  "conversation": [],
+  "input_payload": {
+    "requirement": "test"
+  }
+}
