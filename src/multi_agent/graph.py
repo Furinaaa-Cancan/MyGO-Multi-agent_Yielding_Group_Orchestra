@@ -35,6 +35,7 @@ from multi_agent.workspace import (
 MAX_SNAPSHOTS = 10
 MAX_CONVERSATION_SIZE = 50
 MAX_REQUEST_CHANGES = 3  # DDI research: effectiveness decays 60-80% after 2-3 attempts
+MAX_TASK_DURATION_SEC = 7200  # 2h total task guard (OWASP LLM10:2025 DoW prevention)
 
 
 class GraphStats:
@@ -56,6 +57,21 @@ class GraphStats:
     def record_retry_outcome(self, retry_round: int, decision: str) -> None:
         """Track retry effectiveness per round (DDI measurement, Nature 2025)."""
         self._retry_outcomes.append({"round": retry_round, "decision": decision})
+
+    def record_token_usage(self, node: str, usage: dict) -> None:
+        """Track token usage from IDE driver output (FinOps, Zylos 2026).
+
+        ``usage`` may contain: input_tokens, output_tokens, total_tokens, cost.
+        Only recorded if the IDE driver reports it — non-breaking.
+        """
+        if node not in self._stats:
+            self._stats[node] = {"count": 0, "total_ms": 0, "errors": 0}
+        s = self._stats[node]
+        for key in ("input_tokens", "output_tokens", "total_tokens"):
+            if key in usage:
+                s[key] = s.get(key, 0) + usage[key]
+        if "cost" in usage:
+            s["cost"] = round(s.get("cost", 0.0) + usage["cost"], 6)
 
     def summary(self) -> dict[str, dict]:
         result = {}
@@ -446,13 +462,15 @@ def _plan_node_inner(state: WorkflowState) -> dict:
         status_msg=f"🔵 等待 **{builder_id}** 执行 builder 任务",
     )
 
+    now = time.time()
     result = {
         "current_role": "builder",
         "builder_id": builder_id,
         "reviewer_id": reviewer_id,
-        "started_at": time.time(),
+        "started_at": now,
+        "task_started_at": state.get("task_started_at") or now,  # DoW guard anchor
         "conversation": [
-            {"role": "orchestrator", "action": "assigned", "agent": builder_id, "t": time.time()}
+            {"role": "orchestrator", "action": "assigned", "agent": builder_id, "t": now}
         ],
     }
     graph_hooks.fire_exit("plan", state, result)
@@ -494,6 +512,19 @@ def build_node(state: WorkflowState) -> dict:
 
 def _build_node_inner(state: WorkflowState) -> dict:
     graph_hooks.fire_enter("build", state)
+
+    # Total task duration guard (OWASP LLM10:2025 — DoW prevention)
+    task_started = state.get("task_started_at")
+    if task_started:
+        total_elapsed = time.time() - task_started
+        if total_elapsed > MAX_TASK_DURATION_SEC:
+            return {
+                "error": f"TOTAL_TIMEOUT: task running {int(total_elapsed)}s exceeds {MAX_TASK_DURATION_SEC}s limit",
+                "final_status": "failed",
+                "conversation": [{"role": "orchestrator", "action": "total_timeout",
+                                  "elapsed": int(total_elapsed), "t": time.time()}],
+            }
+
     builder_id = state.get("builder_id", "?")
     reviewer_id = state.get("reviewer_id", "?")
 
@@ -548,6 +579,10 @@ def _build_node_inner(state: WorkflowState) -> dict:
             "final_status": "failed",
             "conversation": [{"role": "builder", "output": "INVALID", "t": time.time()}],
         }
+
+    # Record optional token usage from IDE driver (FinOps)
+    if isinstance(result.get("token_usage"), dict):
+        graph_stats.record_token_usage("build", result["token_usage"])
 
     # Detect CLI driver error output — don't waste reviewer's time
     if result.get("status") == "error":
@@ -692,6 +727,10 @@ def _review_node_inner(state: WorkflowState) -> dict:
             "reviewer_output": {"decision": "reject", "feedback": "Invalid reviewer output"},
             "conversation": [{"role": "reviewer", "decision": "reject", "t": time.time()}],
         }
+
+    # Record optional token usage from IDE driver (FinOps)
+    if isinstance(result.get("token_usage"), dict):
+        graph_stats.record_token_usage("review", result["token_usage"])
 
     # Detect CLI driver error output
     if result.get("status") == "error":
