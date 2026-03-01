@@ -292,6 +292,25 @@ class TestDuplicateSubTaskId:
         assert _validate_skill_id("code-implement") == "code-implement"
         assert _validate_skill_id("test-and-review") == "test-and-review"
 
+    def test_load_agents_skips_malformed_ids(self, tmp_path):
+        import yaml
+        from multi_agent.router import load_agents
+        reg = {
+            "agents": [
+                {"id": "good-agent", "capabilities": ["implementation"]},
+                {"id": "../evil", "capabilities": []},
+                {"id": "", "capabilities": []},
+                {"id": "also-good", "capabilities": ["review"]},
+            ]
+        }
+        p = tmp_path / "agents.yaml"
+        p.write_text(yaml.dump(reg), encoding="utf-8")
+        agents = load_agents(p)
+        ids = [a.id for a in agents]
+        assert "good-agent" in ids
+        assert "also-good" in ids
+        assert "../evil" not in ids
+
     def test_agent_profile_rejects_path_traversal_id(self):
         from multi_agent.schema import AgentProfile
         import pytest as _pt

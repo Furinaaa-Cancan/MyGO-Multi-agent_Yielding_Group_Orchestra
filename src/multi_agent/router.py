@@ -51,17 +51,20 @@ def load_agents(path: Path | None = None) -> list[AgentProfile]:
     for a in agents_data:
         if not isinstance(a, dict) or "id" not in a:
             continue  # skip malformed entries
-        # agents.yaml v2 uses simpler format (no reliability/cost fields required)
-        profile = AgentProfile(
-            id=a["id"],
-            driver=a.get("driver", "file"),
-            command=a.get("command", ""),
-            capabilities=a.get("capabilities", []),
-            reliability=a.get("reliability", 0.9),
-            queue_health=a.get("queue_health", 0.9),
-            cost=a.get("cost", 0.5),
-        )
-        result.append(profile)
+        try:
+            # agents.yaml v2 uses simpler format (no reliability/cost fields required)
+            profile = AgentProfile(
+                id=a["id"],
+                driver=a.get("driver", "file"),
+                command=a.get("command", ""),
+                capabilities=a.get("capabilities", []),
+                reliability=a.get("reliability", 0.9),
+                queue_health=a.get("queue_health", 0.9),
+                cost=a.get("cost", 0.5),
+            )
+            result.append(profile)
+        except Exception:
+            continue  # skip entries that fail validation
     return result
 
 
