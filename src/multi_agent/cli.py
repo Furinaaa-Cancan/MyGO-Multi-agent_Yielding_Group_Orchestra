@@ -332,7 +332,7 @@ def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
     decompose_result = None
     if not decompose_file and not no_cache:
         from multi_agent.decompose import get_cached_decompose
-        decompose_result = get_cached_decompose(requirement)
+        decompose_result = get_cached_decompose(requirement, skill_id=skill)
         if decompose_result:
             click.echo(f"💾 使用缓存的分解结果 (原始需求相同)")
 
@@ -395,7 +395,7 @@ def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
     if not decompose_file and not no_cache:
         from multi_agent.decompose import cache_decompose
         try:
-            cache_decompose(requirement, decompose_result)
+            cache_decompose(requirement, decompose_result, skill_id=skill)
         except Exception:
             pass
 

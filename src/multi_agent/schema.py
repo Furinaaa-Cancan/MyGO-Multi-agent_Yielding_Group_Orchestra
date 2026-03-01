@@ -43,6 +43,25 @@ class CheckKind(str, Enum):
     ARTIFACT_CHECKSUM = "artifact_checksum"
 
 
+class ErrorCode(str, Enum):
+    """Unified error codes for graph workflow failures.
+
+    Aligned with SHIELDA (2025) exception taxonomy categories:
+    Task Flow, Interface, Tool, Planning, Goal.
+    """
+    BUDGET_EXHAUSTED = "BUDGET_EXHAUSTED"
+    REQUEST_CHANGES_CAP = "REQUEST_CHANGES_CAP"
+    TIMEOUT = "TIMEOUT"
+    PRECONDITION_FAILED = "PRECONDITION_FAILED"
+    INVALID_OUTPUT = "INVALID_OUTPUT"
+    BUILDER_ERROR = "BUILDER_ERROR"
+    REVIEWER_ERROR = "REVIEWER_ERROR"
+    CIRCULAR_DEPENDENCY = "CIRCULAR_DEPENDENCY"
+    NO_AGENT = "NO_AGENT"
+    CANCELLED = "CANCELLED"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+
+
 class BackoffStrategy(str, Enum):
     NONE = "none"
     LINEAR = "linear"

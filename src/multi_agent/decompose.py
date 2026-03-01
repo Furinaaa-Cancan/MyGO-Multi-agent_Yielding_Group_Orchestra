@@ -299,15 +299,20 @@ def _cache_dir() -> Path:
     return workspace_dir() / "cache"
 
 
-def _cache_key(requirement: str) -> str:
-    """Generate a cache key from the requirement text."""
-    return hashlib.sha256(requirement.strip().encode()).hexdigest()[:16]
+def _cache_key(requirement: str, skill_id: str = "") -> str:
+    """Generate a cache key from requirement + skill_id.
+
+    Including skill_id prevents cross-skill cache collisions
+    (literature: cache key must cover all output-affecting inputs).
+    """
+    blob = f"{skill_id}:{requirement.strip()}"
+    return hashlib.sha256(blob.encode()).hexdigest()[:16]
 
 
-def get_cached_decompose(requirement: str) -> DecomposeResult | None:
-    """Look up a cached decompose result for the given requirement."""
+def get_cached_decompose(requirement: str, skill_id: str = "") -> DecomposeResult | None:
+    """Look up a cached decompose result for the given requirement + skill."""
     cd = _cache_dir()
-    key = _cache_key(requirement)
+    key = _cache_key(requirement, skill_id)
     cache_file = cd / f"decompose-{key}.json"
     if not cache_file.exists():
         return None
@@ -320,11 +325,11 @@ def get_cached_decompose(requirement: str) -> DecomposeResult | None:
     return None
 
 
-def cache_decompose(requirement: str, result: DecomposeResult) -> Path:
+def cache_decompose(requirement: str, result: DecomposeResult, skill_id: str = "") -> Path:
     """Cache a decompose result for future reuse."""
     cd = _cache_dir()
     cd.mkdir(parents=True, exist_ok=True)
-    key = _cache_key(requirement)
+    key = _cache_key(requirement, skill_id)
     cache_file = cd / f"decompose-{key}.json"
     cache_file.write_text(result.model_dump_json(indent=2), encoding="utf-8")
     return cache_file
