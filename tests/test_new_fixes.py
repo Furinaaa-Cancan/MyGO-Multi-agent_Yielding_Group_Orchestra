@@ -321,6 +321,29 @@ class TestDuplicateSubTaskId:
         AgentProfile(id="windsurf", capabilities=[])
         AgentProfile(id="codex-cli", capabilities=[])
 
+    def test_request_changes_cap_escalates(self):
+        """Literature: SHIELDA pattern — soft retries must have a termination bound."""
+        from multi_agent.graph import _decide_node_inner, MAX_REQUEST_CHANGES
+        from unittest.mock import patch as _p
+        # Build conversation with MAX_REQUEST_CHANGES request_changes entries
+        convo = [{"role": "orchestrator", "action": "request_changes", "feedback": f"fix {i}", "t": 0}
+                 for i in range(MAX_REQUEST_CHANGES)]
+        state = {
+            "task_id": "test-rc-cap",
+            "reviewer_output": {"decision": "request_changes", "feedback": "fix again"},
+            "conversation": convo,
+            "retry_count": 0,
+            "retry_budget": 2,
+            "builder_id": "w",
+            "reviewer_id": "c",
+            "done_criteria": [],
+        }
+        with _p("multi_agent.graph.archive_conversation"), \
+             _p("multi_agent.graph.graph_hooks"):
+            result = _decide_node_inner(state)
+        assert result["final_status"] == "escalated"
+        assert result["error"] == "REQUEST_CHANGES_CAP"
+
     def test_validate_detects_circular_deps(self):
         from multi_agent.decompose import validate_decompose_result
         from multi_agent.schema import DecomposeResult, SubTask

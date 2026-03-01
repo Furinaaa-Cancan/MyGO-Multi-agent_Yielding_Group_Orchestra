@@ -8,7 +8,7 @@
 
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-574%20passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-575%20passed-brightgreen.svg)]()
 
 [English](#english) | [中文](#中文)
 
@@ -283,7 +283,7 @@ Add any tool in `agents.yaml`. No code changes needed.
 
 ```bash
 pytest tests/ -v
-# 574 tests passed
+# 575 tests passed
 ```
 
 ## License
@@ -459,7 +459,7 @@ ma go "实现 POST /users" --builder windsurf --reviewer cursor
 ## 测试
 
 ```bash
-pytest tests/ -v   # 574 tests passed
+pytest tests/ -v   # 575 tests passed
 ```
 
 ## 许可证

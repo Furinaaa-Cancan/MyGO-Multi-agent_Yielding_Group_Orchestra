@@ -164,6 +164,9 @@ def _eligible(
         if not all(cap in agent.capabilities for cap in required_capabilities):
             continue
         candidates.append(agent)
+    # Filter out agents with critically low health score (literature: health-based routing)
+    MIN_HEALTH_SCORE = 0.3
+    candidates = [a for a in candidates if a.reliability * a.queue_health >= MIN_HEALTH_SCORE]
     candidates.sort(key=lambda a: (a.reliability * a.queue_health, -a.cost), reverse=True)
     return candidates
 

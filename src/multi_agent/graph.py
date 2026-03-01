@@ -34,6 +34,7 @@ from multi_agent.workspace import (
 
 MAX_SNAPSHOTS = 10
 MAX_CONVERSATION_SIZE = 50
+MAX_REQUEST_CHANGES = 5  # cap soft retries to prevent infinite loops
 
 
 class GraphStats:
@@ -99,14 +100,32 @@ def log_timing(task_id: str, node: str, start: float, end: float) -> None:
 
 
 def trim_conversation(conversation: list[dict]) -> list[dict]:
-    """Keep conversation within MAX_CONVERSATION_SIZE, preserving first and last entries."""
+    """Keep conversation within MAX_CONVERSATION_SIZE, preserving first and last entries.
+
+    Includes a lightweight summary of removed entries so downstream AI agents
+    retain context awareness (literature: JetBrains context management research).
+    """
     if len(conversation) <= MAX_CONVERSATION_SIZE:
         return conversation
     keep_head = 5
     keep_tail = MAX_CONVERSATION_SIZE - keep_head - 1
-    trimmed_marker = {"role": "system", "action": "trimmed",
-                      "details": f"Removed {len(conversation) - MAX_CONVERSATION_SIZE} entries",
-                      "t": time.time()}
+    removed = conversation[keep_head:-keep_tail]
+    # Build lightweight summary of what was removed
+    action_counts: dict[str, int] = {}
+    feedback_snippets: list[str] = []
+    for e in removed:
+        a = e.get("action", "unknown")
+        action_counts[a] = action_counts.get(a, 0) + 1
+        fb = e.get("feedback", "")
+        if fb and len(feedback_snippets) < 3:
+            feedback_snippets.append(fb[:80])
+    summary_parts = [f"{a}×{c}" for a, c in action_counts.items()]
+    trimmed_marker = {
+        "role": "system", "action": "trimmed",
+        "details": f"Removed {len(removed)} entries: {', '.join(summary_parts)}",
+        "key_feedback": feedback_snippets,
+        "t": time.time(),
+    }
     return conversation[:keep_head] + [trimmed_marker] + conversation[-keep_tail:]
 
 
@@ -742,11 +761,32 @@ def _decide_node_inner(state: WorkflowState) -> dict:
         graph_hooks.fire_exit("decide", state, approve_result)
         return approve_result
 
-    # request_changes: soft reject — always retry, does NOT consume retry budget
+    # request_changes: soft reject — does NOT consume retry budget,
+    # but capped at MAX_REQUEST_CHANGES to prevent infinite loops (SHIELDA pattern)
     if decision == "request_changes":
         feedback = reviewer_output.get("feedback", "")
         retry_count = state.get("retry_count", 0)  # do NOT increment
         budget = state.get("retry_budget", 2)
+
+        # Count how many request_changes have occurred
+        rc_count = sum(
+            1 for e in state.get("conversation", [])
+            if e.get("action") == "request_changes"
+        )
+        if rc_count >= MAX_REQUEST_CHANGES:
+            _log.warning("request_changes cap reached (%d), escalating", rc_count)
+            final_entry = {"role": "orchestrator", "action": "escalated",
+                           "reason": f"request_changes cap ({rc_count})", "t": time.time()}
+            full_convo = state.get("conversation", []) + [final_entry]
+            archive_conversation(state["task_id"], full_convo)
+            cap_result = {
+                "error": "REQUEST_CHANGES_CAP",
+                "final_status": "escalated",
+                "conversation": [final_entry],
+            }
+            graph_hooks.fire_exit("decide", state, cap_result)
+            return cap_result
+
         write_dashboard(
             task_id=state["task_id"],
             done_criteria=state.get("done_criteria", []),

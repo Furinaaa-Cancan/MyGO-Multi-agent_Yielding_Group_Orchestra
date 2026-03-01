@@ -24,7 +24,12 @@ FILE_OP_DELAY = 0.1
 
 
 def retry_file_op(retries: int = FILE_OP_RETRIES, delay: float = FILE_OP_DELAY):
-    """Retry decorator for file operations that may fail due to transient OS errors."""
+    """Retry decorator for file operations that may fail due to transient OS errors.
+
+    Uses exponential backoff with jitter to avoid thundering-herd on shared
+    filesystems (literature: production AI error handling best practice).
+    """
+    import random
     def decorator(fn):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
@@ -39,7 +44,8 @@ def retry_file_op(retries: int = FILE_OP_RETRIES, delay: float = FILE_OP_DELAY):
                             "%s failed (attempt %d/%d): %s",
                             fn.__name__, attempt + 1, retries, e,
                         )
-                        time.sleep(delay * (attempt + 1))
+                        backoff = delay * (2 ** attempt) + random.uniform(0, delay)
+                        time.sleep(backoff)
             raise last_err  # type: ignore[misc]
         return wrapper
     return decorator

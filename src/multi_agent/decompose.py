@@ -384,9 +384,17 @@ def estimate_complexity(requirement: str) -> str:
                     "integrate", "deploy", "configure", "build", "design"]
     verb_count = sum(1 for v in action_verbs if v in text.lower())
 
-    if length > 200 or verb_count >= 3:
+    # Structural complexity signals (literature: MASAI structural analysis)
+    complex_signals = [
+        "数据库", "database", "认证", "auth", "API", "微服务", "microservice",
+        "分布式", "distributed", "缓存", "cache", "队列", "queue",
+        "websocket", "GraphQL", "OAuth", "JWT", "RBAC",
+    ]
+    struct_count = sum(1 for s in complex_signals if s.lower() in text.lower())
+
+    if length > 200 or verb_count >= 3 or struct_count >= 2:
         return "complex"
-    if length < 50 and conj_count == 0:
+    if length < 50 and conj_count == 0 and struct_count == 0:
         return "simple"
     return "medium"
 
