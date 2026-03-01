@@ -34,7 +34,7 @@ from multi_agent.workspace import (
 
 MAX_SNAPSHOTS = 10
 MAX_CONVERSATION_SIZE = 50
-MAX_REQUEST_CHANGES = 5  # cap soft retries to prevent infinite loops
+MAX_REQUEST_CHANGES = 3  # DDI research: effectiveness decays 60-80% after 2-3 attempts
 
 
 class GraphStats:
@@ -688,6 +688,20 @@ def _review_node_inner(state: WorkflowState) -> dict:
     except Exception:
         decision = result.get("decision", "reject")
 
+    # Rubber-stamp detection (NeurIPS 2025, Za et al. — collusion-aware oversight):
+    # If reviewer approves without reasoning or substantive summary, flag it.
+    if decision == "approve":
+        reasoning = result.get("reasoning", "")
+        summary = result.get("summary", "")
+        if not reasoning and len(summary) < 20:
+            _log.warning(
+                "Rubber-stamp approve detected: no reasoning, summary=%r. "
+                "Collusion risk — reviewer may not have performed independent verification.",
+                summary,
+            )
+            # Inject warning into output so decide_node can see it
+            result["_rubber_stamp_warning"] = True
+
     review_result = {
         "reviewer_output": result,
         "review_started_at": review_started,
@@ -831,6 +845,21 @@ def _decide_node_inner(state: WorkflowState) -> dict:
 
     # Has budget → retry with feedback
     feedback = reviewer_output.get("feedback", "")
+
+    # DDI decay warning (Nature Sci Rep 2025, NeurIPS 2024 explore-exploit):
+    # Debugging effectiveness decays 60-80% after 2-3 attempts.
+    # Suggest fresh approach instead of incremental patching.
+    if retry_count >= 2:
+        _log.warning(
+            "DDI decay: retry %d/%d — effectiveness likely degraded 60-80%%. "
+            "Consider fresh approach instead of incremental patching.",
+            retry_count, budget,
+        )
+        feedback += (
+            "\n\n⚠️ 注意: 这是第 {rc} 次重试。研究表明调试效果在 2-3 次后衰减 60-80%。"
+            " 建议: 考虑从头重新实现而非继续修补同一代码 (fresh start strategy)。"
+        ).format(rc=retry_count)
+
     write_dashboard(
         task_id=state["task_id"],
         done_criteria=state.get("done_criteria", []),
