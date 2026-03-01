@@ -144,8 +144,17 @@ def spawn_cli_agent(
                 stderr=subprocess.PIPE,
                 text=True,
             )
+            # Read stdout in a thread to avoid deadlock when both
+            # stdout and stderr pipes fill up (Python subprocess docs).
+            stdout_lines: list[str] = []
+            def _drain_stdout():
+                if proc.stdout:
+                    stdout_lines.append(proc.stdout.read())
+            stdout_thread = threading.Thread(target=_drain_stdout, daemon=True)
+            stdout_thread.start()
             stderr_text = _stream_stderr(proc, agent_id, role)
-            stdout_text = proc.stdout.read() if proc.stdout else ""
+            stdout_thread.join(timeout=timeout_sec)
+            stdout_text = stdout_lines[0] if stdout_lines else ""
             proc.wait(timeout=timeout_sec)
 
             # If the CLI tool didn't write the outbox file itself,

@@ -295,7 +295,7 @@ def cleanup_old_files(max_age_days: int = 7) -> int:
     deleted = 0
     cutoff = time.time() - (max_age_days * 86400)
 
-    for subdir in ("tasks", "history", "logs"):
+    for subdir in ("tasks", "history", "logs", "snapshots", "cache"):
         d = ws / subdir
         if not d.exists():
             continue

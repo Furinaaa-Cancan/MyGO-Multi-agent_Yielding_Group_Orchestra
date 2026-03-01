@@ -27,6 +27,7 @@ class OutboxPoller:
         self._current_interval = poll_interval
         self._idle_count = 0
         self._known: dict[str, float] = {}
+        self._warned_oversized: set[str] = set()
 
     def _scan(self) -> dict[str, Path]:
         """Scan outbox/ for .json files, return {role: path}.
@@ -74,11 +75,15 @@ class OutboxPoller:
             except OSError:
                 continue  # File deleted between _scan and stat
 
-            # Skip oversized files
+            # Skip oversized files (warn only once per role to avoid log flood)
             if size > MAX_OUTBOX_SIZE:
-                import warnings
-                warnings.warn(f"Outbox file {path} exceeds {MAX_OUTBOX_SIZE} bytes, skipping.")
+                if role not in self._warned_oversized:
+                    import warnings
+                    warnings.warn(f"Outbox file {path} exceeds {MAX_OUTBOX_SIZE} bytes, skipping.")
+                    self._warned_oversized.add(role)
                 continue
+            else:
+                self._warned_oversized.discard(role)
 
             if role not in self._known or self._known[role] < mtime:
                 # Wait for file to stabilize before reading
@@ -105,6 +110,8 @@ class OutboxPoller:
         """
         count = 0
         while True:
+            if stop_after is not None and count >= stop_after:
+                return
             results = self.check_once()
             if results:
                 self._idle_count = 0
@@ -118,6 +125,6 @@ class OutboxPoller:
             for role, data in results:
                 callback(role, data)
                 count += 1
-                if stop_after and count >= stop_after:
+                if stop_after is not None and count >= stop_after:
                     return
             time.sleep(self._current_interval)

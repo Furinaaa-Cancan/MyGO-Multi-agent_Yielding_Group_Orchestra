@@ -260,3 +260,49 @@ class TestWatcherBoundary:
         link.symlink_to(real_file)
         results = poller.check_once()
         assert len(results) == 1
+
+
+class TestStopAfterZero:
+    """R11: stop_after=0 should return immediately, not loop forever."""
+
+    @patch.object(OutboxPoller, "_wait_stable", return_value=True)
+    def test_stop_after_zero_returns_immediately(self, mock_stable, tmp_outbox):
+        poller = OutboxPoller(poll_interval=0.01)
+        collected = []
+        # stop_after=0 means "stop before processing any" — should return right away
+        poller.watch(callback=lambda r, d: collected.append(r), stop_after=0)
+        assert collected == []
+
+
+class TestOversizedWarningDedup:
+    """R11: oversized file warning should only fire once per role."""
+
+    def test_warns_only_once(self, tmp_outbox):
+        poller = OutboxPoller()
+        big_file = tmp_outbox / "builder.json"
+        big_file.write_bytes(b"x" * (MAX_OUTBOX_SIZE + 1))
+
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            poller.check_once()
+            poller.check_once()
+            poller.check_once()
+        oversized_warnings = [x for x in w if "exceeds" in str(x.message)]
+        assert len(oversized_warnings) == 1
+
+    def test_warns_again_after_size_normalizes(self, tmp_outbox):
+        poller = OutboxPoller()
+        big_file = tmp_outbox / "builder.json"
+        big_file.write_bytes(b"x" * (MAX_OUTBOX_SIZE + 1))
+
+        import warnings
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            poller.check_once()  # first warn
+            big_file.write_text(json.dumps({"status": "ok", "summary": "s"}))
+            poller.check_once()  # normal → clears warning
+            big_file.write_bytes(b"x" * (MAX_OUTBOX_SIZE + 1))
+            poller.check_once()  # should warn again
+        oversized_warnings = [x for x in w if "exceeds" in str(x.message)]
+        assert len(oversized_warnings) == 2
