@@ -509,10 +509,9 @@ def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
                     auto_confirm: bool = False, decompose_file: str | None = None,
                     no_cache: bool = False):
     """Decompose → sequential sub-task build-review cycles → aggregate."""
-    from langgraph.errors import GraphInterrupt
-
     from multi_agent.decompose import read_decompose_result, topo_sort, topo_sort_grouped, write_decompose_prompt
     from multi_agent.meta_graph import aggregate_results, build_sub_task_state
+    from multi_agent.orchestrator import TaskStartError, start_task
 
     click.echo(f"🧩 Task Decomposition: {parent_task_id}")
     click.echo(f"   {requirement}")
@@ -704,13 +703,11 @@ def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
         sub_task_id = sub_state["task_id"]
         sub_config = _make_config(sub_task_id)
 
-        # Run sub-task graph
+        # Run sub-task graph via orchestrator
         try:
-            app.invoke(sub_state, sub_config)
-        except GraphInterrupt:
-            pass
-        except Exception as e:
-            click.echo(f"❌ Sub-task {st.id} failed to start: {e}", err=True)
+            start_task(app, sub_task_id, sub_state)
+        except TaskStartError as e:
+            click.echo(f"❌ Sub-task {st.id} failed to start: {e.cause}", err=True)
             prior_results.append({
                 "sub_id": st.id, "status": "failed",
                 "summary": str(e), "changed_files": [], "retry_count": 0,
@@ -787,9 +784,9 @@ def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
                     )
                     sub_config2 = _make_config(sub_state2["task_id"])
                     try:
-                        app.invoke(sub_state2, sub_config2)
-                    except GraphInterrupt:
-                        pass
+                        start_task(app, sub_state2["task_id"], sub_state2)
+                    except TaskStartError:
+                        pass  # Will be detected in watch loop
                     _show_waiting(app, sub_config2)
                     _run_watch_loop(app, sub_config2, sub_state2["task_id"], manage_lock=False)
                     snap2 = app.get_state(sub_config2)
@@ -1108,32 +1105,22 @@ def watch(task_id: str | None, interval: float):
 
 def _show_waiting(app, config):
     """Show current waiting state — auto-spawn CLI agents or show manual instructions."""
-    snapshot = app.get_state(config)
-    vals = snapshot.values if snapshot else {}
-    final = vals.get("final_status", "")
-    if _is_terminal_final_status(final):
+    from multi_agent.orchestrator import get_task_status
+
+    task_id = config["configurable"]["thread_id"]
+    status = get_task_status(app, task_id)
+
+    if status.is_terminal:
+        final = status.final_status or "done"
         if final in ("approved", "done"):
             click.echo(f"✅ Task finished. Status: {final}")
         else:
-            error = vals.get("error", "")
+            error = status.error or ""
             click.echo(f"❌ Task finished. Status: {final}{' — ' + error if error else ''}")
         return
 
-    if not snapshot or not snapshot.next:
-        error = vals.get("error", "")
-        if final in ("approved", ""):
-            click.echo(f"✅ Task finished. Status: {final or 'done'}")
-        else:
-            click.echo(f"❌ Task finished. Status: {final}{' — ' + error if error else ''}")
-        return
-
-    role = "builder"
-    agent = "?"
-    if snapshot.tasks and snapshot.tasks[0].interrupts:
-        info = snapshot.tasks[0].interrupts[0].value
-        role = info.get("role", "builder")
-        agent = info.get("agent", "?")
-
+    role = status.waiting_role or "builder"
+    agent = status.waiting_agent or "?"
     step_label = "Build" if role == "builder" else "Review"
 
     # Check if agent has CLI driver → auto-spawn (with graceful degradation)
@@ -1141,8 +1128,7 @@ def _show_waiting(app, config):
     drv = get_agent_driver(agent)
     if drv["driver"] == "cli" and drv["command"]:
         if can_use_cli(drv["command"]):
-            vals = snapshot.values or {}
-            timeout = vals.get("timeout_sec", 600)
+            timeout = status.values.get("timeout_sec", 600)
             click.echo(f"🤖 [{step_label}] 自动调用 {agent} CLI…")
             spawn_cli_agent(agent, role, drv["command"], timeout_sec=timeout)
         else:
@@ -1158,9 +1144,7 @@ def _show_waiting(app, config):
 
 def _run_watch_loop(app, config, task_id: str, interval: float = 2.0, manage_lock: bool = True):
     """Shared watch loop — polls outbox/ and auto-submits output."""
-    from langgraph.errors import GraphInterrupt
-    from langgraph.types import Command
-
+    from multi_agent.orchestrator import get_task_status, resume_task
     from multi_agent.watcher import OutboxPoller
 
     poller = OutboxPoller(poll_interval=interval)
@@ -1174,56 +1158,40 @@ def _run_watch_loop(app, config, task_id: str, interval: float = 2.0, manage_loc
             elapsed = int(time.time() - start_time)
             mins, secs = divmod(elapsed, 60)
 
-            snapshot = app.get_state(config)
-            vals = snapshot.values if snapshot else {}
-            final = vals.get("final_status", "")
-            if _is_terminal_final_status(final):
+            status = get_task_status(app, task_id)
+
+            if status.is_terminal:
+                final = status.final_status or "done"
                 if final:
                     save_task_yaml(task_id, {"task_id": task_id, "status": final})
                 if manage_lock:
                     release_lock()
                     clear_runtime()
                 if final in ("approved", "done"):
+                    summary = ""
+                    bo = status.values.get("builder_output")
+                    if isinstance(bo, dict):
+                        summary = bo.get("summary", "")
+                    retries = status.values.get("retry_count", 0)
                     click.echo(f"[{mins:02d}:{secs:02d}] ✅ Task finished. Status: {final}")
-                else:
-                    error = vals.get("error", "")
-                    click.echo(f"[{mins:02d}:{secs:02d}] ❌ Task finished. Status: {final}{' — ' + error if error else ''}")
-                return
-
-            if not snapshot or not snapshot.next:
-                final = vals.get("final_status", "")
-                if final:
-                    save_task_yaml(task_id, {"task_id": task_id, "status": final})
-                if manage_lock:
-                    release_lock()
-                    clear_runtime()
-                if final in ("approved", ""):
-                    summary = vals.get("builder_output", {}).get("summary", "") if isinstance(vals.get("builder_output"), dict) else ""
-                    retries = vals.get("retry_count", 0)
-                    click.echo(f"[{mins:02d}:{secs:02d}] ✅ Task finished. Status: {final or 'done'}")
                     if summary:
                         click.echo(f"             {summary}")
                     if retries:
                         click.echo(f"             (经过 {retries} 次重试)")
                 else:
-                    error = vals.get("error", "")
+                    error = status.error or ""
                     click.echo(f"[{mins:02d}:{secs:02d}] ❌ Task finished. Status: {final}{' — ' + error if error else ''}")
                 return
 
-            # Determine which role we're waiting for
-            role = "builder"
-            agent = "?"
-            if snapshot.tasks and snapshot.tasks[0].interrupts:
-                info = snapshot.tasks[0].interrupts[0].value
-                role = info.get("role", "builder")
-                agent = info.get("agent", "?")
+            role = status.waiting_role or "builder"
+            agent = status.waiting_agent or "?"
 
             for detected_role, data in poller.check_once():
                 if detected_role == role:
                     step_label = "Build" if role == "builder" else "Review"
                     click.echo(f"[{mins:02d}:{secs:02d}] 📥 {step_label} 完成 ({agent})")
                     try:
-                        data = _normalize_resume_output(role, data, vals)
+                        data = _normalize_resume_output(role, data, status.values)
                     except ValueError as e:
                         click.echo(f"[{mins:02d}:{secs:02d}] ❌ {e}", err=True)
                         click.echo(f"[{mins:02d}:{secs:02d}] 🔁 请修复 outbox/{role}.json 后重试", err=True)
@@ -1235,9 +1203,7 @@ def _run_watch_loop(app, config, task_id: str, interval: float = 2.0, manage_loc
                         for ve in v_errors:
                             click.echo(f"             - {ve}", err=True)
                     try:
-                        app.invoke(Command(resume=data), config)
-                    except GraphInterrupt:
-                        pass
+                        next_status = resume_task(app, task_id, data)
                     except Exception as e:
                         if manage_lock:
                             release_lock()
@@ -1247,18 +1213,15 @@ def _run_watch_loop(app, config, task_id: str, interval: float = 2.0, manage_loc
                         return
 
                     # Show next waiting state or completion
-                    next_snap = app.get_state(config)
-                    if next_snap and next_snap.next and next_snap.tasks and next_snap.tasks[0].interrupts:
-                        next_info = next_snap.tasks[0].interrupts[0].value
-                        next_role = next_info.get("role", "?")
-                        next_agent = next_info.get("agent", "?")
+                    if not next_status.is_terminal and next_status.waiting_role:
+                        next_role = next_status.waiting_role
+                        next_agent = next_status.waiting_agent or "?"
                         # Show retry feedback if this is a retry
-                        next_vals = next_snap.values or {}
-                        retry_n = next_vals.get("retry_count", 0)
+                        retry_n = next_status.values.get("retry_count", 0)
                         if retry_n > 0 and next_role == "builder":
-                            reviewer_out = next_vals.get("reviewer_output", {})
-                            feedback = reviewer_out.get("feedback", "")
-                            budget = next_vals.get("retry_budget", 2)
+                            reviewer_out = next_status.values.get("reviewer_output") or {}
+                            feedback = reviewer_out.get("feedback", "") if isinstance(reviewer_out, dict) else ""
+                            budget = next_status.values.get("retry_budget", 2)
                             click.echo(f"[{mins:02d}:{secs:02d}] 🔄 Reviewer 要求修改 ({retry_n}/{budget}):")
                             if feedback:
                                 click.echo(f"             {feedback}")
@@ -1266,7 +1229,7 @@ def _run_watch_loop(app, config, task_id: str, interval: float = 2.0, manage_loc
                         from multi_agent.driver import can_use_cli, get_agent_driver, spawn_cli_agent
                         drv = get_agent_driver(next_agent)
                         if drv["driver"] == "cli" and drv["command"] and can_use_cli(drv["command"]):
-                            t_sec = next_vals.get("timeout_sec", 600)
+                            t_sec = next_status.values.get("timeout_sec", 600)
                             click.echo(f"[{mins:02d}:{secs:02d}] 🤖 自动调用 {next_agent} CLI…")
                             spawn_cli_agent(next_agent, next_role, drv["command"], timeout_sec=t_sec)
                         else:
