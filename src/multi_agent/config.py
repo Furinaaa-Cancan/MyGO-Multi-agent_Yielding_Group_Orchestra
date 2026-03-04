@@ -145,3 +145,79 @@ def load_project_config() -> dict:
         import warnings
         warnings.warn(f".ma.yaml parse error: {e}. Using defaults.", stacklevel=2)
         return {}
+
+
+# ── Unified Configuration Aggregator (defect C3 fix) ─────
+
+_DEFAULTS = {
+    "skill": "code-implement",
+    "retry_budget": 2,
+    "timeout_sec": 1800,
+    "watch_interval": 2.0,
+    "workflow_mode": "strict",
+    "builder": "",
+    "reviewer": "",
+    "lang": "zh",
+}
+
+
+class ProjectSettings:
+    """Aggregated project configuration with clear precedence.
+
+    Precedence (highest wins):
+        1. CLI flags (``overrides`` dict)
+        2. ``.ma.yaml`` project config
+        3. ``config/workmode.yaml`` mode defaults
+        4. Hardcoded ``_DEFAULTS``
+
+    Architecture fix (defect C3): Previously each module independently loaded
+    its own subset of config from different sources, leading to inconsistent
+    defaults and duplicated loading logic across cli.py, session.py, graph.py.
+    """
+
+    def __init__(self, *, overrides: dict | None = None, mode: str | None = None):
+        # Layer 4: hardcoded defaults
+        self._merged: dict = dict(_DEFAULTS)
+
+        # Layer 3: workmode.yaml mode defaults
+        mode = mode or self._merged.get("workflow_mode", "strict")
+        wm_path = root_dir() / "config" / "workmode.yaml"
+        if wm_path.exists():
+            try:
+                wm = yaml.safe_load(wm_path.read_text(encoding="utf-8")) or {}
+                mode_cfg = (wm.get("modes") or {}).get(mode) or {}
+                if isinstance(mode_cfg, dict):
+                    roles = mode_cfg.get("roles") or {}
+                    if isinstance(roles, dict):
+                        for k in ("builder", "reviewer"):
+                            if roles.get(k):
+                                self._merged[k] = roles[k]
+                    if "review_policy" in mode_cfg:
+                        self._merged["review_policy"] = mode_cfg["review_policy"]
+            except Exception:
+                pass
+
+        # Layer 2: .ma.yaml
+        proj = load_project_config()
+        for k, v in proj.items():
+            if v is not None and v != "":
+                self._merged[k] = v
+
+        # Layer 1: CLI overrides (highest precedence)
+        if overrides:
+            for k, v in overrides.items():
+                if v is not None and v != "":
+                    self._merged[k] = v
+
+    def get(self, key: str, default=None):
+        return self._merged.get(key, default)
+
+    def __getitem__(self, key: str):
+        return self._merged[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._merged
+
+    def as_dict(self) -> dict:
+        """Return a copy of the merged configuration."""
+        return dict(self._merged)
