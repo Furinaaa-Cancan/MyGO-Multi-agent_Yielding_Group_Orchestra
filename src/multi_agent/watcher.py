@@ -98,7 +98,7 @@ class OutboxPoller:
                         # Prevents duplicate submissions from mtime jitter
                         # on NFS/external drives or rapid file touch events.
                         import hashlib
-                        content_hash = hashlib.md5(raw.encode()).hexdigest()
+                        content_hash = hashlib.sha256(raw.encode()).hexdigest()
                         if self._content_hashes.get(role) == content_hash:
                             self._known[role] = mtime  # update mtime but skip
                             continue

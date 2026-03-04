@@ -1211,7 +1211,13 @@ def _decide_node_inner(state: WorkflowState) -> dict:
 # ── Cancel Detection ──────────────────────────────────
 
 def _is_cancelled(task_id: str) -> bool:
-    """Check if a task has been cancelled by reading its YAML status."""
+    """Check if a task has been cancelled by reading its YAML status.
+
+    NOTE: This performs a non-locked file read. A concurrent write (e.g. from
+    ``ma cancel``) could yield a partial/corrupt read. The broad ``except``
+    below treats any parse failure as "not cancelled", which is the safe
+    default — the next poll cycle will re-check.
+    """
     from multi_agent.config import tasks_dir
     import yaml
     path = tasks_dir() / f"{task_id}.yaml"
@@ -1277,7 +1283,15 @@ _conn_lock = __import__("threading").RLock()
 
 
 def _get_connection(path: str) -> "sqlite3.Connection":
-    """Get or create a SQLite connection for the given path (singleton per path)."""
+    """Get or create a SQLite connection for the given path (singleton per path).
+
+    THREAD SAFETY NOTE: check_same_thread=False allows cross-thread reuse,
+    but SQLite itself serializes writes. Concurrent invoke() calls sharing
+    this connection are safe for LangGraph checkpoint reads/writes because
+    SqliteSaver uses transactions internally. However, if future code adds
+    raw SQL outside SqliteSaver, wrap it in _conn_lock or use a dedicated
+    connection to avoid "database is locked" under heavy concurrency.
+    """
     import atexit
     import sqlite3
 
