@@ -12,6 +12,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from multi_agent.config import root_dir
 from multi_agent.schema import SkillContract, Task
+from datetime import UTC
 
 log = logging.getLogger(__name__)
 
@@ -137,7 +138,7 @@ def get_prompt_metadata(role: str) -> str:
     from datetime import datetime, timezone
 
     from multi_agent import __version__
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     return f"<!-- AgentOrchestra v{__version__} | prompt: {role} | rendered: {ts} -->"
 
 

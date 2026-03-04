@@ -8,7 +8,7 @@ import re
 import shutil
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
 from typing import Any
 
@@ -629,7 +629,7 @@ def _update_task_yaml_status(task_id: str, status: str) -> None:
 def _save_handoff(task_id: str, agent: str, envelope: dict[str, Any]) -> Path:
     handoff_dir = root_dir() / "runtime" / "handoffs" / task_id
     handoff_dir.mkdir(parents=True, exist_ok=True)
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     out = handoff_dir / f"{ts}-{agent}.json"
     i = 1
     while out.exists():

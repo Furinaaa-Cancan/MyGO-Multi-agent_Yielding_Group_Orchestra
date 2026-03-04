@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from datetime import UTC
 
 # ── Input Validation ──────────────────────────────────────
 
@@ -65,7 +66,7 @@ def is_terminal_final_status(value: object) -> bool:
 def now_utc() -> str:
     """Return current UTC time as ISO-8601 string (seconds precision)."""
     from datetime import datetime, timezone
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 # ── Review Policy Constants ───────────────────────────────

@@ -176,7 +176,7 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
             if not builder_output_file:
                 click.echo("❌ --builder-output is required for reviewer role", err=True)
                 raise SystemExit(1)
-            with open(builder_output_file, "r", encoding="utf-8") as f:
+            with open(builder_output_file, encoding="utf-8") as f:
                 builder_output = json.load(f)
             result = render_reviewer_prompt(
                 task, contract, agent_id="preview",

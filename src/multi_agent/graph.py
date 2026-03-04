@@ -346,7 +346,7 @@ def _graph_node(node_name: str):
 
     def decorator(inner_fn):
         @functools.wraps(inner_fn)
-        def wrapper(state: "WorkflowState") -> dict[str, Any]:
+        def wrapper(state: WorkflowState) -> dict[str, Any]:
             _t0 = time.time()
             _ok = False
             try:
@@ -1095,9 +1095,9 @@ def decide_node(state: WorkflowState) -> dict[str, Any]:
             retry_count, budget,
         )
         feedback += (
-            "\n\n⚠️ 注意: 这是第 {rc} 次重试。研究表明调试效果在 2-3 次后衰减 60-80%。"
+            f"\n\n⚠️ 注意: 这是第 {retry_count} 次重试。研究表明调试效果在 2-3 次后衰减 60-80%。"
             " 建议: 考虑从头重新实现而非继续修补同一代码 (fresh start strategy)。"
-        ).format(rc=retry_count)
+        )
 
     write_dashboard(
         task_id=state["task_id"],
@@ -1201,11 +1201,11 @@ def build_graph() -> StateGraph:  # type: ignore[type-arg]
 # Task 11: singleton connection pool — reuse connections per db_path.
 # Use RLock because compile_graph() may call _get_connection() while already
 # holding this lock during cold-start path compilation.
-_conn_pool: dict[str, "sqlite3.Connection"] = {}
+_conn_pool: dict[str, sqlite3.Connection] = {}
 _conn_lock = __import__("threading").RLock()
 
 
-def _get_connection(path: str) -> "sqlite3.Connection":
+def _get_connection(path: str) -> sqlite3.Connection:
     """Get or create a SQLite connection for the given path (singleton per path).
 
     THREAD SAFETY NOTE: check_same_thread=False allows cross-thread reuse,

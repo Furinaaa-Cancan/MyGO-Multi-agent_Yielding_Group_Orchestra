@@ -186,7 +186,7 @@ class SkillContract(BaseModel):
     supported_agents: list[str] = Field(default_factory=list)
 
     @classmethod
-    def from_yaml(cls, data: dict[str, Any]) -> "SkillContract":
+    def from_yaml(cls, data: dict[str, Any]) -> SkillContract:
         data = {**data}  # shallow copy to avoid mutating caller's dict
         compat = data.get("compatibility", {})
         if isinstance(compat, dict):

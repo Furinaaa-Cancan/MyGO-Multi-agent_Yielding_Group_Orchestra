@@ -517,7 +517,7 @@ def done(task_id: str | None, file_path: str | None):
             click.echo(f"❌ File too large ({fsize // 1024 // 1024} MB > 10 MB limit): {file_path}", err=True)
             sys.exit(1)
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 output_data = json.load(f)
         except json.JSONDecodeError as e:
             click.echo(f"❌ Invalid JSON in {file_path}: {e}", err=True)

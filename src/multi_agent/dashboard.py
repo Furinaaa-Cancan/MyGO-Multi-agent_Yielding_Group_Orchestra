@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +10,7 @@ from multi_agent.config import dashboard_path
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%H:%M:%S")
+    return datetime.now(UTC).strftime("%H:%M:%S")
 
 
 def generate_dashboard(
@@ -59,7 +59,7 @@ def generate_dashboard(
         action = entry.get("action", entry.get("decision", entry.get("output", "—")))
         # Use event timestamp if available, else fall back to render time
         t = entry.get("t")
-        ts = datetime.fromtimestamp(t, tz=timezone.utc).strftime("%H:%M:%S") if t else _now()
+        ts = datetime.fromtimestamp(t, tz=UTC).strftime("%H:%M:%S") if t else _now()
         lines.append(f"| {ts} | {role} | {action} |")
     lines.append("")
 
