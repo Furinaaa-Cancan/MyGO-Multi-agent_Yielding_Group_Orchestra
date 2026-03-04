@@ -862,6 +862,22 @@ def review_node(state: WorkflowState) -> dict[str, Any]:
     except Exception:
         decision = result.get("decision", "reject")
 
+    # Enrich reviewer result: inject fallback feedback + rubber-stamp detection
+    _enrich_reviewer_result(result, decision, state)
+
+    review_result = {
+        "reviewer_output": result,
+        "review_started_at": review_started,
+        "conversation": [{"role": "reviewer", "decision": decision, "t": time.time()}],
+    }
+    graph_hooks.fire_exit("review", state, review_result)
+    return review_result
+
+
+def _enrich_reviewer_result(
+    result: dict[str, Any], decision: str, state: "WorkflowState",
+) -> None:
+    """Inject fallback feedback for empty reject/request_changes + rubber-stamp detection (in-place)."""
     # Empty feedback on reject/request_changes is actionless — force a fallback message
     if decision in ("reject", "request_changes"):
         feedback = result.get("feedback", "")
@@ -875,14 +891,12 @@ def review_node(state: WorkflowState) -> dict[str, Any]:
                 "Please re-examine your implementation against the done criteria."
             )
 
-    # Rubber-stamp detection (MAST NeurIPS 2025 TV-1; collusion-aware oversight):
-    # Flag approvals that lack substantive independent verification evidence.
+    # Rubber-stamp detection (MAST NeurIPS 2025 TV-1)
     review_policy = state.get("review_policy")
     rubber_policy = review_policy.get("rubber_stamp") if isinstance(review_policy, dict) else None
     detector_input = dict(result)
     if isinstance(rubber_policy, dict):
         detector_input["_rubber_policy"] = rubber_policy
-
     if _is_rubber_stamp_approval(detector_input):
         reasoning = str(result.get("reasoning", ""))
         summary = str(result.get("summary", ""))
@@ -892,16 +906,7 @@ def review_node(state: WorkflowState) -> dict[str, Any]:
             "(MAST NeurIPS 2025 TV-1).",
             reasoning[:60] if reasoning else "", summary[:60], len(summary),
         )
-        # Inject warning into output so decide_node can see it
         result["_rubber_stamp_warning"] = True
-
-    review_result = {
-        "reviewer_output": result,
-        "review_started_at": review_started,
-        "conversation": [{"role": "reviewer", "decision": decision, "t": time.time()}],
-    }
-    graph_hooks.fire_exit("review", state, review_result)
-    return review_result
 
 
 def _decide_approve(state: "WorkflowState", rubber_stamp: bool) -> dict[str, Any]:

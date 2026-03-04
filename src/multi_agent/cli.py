@@ -269,6 +269,71 @@ def session_push_cmd(task_id: str, agent: str, file_path: str):
     click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def _apply_project_defaults(
+    proj: dict[str, Any],
+    builder: str, reviewer: str, timeout: int, retry_budget: int,
+    mode: str, mode_config_path: str,
+) -> tuple[str, str, int, int, str, str]:
+    """Apply .ma.yaml project config defaults (CLI flags override)."""
+    if proj:
+        from multi_agent.config import validate_config
+        config_warnings = validate_config(proj)
+        for cw in config_warnings:
+            click.echo(f"⚠️  .ma.yaml: {cw}", err=True)
+    if not builder and proj.get("default_builder"):
+        builder = proj["default_builder"]
+    if not reviewer and proj.get("default_reviewer"):
+        reviewer = proj["default_reviewer"]
+    if timeout == 1800 and proj.get("default_timeout"):
+        timeout = proj["default_timeout"]
+    if retry_budget == 2 and proj.get("default_retry_budget"):
+        retry_budget = proj["default_retry_budget"]
+    if mode == "strict" and isinstance(proj.get("default_workflow_mode"), str):
+        mode = str(proj["default_workflow_mode"]).strip() or mode
+    if mode_config_path == "config/workmode.yaml" and isinstance(proj.get("workmode_config"), str):
+        mode_config_path = str(proj["workmode_config"]).strip() or mode_config_path
+    return builder, reviewer, timeout, retry_budget, mode, mode_config_path
+
+
+def _ensure_no_active_task(app: Any) -> None:
+    """Enforce single active task — exit if one is already running."""
+    locked = read_lock()
+    active_task = _detect_active_task(app)
+    if locked:
+        if _is_task_terminal_or_missing(app, locked):
+            release_lock()
+            clear_runtime()
+            click.echo(f"🧹 检测到陈旧锁 '{locked}'，已自动清理。")
+        else:
+            click.echo(f"❌ 任务 '{locked}' 正在进行中。", err=True)
+            click.echo("   先完成或取消当前任务:", err=True)
+            click.echo("   • ma cancel   — 取消当前任务", err=True)
+            click.echo("   • ma done     — 手动提交结果", err=True)
+            click.echo("   • ma status   — 查看任务状态", err=True)
+            sys.exit(1)
+    if active_task:
+        if _is_task_terminal_or_missing(app, active_task):
+            _mark_task_inactive(
+                active_task,
+                status="failed",
+                reason="go auto-cleared stale active marker (terminal graph state)",
+            )
+            if read_lock() == active_task:
+                release_lock()
+            clear_runtime()
+            click.echo(f"🧹 检测到陈旧 active 标记 '{active_task}'，已自动清理。")
+        else:
+            try:
+                acquire_lock(active_task)
+            except RuntimeError:
+                pass
+            click.echo(f"❌ 检测到活跃任务标记 '{active_task}'，请先恢复或取消该任务。", err=True)
+            click.echo(f"   • ma watch --task-id {active_task}   — 恢复自动推进", err=True)
+            click.echo(f"   • ma cancel --task-id {active_task}  — 取消并清理", err=True)
+            click.echo("   • ma doctor --fix                    — 自动修复常见状态不一致", err=True)
+            sys.exit(1)
+
+
 @main.command()
 @click.argument("requirement")
 @click.option("--skill", default="code-implement", help="Skill ID to use")
@@ -318,23 +383,9 @@ def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer
 
     # Task 6: Apply project config defaults (CLI flags override)
     proj = load_project_config()
-    if proj:
-        from multi_agent.config import validate_config
-        config_warnings = validate_config(proj)
-        for cw in config_warnings:
-            click.echo(f"⚠️  .ma.yaml: {cw}", err=True)
-    if not builder and proj.get("default_builder"):
-        builder = proj["default_builder"]
-    if not reviewer and proj.get("default_reviewer"):
-        reviewer = proj["default_reviewer"]
-    if timeout == 1800 and proj.get("default_timeout"):
-        timeout = proj["default_timeout"]
-    if retry_budget == 2 and proj.get("default_retry_budget"):
-        retry_budget = proj["default_retry_budget"]
-    if mode == "strict" and isinstance(proj.get("default_workflow_mode"), str):
-        mode = str(proj["default_workflow_mode"]).strip() or mode
-    if mode_config_path == "config/workmode.yaml" and isinstance(proj.get("workmode_config"), str):
-        mode_config_path = str(proj["workmode_config"]).strip() or mode_config_path
+    builder, reviewer, timeout, retry_budget, mode, mode_config_path = _apply_project_defaults(
+        proj, builder, reviewer, timeout, retry_budget, mode, mode_config_path,
+    )
 
     from multi_agent.session import _resolve_review_policy
     review_policy = _resolve_review_policy(mode, mode_config_path)
@@ -348,46 +399,7 @@ def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer
 
     # Enforce single active task — prevent data conflicts
     app = compile_graph()
-    locked = read_lock()
-    active_task = _detect_active_task(app)
-    if locked:
-        if _is_task_terminal_or_missing(app, locked):
-            release_lock()
-            clear_runtime()
-            click.echo(f"🧹 检测到陈旧锁 '{locked}'，已自动清理。")
-            locked = None
-        else:
-            click.echo(f"❌ 任务 '{locked}' 正在进行中。", err=True)
-            click.echo("   先完成或取消当前任务:", err=True)
-            click.echo("   • ma cancel   — 取消当前任务", err=True)
-            click.echo("   • ma done     — 手动提交结果", err=True)
-            click.echo("   • ma status   — 查看任务状态", err=True)
-            sys.exit(1)
-    if active_task:
-        if _is_task_terminal_or_missing(app, active_task):
-            _mark_task_inactive(
-                active_task,
-                status="failed",
-                reason="go auto-cleared stale active marker (terminal graph state)",
-            )
-            if read_lock() == active_task:
-                release_lock()
-            clear_runtime()
-            click.echo(f"🧹 检测到陈旧 active 标记 '{active_task}'，已自动清理。")
-            active_task = None
-        else:
-            # Runtime consistency guard: active marker exists but lock missing.
-            # Re-acquire lock for the detected active task to prevent accidental
-            # parallel starts and guide user to resume/cancel explicitly.
-            try:
-                acquire_lock(active_task)
-            except RuntimeError:
-                pass
-            click.echo(f"❌ 检测到活跃任务标记 '{active_task}'，请先恢复或取消该任务。", err=True)
-            click.echo(f"   • ma watch --task-id {active_task}   — 恢复自动推进", err=True)
-            click.echo(f"   • ma cancel --task-id {active_task}  — 取消并清理", err=True)
-            click.echo("   • ma doctor --fix                    — 自动修复常见状态不一致", err=True)
-            sys.exit(1)
+    _ensure_no_active_task(app)
 
     task_id = task_id or _generate_task_id(requirement)
 
@@ -467,6 +479,43 @@ def _run_single_task(app, task_id, requirement, skill, builder, reviewer,
     _run_watch_loop(app, config, task_id)
 
 
+def _read_done_output(role: str, file_path: str | None) -> dict[str, Any]:
+    """Read output from --file, role-based outbox, or stdin. Exits on error."""
+    output_data = None
+    if file_path:
+        try:
+            fsize = Path(file_path).stat().st_size
+        except OSError:
+            fsize = 0
+        if fsize > 10 * 1024 * 1024:
+            click.echo(f"❌ File too large ({fsize // 1024 // 1024} MB > 10 MB limit): {file_path}", err=True)
+            sys.exit(1)
+        try:
+            with open(file_path, encoding="utf-8") as f:
+                output_data = json.load(f)
+        except json.JSONDecodeError as e:
+            click.echo(f"❌ Invalid JSON in {file_path}: {e}", err=True)
+            sys.exit(1)
+    else:
+        output_data = read_outbox(role)
+
+    if output_data is None:
+        click.echo(f"📝 No output in outbox/{role}.json. Paste JSON (Ctrl-D to end):")
+        raw = sys.stdin.read().strip()
+        if raw:
+            try:
+                output_data = json.loads(raw)
+            except json.JSONDecodeError as e:
+                click.echo(f"❌ Invalid JSON: {e}", err=True)
+                sys.exit(1)
+
+    if output_data is None:
+        click.echo(f"❌ No output found. Save to .multi-agent/outbox/{role}.json or use --file.", err=True)
+        sys.exit(1)
+
+    return output_data
+
+
 @main.command()
 @handle_errors
 @click.option("--task-id", default=None, help="Task ID (auto-detect if only one active)")
@@ -504,42 +553,8 @@ def done(task_id: str | None, file_path: str | None):
         role = info.get("role", "builder")
         agent_id = info.get("agent", "?")
 
-    # Read output: --file > role-based outbox > stdin
-    output_data = None
-
-    if file_path:
-        # Guard against oversized files (10 MB limit, same as watcher)
-        try:
-            fsize = Path(file_path).stat().st_size
-        except OSError:
-            fsize = 0
-        if fsize > 10 * 1024 * 1024:
-            click.echo(f"❌ File too large ({fsize // 1024 // 1024} MB > 10 MB limit): {file_path}", err=True)
-            sys.exit(1)
-        try:
-            with open(file_path, encoding="utf-8") as f:
-                output_data = json.load(f)
-        except json.JSONDecodeError as e:
-            click.echo(f"❌ Invalid JSON in {file_path}: {e}", err=True)
-            sys.exit(1)
-    else:
-        # Role-based outbox: outbox/builder.json or outbox/reviewer.json
-        output_data = read_outbox(role)
-
-    if output_data is None:
-        click.echo(f"📝 No output in outbox/{role}.json. Paste JSON (Ctrl-D to end):")
-        raw = sys.stdin.read().strip()
-        if raw:
-            try:
-                output_data = json.loads(raw)
-            except json.JSONDecodeError as e:
-                click.echo(f"❌ Invalid JSON: {e}", err=True)
-                sys.exit(1)
-
-    if output_data is None:
-        click.echo(f"❌ No output found. Save to .multi-agent/outbox/{role}.json or use --file.", err=True)
-        sys.exit(1)
-
+    # Read, normalize, and validate output
+    output_data = _read_done_output(role, file_path)
     vals = snapshot.values or {}
     try:
         output_data = _normalize_resume_output(role, output_data, vals)
@@ -547,7 +562,6 @@ def done(task_id: str | None, file_path: str | None):
         click.echo(f"❌ {e}", err=True)
         sys.exit(1)
 
-    # Validate output before submitting to graph
     validation_errors = validate_outbox_data(role, output_data)
     if validation_errors:
         click.echo("⚠️  Output validation warnings:", err=True)
