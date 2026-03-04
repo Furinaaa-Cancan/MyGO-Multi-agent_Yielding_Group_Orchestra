@@ -622,6 +622,28 @@ def _normalize_envelope(
     return env
 
 
+def _update_task_yaml_status(task_id: str, status: str) -> None:
+    """Merge-update task YAML status, preserving existing metadata.
+
+    Previous implementation overwrote all fields, losing builder/reviewer/
+    orchestrator/source_task_file/mode on terminal state transitions.
+    """
+    from multi_agent.config import tasks_dir
+    path = tasks_dir() / f"{task_id}.yaml"
+    existing: dict[str, Any] = {}
+    if path.exists():
+        try:
+            existing = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            if not isinstance(existing, dict):
+                existing = {}
+        except Exception:
+            existing = {}
+    existing["task_id"] = task_id
+    existing["status"] = status
+    existing["updated_at"] = _now_utc()
+    save_task_yaml(task_id, existing)
+
+
 def _save_handoff(task_id: str, agent: str, envelope: dict[str, Any]) -> Path:
     handoff_dir = root_dir() / "runtime" / "handoffs" / task_id
     handoff_dir.mkdir(parents=True, exist_ok=True)
@@ -953,7 +975,7 @@ def session_push(task_id: str, agent: str, file_path: str) -> dict[str, Any]:
             )
 
     if after["state"] in TERMINAL_STATES:
-        save_task_yaml(task_id, {"task_id": task_id, "status": after["state"].lower(), "updated_at": _now_utc()})
+        _update_task_yaml_status(task_id, after["state"].lower())
         if read_lock() == task_id:
             release_lock()
 

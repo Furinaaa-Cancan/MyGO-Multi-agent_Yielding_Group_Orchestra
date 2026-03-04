@@ -369,6 +369,7 @@ class WorkflowState(TypedDict, total=False):
     retry_count: int
     retry_budget: int
     started_at: float
+    task_started_at: float | None  # total duration anchor (DoW guard)
     build_started_at: float | None
     review_started_at: float | None
 
@@ -377,6 +378,9 @@ class WorkflowState(TypedDict, total=False):
 
     # Hierarchy
     parent_task_id: str | None
+
+    # Orchestrator (not stored in graph but used for status queries)
+    orchestrator_id: str | None
 
     # Terminal
     error: str | None

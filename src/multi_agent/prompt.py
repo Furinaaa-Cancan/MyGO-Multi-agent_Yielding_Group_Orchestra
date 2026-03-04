@@ -45,7 +45,6 @@ def _resolve_template(env: Environment, skill_id: str, role: str) -> str:
 
     Looks for e.g. test-builder.md.j2 first, falls back to builder.md.j2.
     """
-    skill_prefix = skill_id.replace("-", "-")  # keep as-is
     # Map skill_id to template prefix: "test-and-review" -> "test"
     prefix_map = {
         "test-and-review": "test",

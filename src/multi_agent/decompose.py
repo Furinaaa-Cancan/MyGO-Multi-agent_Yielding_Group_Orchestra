@@ -253,7 +253,7 @@ def read_decompose_result(*, validate: bool = True) -> DecomposeResult | None:
         data = json.loads(text)
         if isinstance(data, dict) and "sub_tasks" in data:
             result = DecomposeResult(**data)
-    except (json.JSONDecodeError, Exception):
+    except (json.JSONDecodeError, ValueError, TypeError):
         pass
 
     # Fallback: agent may have wrapped JSON in markdown fences
@@ -283,7 +283,7 @@ def parse_decompose_json(text: str) -> DecomposeResult | None:
             data = json.loads(match.group(1))
             if isinstance(data, dict) and "sub_tasks" in data:
                 return DecomposeResult(**data)
-        except (json.JSONDecodeError, Exception):
+        except (json.JSONDecodeError, ValueError, TypeError):
             pass
 
     # Try parsing whole text as JSON
@@ -291,7 +291,7 @@ def parse_decompose_json(text: str) -> DecomposeResult | None:
         data = json.loads(text.strip())
         if isinstance(data, dict) and "sub_tasks" in data:
             return DecomposeResult(**data)
-    except (json.JSONDecodeError, Exception):
+    except (json.JSONDecodeError, ValueError, TypeError):
         pass
 
     return None
