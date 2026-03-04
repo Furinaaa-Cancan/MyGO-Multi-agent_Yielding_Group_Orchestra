@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import time
 from operator import add
 from typing import Annotated, Any
@@ -345,6 +346,58 @@ def register_hook(event: str, callback) -> None:
         graph_hooks.on_error(callback)
 
 
+# ── Node Decorator ────────────────────────────────────────
+
+
+def _graph_node(node_name: str):
+    """Decorator that wraps a node's inner function with standardised
+    timing, stats collection, snapshot saving, and error handling.
+
+    Eliminates the ~15-line boilerplate that was previously copy-pasted
+    across plan_node, build_node, review_node, and decide_node.
+    """
+
+    def decorator(inner_fn):
+        @functools.wraps(inner_fn)
+        def wrapper(state: "WorkflowState") -> dict:
+            _t0 = time.time()
+            _ok = False
+            try:
+                result = inner_fn(state)
+                _ok = result.get("final_status") != "failed"
+                return result
+            except GraphInterrupt:
+                _ok = True
+                raise
+            except Exception as e:
+                _log.exception("%s failed: %s", node_name, e)
+                graph_hooks.fire_error(node_name, state, e)
+                return {
+                    "error": f"{node_name}: {e}",
+                    "final_status": "failed",
+                    "conversation": [
+                        {"role": "orchestrator", "action": "internal_error",
+                         "details": str(e), "t": time.time()}
+                    ],
+                }
+            finally:
+                _t1 = time.time()
+                tid = state.get("task_id", "")
+                log_timing(tid, node_name, _t0, _t1)
+                graph_stats.record(node_name, int((_t1 - _t0) * 1000), _ok)
+                try:
+                    save_state_snapshot(tid, node_name, dict(state))
+                except Exception:
+                    pass
+
+        # Preserve the original docstring from inner_fn but keep
+        # the wrapper name matching the expected LangGraph node name.
+        wrapper.__qualname__ = f"{node_name}_node"
+        return wrapper
+
+    return decorator
+
+
 # ── State ─────────────────────────────────────────────────
 
 class WorkflowState(TypedDict, total=False):
@@ -461,38 +514,8 @@ def _write_task_md(state: dict, builder_id: str, reviewer_id: str, current_role:
 
 # ── Node 1: Plan ──────────────────────────────────────────
 
+@_graph_node("plan")
 def plan_node(state: WorkflowState) -> dict:
-    """Load skill contract → resolve builder → generate prompt → write inbox."""
-    _t0 = time.time()
-    _ok = False
-    try:
-        result = _plan_node_inner(state)
-        _ok = result.get("final_status") != "failed"
-        return result
-    except GraphInterrupt:
-        _ok = True
-        raise
-    except Exception as e:
-        _log.exception("plan_node failed: %s", e)
-        graph_hooks.fire_error("plan", state, e)
-        return {
-            "error": f"plan_node: {e}",
-            "final_status": "failed",
-            "conversation": [{"role": "orchestrator", "action": "internal_error",
-                              "details": str(e), "t": time.time()}],
-        }
-    finally:
-        _t1 = time.time()
-        tid = state.get("task_id", "")
-        log_timing(tid, "plan", _t0, _t1)
-        graph_stats.record("plan", int((_t1 - _t0) * 1000), _ok)
-        try:
-            save_state_snapshot(tid, "plan", dict(state))
-        except Exception:
-            pass
-
-
-def _plan_node_inner(state: WorkflowState) -> dict:
     graph_hooks.fire_enter("plan", state)
 
     # Reset stats on first run of a new task to prevent cross-task contamination
@@ -601,38 +624,8 @@ def _plan_node_inner(state: WorkflowState) -> dict:
 
 # ── Node 2: Build ─────────────────────────────────────────
 
+@_graph_node("build")
 def build_node(state: WorkflowState) -> dict:
-    """Interrupt for builder → validate output → prepare reviewer."""
-    _t0 = time.time()
-    _ok = False
-    try:
-        result = _build_node_inner(state)
-        _ok = result.get("final_status") != "failed"
-        return result
-    except GraphInterrupt:
-        _ok = True
-        raise
-    except Exception as e:
-        _log.exception("build_node failed: %s", e)
-        graph_hooks.fire_error("build", state, e)
-        return {
-            "error": f"build_node: {e}",
-            "final_status": "failed",
-            "conversation": [{"role": "orchestrator", "action": "internal_error",
-                              "details": str(e), "t": time.time()}],
-        }
-    finally:
-        _t1 = time.time()
-        tid = state.get("task_id", "")
-        log_timing(tid, "build", _t0, _t1)
-        graph_stats.record("build", int((_t1 - _t0) * 1000), _ok)
-        try:
-            save_state_snapshot(tid, "build", dict(state))
-        except Exception:
-            pass
-
-
-def _build_node_inner(state: WorkflowState) -> dict:
     graph_hooks.fire_enter("build", state)
 
     # Total task duration guard (OWASP LLM10:2025 — DoW prevention)
@@ -795,38 +788,8 @@ def _build_node_inner(state: WorkflowState) -> dict:
 
 # ── Node 3: Review ────────────────────────────────────────
 
+@_graph_node("review")
 def review_node(state: WorkflowState) -> dict:
-    """Interrupt for reviewer → record decision."""
-    _t0 = time.time()
-    _ok = False
-    try:
-        result = _review_node_inner(state)
-        _ok = result.get("final_status") != "failed"
-        return result
-    except GraphInterrupt:
-        _ok = True
-        raise
-    except Exception as e:
-        _log.exception("review_node failed: %s", e)
-        graph_hooks.fire_error("review", state, e)
-        return {
-            "error": f"review_node: {e}",
-            "final_status": "failed",
-            "conversation": [{"role": "orchestrator", "action": "internal_error",
-                              "details": str(e), "t": time.time()}],
-        }
-    finally:
-        _t1 = time.time()
-        tid = state.get("task_id", "")
-        log_timing(tid, "review", _t0, _t1)
-        graph_stats.record("review", int((_t1 - _t0) * 1000), _ok)
-        try:
-            save_state_snapshot(tid, "review", dict(state))
-        except Exception:
-            pass
-
-
-def _review_node_inner(state: WorkflowState) -> dict:
     graph_hooks.fire_enter("review", state)
 
     # Total task duration guard (OWASP LLM10:2025 — DoW prevention)
@@ -942,38 +905,8 @@ def _review_node_inner(state: WorkflowState) -> dict:
 
 # ── Node 4: Decide ────────────────────────────────────────
 
+@_graph_node("decide")
 def decide_node(state: WorkflowState) -> dict:
-    """Route based on reviewer decision: approve → end, reject/request_changes → retry or escalate."""
-    _t0 = time.time()
-    _ok = False
-    try:
-        result = _decide_node_inner(state)
-        _ok = result.get("final_status") != "failed"
-        return result
-    except GraphInterrupt:
-        _ok = True
-        raise
-    except Exception as e:
-        _log.exception("decide_node failed: %s", e)
-        graph_hooks.fire_error("decide", state, e)
-        return {
-            "error": f"decide_node: {e}",
-            "final_status": "failed",
-            "conversation": [{"role": "orchestrator", "action": "internal_error",
-                              "details": str(e), "t": time.time()}],
-        }
-    finally:
-        _t1 = time.time()
-        tid = state.get("task_id", "")
-        log_timing(tid, "decide", _t0, _t1)
-        graph_stats.record("decide", int((_t1 - _t0) * 1000), _ok)
-        try:
-            save_state_snapshot(tid, "decide", dict(state))
-        except Exception:
-            pass
-
-
-def _decide_node_inner(state: WorkflowState) -> dict:
     graph_hooks.fire_enter("decide", state)
 
     # Early exit if state is already terminal (e.g., review_node detected cancellation
