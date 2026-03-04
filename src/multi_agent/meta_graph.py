@@ -151,6 +151,8 @@ def build_sub_task_state(
     timeout: int = 1800,
     retry_budget: int = 2,
     prior_results: list[dict] | None = None,
+    workflow_mode: str = "strict",
+    review_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the initial state dict for a sub-task's build-review cycle.
 
@@ -176,6 +178,8 @@ def build_sub_task_state(
         "requirement": requirement,
         "skill_id": sub_task.skill_id,
         "done_criteria": done,
+        "workflow_mode": workflow_mode,
+        "review_policy": review_policy or {},
         "timeout_sec": timeout,
         "retry_budget": retry_budget,
         "retry_count": 0,

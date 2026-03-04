@@ -86,6 +86,15 @@ class TestBuildSubTaskState:
         assert state["timeout_sec"] == 900
         assert state["retry_budget"] == 3
 
+    def test_workflow_mode_and_policy_propagation(self):
+        st = SubTask(id="step-1", description="Do something")
+        policy = {"reviewer": {"require_evidence_on_approve": True, "min_evidence_items": 2}}
+        state = build_sub_task_state(
+            st, "parent-abc", workflow_mode="normal", review_policy=policy,
+        )
+        assert state["workflow_mode"] == "normal"
+        assert state["review_policy"] == policy
+
 
 class TestAggregateResults:
     def test_all_approved(self):

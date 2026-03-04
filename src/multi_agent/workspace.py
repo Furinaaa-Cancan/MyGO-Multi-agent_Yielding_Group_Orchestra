@@ -191,9 +191,35 @@ def read_lock() -> str | None:
 
 
 def acquire_lock(task_id: str) -> None:
-    """Write lock file with the given task_id."""
+    """Write lock file with the given task_id.
+    
+    Uses atomic O_CREAT|O_EXCL to prevent race conditions in multi-process scenarios.
+    Raises FileExistsError if lock is already held by another task.
+    """
+    import os
     ensure_workspace()
-    _lock_path().write_text(task_id, encoding="utf-8")
+    lock_path = _lock_path()
+    
+    # Atomic lock acquisition: O_EXCL ensures file creation fails if it exists
+    for attempt in range(2):
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            try:
+                os.write(fd, task_id.encode("utf-8"))
+            finally:
+                os.close(fd)
+            return
+        except FileExistsError:
+            # Lock already held - read existing task_id for error message.
+            existing = read_lock()
+            # Self-heal once for empty/corrupted lock marker.
+            if existing is None and attempt == 0:
+                lock_path.unlink(missing_ok=True)
+                continue
+            raise RuntimeError(
+                f"Lock already held by task '{existing}'. "
+                f"Run 'ma cancel' to release it or wait for completion."
+            ) from None
 
 
 def release_lock() -> None:

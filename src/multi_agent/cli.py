@@ -27,6 +27,7 @@ from multi_agent.workspace import (
 )
 
 log = logging.getLogger(__name__)
+TERMINAL_FINAL_STATUSES = {"approved", "failed", "cancelled", "escalated", "done"}
 
 
 def handle_errors(f):
@@ -34,7 +35,7 @@ def handle_errors(f):
 
     - Shows user-friendly error messages by default.
     - Shows full traceback when --verbose is set.
-    - Releases lock and cleans runtime on severe errors.
+    - Does not mutate lock state implicitly on errors.
     - Logs error to .multi-agent/logs/ directory.
     """
     @functools.wraps(f)
@@ -45,11 +46,6 @@ def handle_errors(f):
             raise
         except KeyboardInterrupt:
             click.echo("\n⏹️  操作已取消")
-            try:
-                if read_lock():
-                    release_lock()
-            except Exception:
-                pass
             raise SystemExit(0)
         except click.exceptions.Exit:
             raise
@@ -64,14 +60,6 @@ def handle_errors(f):
 
             # Log error to file
             _log_error_to_file(f.__name__, e)
-
-            # Release lock on severe errors
-            try:
-                if read_lock():
-                    release_lock()
-                    click.echo("🔓 已自动释放锁", err=True)
-            except Exception:
-                pass
 
             raise SystemExit(1)
     return wrapper
@@ -138,6 +126,113 @@ def _generate_task_id(requirement: str) -> str:
     return f"task-{h}"
 
 
+def _is_terminal_final_status(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    return value.strip().lower() in TERMINAL_FINAL_STATUSES
+
+
+def _positive_int(value: object, default: int) -> int:
+    try:
+        iv = int(value)
+        return iv if iv > 0 else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _count_nonempty_entries(value: object) -> int:
+    if not isinstance(value, list):
+        return 0
+    count = 0
+    for item in value:
+        if isinstance(item, str) and item.strip():
+            count += 1
+        elif isinstance(item, dict) and item:
+            count += 1
+    return count
+
+
+def _normalize_resume_output(role: str, data: dict, state_values: dict) -> dict:
+    """Normalize/validate resume payload for legacy go/watch/done path."""
+    if role != "reviewer":
+        return data
+
+    out = dict(data)
+    decision = str(out.get("decision", "")).lower().strip()
+    if decision == "pass":
+        out["decision"] = "approve"
+        decision = "approve"
+    elif decision == "fail":
+        out["decision"] = "reject"
+        decision = "reject"
+
+    workflow_mode = str(state_values.get("workflow_mode", "")).lower().strip() or "normal"
+    review_policy = state_values.get("review_policy")
+    if not isinstance(review_policy, dict):
+        review_policy = {}
+    reviewer_cfg = review_policy.get("reviewer")
+    if not isinstance(reviewer_cfg, dict):
+        reviewer_cfg = {}
+
+    require_evidence = bool(reviewer_cfg.get("require_evidence_on_approve", workflow_mode == "strict"))
+    min_evidence = _positive_int(reviewer_cfg.get("min_evidence_items"), 1) if require_evidence else 0
+
+    if decision == "approve" and require_evidence:
+        evidence_items = _count_nonempty_entries(out.get("evidence"))
+        evidence_items += _count_nonempty_entries(out.get("evidence_files"))
+        if evidence_items < min_evidence:
+            raise ValueError(
+                "reviewer approve requires evidence: "
+                f"need >= {min_evidence}, got {evidence_items}. "
+                "Provide result.evidence and/or evidence_files."
+            )
+    return out
+
+
+def _is_task_terminal_or_missing(app, task_id: str) -> bool:
+    """Return True if a locked task is already terminal or has no graph state."""
+    try:
+        snapshot = app.get_state(_make_config(task_id))
+    except Exception:
+        return False
+
+    if not snapshot:
+        # No graph state but lock exists -> stale lock.
+        return True
+
+    vals = snapshot.values or {}
+    final = vals.get("final_status")
+    if _is_terminal_final_status(final):
+        return True
+
+    if not snapshot.next:
+        # Graph already finished (legacy runs may not set final_status explicitly).
+        return True
+
+    return False
+
+
+def _mark_task_inactive(task_id: str, *, status: str, reason: str) -> bool:
+    """Update task YAML status so it is no longer treated as active."""
+    from multi_agent.config import tasks_dir
+    import yaml
+
+    path = tasks_dir() / f"{task_id}.yaml"
+    if not path.exists():
+        return False
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if not isinstance(data, dict):
+            return False
+        data["task_id"] = task_id
+        data["status"] = status
+        data["reason"] = reason
+        path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+        return True
+    except Exception:
+        return False
+
+
 def _sigterm_handler(signum, frame):
     """Graceful SIGTERM handler — release lock and clean runtime."""
     try:
@@ -157,6 +252,70 @@ def main(verbose: bool):
     signal.signal(signal.SIGTERM, _sigterm_handler)
 
 
+@main.group()
+def session():
+    """IDE-first 会话命令族（LangGraph 单入口）."""
+
+
+@session.command("start")
+@click.option("--task", "task_file", required=True, type=click.Path(exists=True), help="Task JSON 路径")
+@click.option("--mode", default="strict", help="Workmode profile 名称")
+@click.option("--config", "config_path", default="config/workmode.yaml", help="Workmode 配置路径")
+@click.option("--reset", is_flag=True, default=False, help="重置同 task_id 的历史 checkpoint 后再启动")
+@handle_errors
+def session_start(task_file: str, mode: str, config_path: str, reset: bool):
+    """启动 IDE 会话并生成各 agent 的提示词文件."""
+    from multi_agent.session import start_session
+
+    payload = start_session(task_file, mode=mode, config_path=config_path, reset=reset)
+    click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+@session.command("status")
+@click.option("--task-id", required=True, help="Task ID")
+@handle_errors
+def session_status_cmd(task_id: str):
+    """查看会话状态（owner、角色、状态、提示词路径）."""
+    from multi_agent.session import session_status
+
+    _validate_task_id(task_id)
+    payload = session_status(task_id)
+    click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+@session.command("pull")
+@click.option("--task-id", required=True, help="Task ID")
+@click.option("--agent", required=True, help="Agent ID")
+@click.option("--out", default=None, type=click.Path(), help="提示词输出文件路径（默认 prompts/current-<agent>.txt）")
+@click.option("--json-meta", "json_meta", is_flag=True, default=False, help="输出元信息 JSON 而不是提示词正文")
+@handle_errors
+def session_pull_cmd(task_id: str, agent: str, out: str | None, json_meta: bool):
+    """拉取某个 agent 当前提示词（纯 IDE 文本，无终端命令）."""
+    from multi_agent.session import session_pull
+
+    _validate_task_id(task_id)
+    payload = session_pull(task_id, agent, out=out)
+    if json_meta:
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+    prompt_text = Path(payload["prompt_path"]).read_text(encoding="utf-8")
+    click.echo(prompt_text.rstrip("\n"))
+
+
+@session.command("push")
+@click.option("--task-id", required=True, help="Task ID")
+@click.option("--agent", required=True, help="Agent ID")
+@click.option("--file", "file_path", required=True, type=click.Path(exists=True), help="agent 输出文件（JSON 或包含 JSON 代码块）")
+@handle_errors
+def session_push_cmd(task_id: str, agent: str, file_path: str):
+    """提交 agent 输出并自动推进到下一角色或终态."""
+    from multi_agent.session import session_push
+
+    _validate_task_id(task_id)
+    payload = session_push(task_id, agent, file_path)
+    click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
 @main.command()
 @click.argument("requirement")
 @click.option("--skill", default="code-implement", help="Skill ID to use")
@@ -170,8 +329,10 @@ def main(verbose: bool):
 @click.option("--auto-confirm", is_flag=True, default=False, help="Skip decompose confirmation (for automated runs)")
 @click.option("--decompose-file", default=None, type=click.Path(exists=True), help="Read decompose result from file instead of agent")
 @click.option("--no-cache", is_flag=True, default=False, help="Skip decompose result cache (force fresh decomposition)")
+@click.option("--mode", default="strict", help="Workmode profile 名称")
+@click.option("--config", "mode_config_path", default="config/workmode.yaml", help="Workmode 配置路径")
 @handle_errors
-def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer: str, retry_budget: int, timeout: int, no_watch: bool, decompose: bool, auto_confirm: bool, decompose_file: str | None, no_cache: bool):
+def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer: str, retry_budget: int, timeout: int, no_watch: bool, decompose: bool, auto_confirm: bool, decompose_file: str | None, no_cache: bool, mode: str, mode_config_path: str):
     """Start a new task and watch for IDE output.
 
     Starts the task, then auto-watches outbox/ for agent output.
@@ -196,6 +357,11 @@ def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer
     if task_id:
         _validate_task_id(task_id)
     _validate_skill_id(skill)
+    if builder and reviewer and builder == reviewer:
+        raise click.BadParameter(
+            f"builder and reviewer must be different (got '{builder}')",
+            param_hint="--reviewer",
+        )
 
     # Task 6: Apply project config defaults (CLI flags override)
     proj = load_project_config()
@@ -212,6 +378,13 @@ def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer
         timeout = proj["default_timeout"]
     if retry_budget == 2 and proj.get("default_retry_budget"):
         retry_budget = proj["default_retry_budget"]
+    if mode == "strict" and isinstance(proj.get("default_workflow_mode"), str):
+        mode = str(proj["default_workflow_mode"]).strip() or mode
+    if mode_config_path == "config/workmode.yaml" and isinstance(proj.get("workmode_config"), str):
+        mode_config_path = str(proj["workmode_config"]).strip() or mode_config_path
+
+    from multi_agent.session import _resolve_review_policy
+    review_policy = _resolve_review_policy(mode, mode_config_path)
 
     # Task 16: Suggest decompose for complex requirements
     if not decompose:
@@ -223,13 +396,45 @@ def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer
     # Enforce single active task — prevent data conflicts
     app = compile_graph()
     locked = read_lock()
+    active_task = _detect_active_task(app)
     if locked:
-        click.echo(f"❌ 任务 '{locked}' 正在进行中。", err=True)
-        click.echo(f"   先完成或取消当前任务:", err=True)
-        click.echo(f"   • ma cancel   — 取消当前任务", err=True)
-        click.echo(f"   • ma done     — 手动提交结果", err=True)
-        click.echo(f"   • ma status   — 查看任务状态", err=True)
-        sys.exit(1)
+        if _is_task_terminal_or_missing(app, locked):
+            release_lock()
+            clear_runtime()
+            click.echo(f"🧹 检测到陈旧锁 '{locked}'，已自动清理。")
+            locked = None
+        else:
+            click.echo(f"❌ 任务 '{locked}' 正在进行中。", err=True)
+            click.echo(f"   先完成或取消当前任务:", err=True)
+            click.echo(f"   • ma cancel   — 取消当前任务", err=True)
+            click.echo(f"   • ma done     — 手动提交结果", err=True)
+            click.echo(f"   • ma status   — 查看任务状态", err=True)
+            sys.exit(1)
+    if active_task:
+        if _is_task_terminal_or_missing(app, active_task):
+            _mark_task_inactive(
+                active_task,
+                status="failed",
+                reason="go auto-cleared stale active marker (terminal graph state)",
+            )
+            if read_lock() == active_task:
+                release_lock()
+            clear_runtime()
+            click.echo(f"🧹 检测到陈旧 active 标记 '{active_task}'，已自动清理。")
+            active_task = None
+        else:
+            # Runtime consistency guard: active marker exists but lock missing.
+            # Re-acquire lock for the detected active task to prevent accidental
+            # parallel starts and guide user to resume/cancel explicitly.
+            try:
+                acquire_lock(active_task)
+            except RuntimeError:
+                pass
+            click.echo(f"❌ 检测到活跃任务标记 '{active_task}'，请先恢复或取消该任务。", err=True)
+            click.echo(f"   • ma watch --task-id {active_task}   — 恢复自动推进", err=True)
+            click.echo(f"   • ma cancel --task-id {active_task}  — 取消并清理", err=True)
+            click.echo(f"   • ma doctor --fix                    — 自动修复常见状态不一致", err=True)
+            sys.exit(1)
 
     task_id = task_id or _generate_task_id(requirement)
 
@@ -241,23 +446,25 @@ def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer
 
     if decompose or decompose_file:
         _run_decomposed(app, task_id, requirement, skill, builder, reviewer,
-                        retry_budget, timeout, no_watch,
+                        retry_budget, timeout, no_watch, mode, review_policy,
                         auto_confirm=auto_confirm, decompose_file=decompose_file,
                         no_cache=no_cache)
         return
 
     _run_single_task(app, task_id, requirement, skill, builder, reviewer,
-                     retry_budget, timeout, no_watch)
+                     retry_budget, timeout, no_watch, mode, review_policy)
 
 
 def _run_single_task(app, task_id, requirement, skill, builder, reviewer,
-                     retry_budget, timeout, no_watch):
+                     retry_budget, timeout, no_watch, workflow_mode, review_policy):
     """Run a single monolithic build-review cycle (original behavior)."""
     initial_state = {
         "task_id": task_id,
         "requirement": requirement,
         "skill_id": skill,
         "done_criteria": [requirement],
+        "workflow_mode": workflow_mode,
+        "review_policy": review_policy,
         "timeout_sec": timeout,
         "retry_budget": retry_budget,
         "retry_count": 0,
@@ -312,7 +519,7 @@ def _run_single_task(app, task_id, requirement, skill, builder, reviewer,
 
 
 def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
-                    retry_budget, timeout, no_watch, *,
+                    retry_budget, timeout, no_watch, workflow_mode, review_policy, *,
                     auto_confirm: bool = False, decompose_file: str | None = None,
                     no_cache: bool = False):
     """Decompose → sequential sub-task build-review cycles → aggregate."""
@@ -419,7 +626,7 @@ def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
     if not sorted_tasks:
         click.echo(f"⚠️  分解结果为空，降级为单任务模式")
         _run_single_task(app, parent_task_id, requirement, skill, builder, reviewer,
-                         retry_budget, timeout, no_watch)
+                         retry_budget, timeout, no_watch, workflow_mode, review_policy)
         return
 
     click.echo(f"\n✅ 分解完成: {len(sorted_tasks)} 个子任务")
@@ -503,6 +710,8 @@ def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
             timeout=timeout,
             retry_budget=retry_budget,
             prior_results=prior_results,
+            workflow_mode=workflow_mode,
+            review_policy=review_policy,
         )
         sub_task_id = sub_state["task_id"]
         sub_config = _make_config(sub_task_id)
@@ -585,6 +794,8 @@ def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
                         builder=builder, reviewer=reviewer,
                         timeout=timeout, retry_budget=retry_budget,
                         prior_results=prior_results,
+                        workflow_mode=workflow_mode,
+                        review_policy=review_policy,
                     )
                     sub_config2 = _make_config(sub_state2["task_id"])
                     try:
@@ -613,6 +824,9 @@ def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
                     })
                     if s2 not in ("approved", "completed"):
                         failed_ids.add(st.id)
+                    else:
+                        completed_ids.add(st.id)
+                        save_checkpoint(parent_task_id, prior_results, list(completed_ids))
                     continue
                 elif choice == "abort":
                     click.echo("⏹️  终止 decompose 流程，保存已完成结果。")
@@ -734,6 +948,13 @@ def done(task_id: str | None, file_path: str | None):
         click.echo(f"❌ No output found. Save to .multi-agent/outbox/{role}.json or use --file.", err=True)
         sys.exit(1)
 
+    vals = snapshot.values or {}
+    try:
+        output_data = _normalize_resume_output(role, output_data, vals)
+    except ValueError as e:
+        click.echo(f"❌ {e}", err=True)
+        sys.exit(1)
+
     # Validate output before submitting to graph
     validation_errors = validate_outbox_data(role, output_data)
     if validation_errors:
@@ -806,8 +1027,12 @@ def status(task_id: str | None):
 
     if vals.get("error"):
         click.echo(f"   ❌ Error: {vals['error']}")
-    if vals.get("final_status"):
-        click.echo(f"   🏁 Final: {vals['final_status']}")
+    final_status = vals.get("final_status")
+    if final_status:
+        click.echo(f"   🏁 Final: {final_status}")
+        if _is_terminal_final_status(final_status):
+            click.echo("   ✅ Graph complete")
+            return
 
     if snapshot.next:
         agent = vals.get("builder_id" if current_role == "builder" else "reviewer_id", "?")
@@ -901,9 +1126,17 @@ def watch(task_id: str | None, interval: float):
 def _show_waiting(app, config):
     """Show current waiting state — auto-spawn CLI agents or show manual instructions."""
     snapshot = app.get_state(config)
+    vals = snapshot.values if snapshot else {}
+    final = vals.get("final_status", "")
+    if _is_terminal_final_status(final):
+        if final in ("approved", "done"):
+            click.echo(f"✅ Task finished. Status: {final}")
+        else:
+            error = vals.get("error", "")
+            click.echo(f"❌ Task finished. Status: {final}{' — ' + error if error else ''}")
+        return
+
     if not snapshot or not snapshot.next:
-        vals = snapshot.values if snapshot else {}
-        final = vals.get("final_status", "")
         error = vals.get("error", "")
         if final in ("approved", ""):
             click.echo(f"✅ Task finished. Status: {final or 'done'}")
@@ -958,8 +1191,22 @@ def _run_watch_loop(app, config, task_id: str, interval: float = 2.0, manage_loc
             mins, secs = divmod(elapsed, 60)
 
             snapshot = app.get_state(config)
+            vals = snapshot.values if snapshot else {}
+            final = vals.get("final_status", "")
+            if _is_terminal_final_status(final):
+                if final:
+                    save_task_yaml(task_id, {"task_id": task_id, "status": final})
+                if manage_lock:
+                    release_lock()
+                    clear_runtime()
+                if final in ("approved", "done"):
+                    click.echo(f"[{mins:02d}:{secs:02d}] ✅ Task finished. Status: {final}")
+                else:
+                    error = vals.get("error", "")
+                    click.echo(f"[{mins:02d}:{secs:02d}] ❌ Task finished. Status: {final}{' — ' + error if error else ''}")
+                return
+
             if not snapshot or not snapshot.next:
-                vals = snapshot.values if snapshot else {}
                 final = vals.get("final_status", "")
                 if final:
                     save_task_yaml(task_id, {"task_id": task_id, "status": final})
@@ -991,6 +1238,12 @@ def _run_watch_loop(app, config, task_id: str, interval: float = 2.0, manage_loc
                 if detected_role == role:
                     step_label = "Build" if role == "builder" else "Review"
                     click.echo(f"[{mins:02d}:{secs:02d}] 📥 {step_label} 完成 ({agent})")
+                    try:
+                        data = _normalize_resume_output(role, data, vals)
+                    except ValueError as e:
+                        click.echo(f"[{mins:02d}:{secs:02d}] ❌ {e}", err=True)
+                        click.echo(f"[{mins:02d}:{secs:02d}] 🔁 请修复 outbox/{role}.json 后重试", err=True)
+                        continue
                     # Validate output before submitting
                     v_errors = validate_outbox_data(role, data)
                     if v_errors:
@@ -1242,7 +1495,8 @@ def cleanup(days: int):
 
 @main.command()
 @handle_errors
-def doctor():
+@click.option("--fix", is_flag=True, default=False, help="Attempt to auto-fix common state inconsistencies")
+def doctor(fix: bool):
     """检查 workspace 健康状态."""
     from multi_agent.workspace import check_workspace_health, get_workspace_stats
     issues = check_workspace_health()
@@ -1258,6 +1512,15 @@ def doctor():
         click.echo(f"⚠️  发现 {len(issues)} 个问题:")
         for issue in issues:
             click.echo(f"   - {issue}")
+
+    if fix:
+        actions = _auto_fix_runtime_consistency()
+        if actions:
+            click.echo("🛠️  自动修复动作:")
+            for action in actions:
+                click.echo(f"   - {action}")
+        else:
+            click.echo("🛠️  未发现可自动修复的问题")
 
 
 @main.command()
@@ -1393,6 +1656,18 @@ def version():
     click.echo(f"Install: {Path(__file__).parent}")
 
 
+@main.command("trace")
+@click.option("--task-id", required=True, help="Task ID")
+@click.option("--format", "fmt", default="tree", type=click.Choice(["tree", "mermaid"]), help="Trace 输出格式")
+@handle_errors
+def trace_cmd(task_id: str, fmt: str):
+    """输出会话事件轨迹（tree 或 mermaid）."""
+    from multi_agent.session import session_trace
+
+    _validate_task_id(task_id)
+    click.echo(session_trace(task_id, fmt))
+
+
 def _detect_active_task(app=None) -> str | None:
     """Detect the active task from task YAML markers in workspace."""
     from multi_agent.config import tasks_dir
@@ -1412,6 +1687,52 @@ def _detect_active_task(app=None) -> str | None:
         except Exception:
             continue
     return None
+
+
+def _auto_fix_runtime_consistency() -> list[str]:
+    """Best-effort lock/task marker reconciliation for smoother recovery."""
+    actions: list[str] = []
+    active_task = _detect_active_task()
+    locked_task = read_lock()
+    app = None
+    if active_task or locked_task:
+        from multi_agent.graph import compile_graph
+        app = compile_graph()
+
+    if active_task and not locked_task:
+        if app and _is_task_terminal_or_missing(app, active_task):
+            _mark_task_inactive(
+                active_task,
+                status="failed",
+                reason="doctor auto-fixed stale active marker (terminal graph state)",
+            )
+            actions.append(f"清理陈旧 active 标记: {active_task}")
+            return actions
+        try:
+            acquire_lock(active_task)
+            actions.append(f"恢复锁: {active_task}")
+        except Exception as exc:  # pragma: no cover - defensive
+            actions.append(f"恢复锁失败: {active_task} ({exc})")
+        return actions
+
+    if locked_task and not active_task:
+        if app and not _is_task_terminal_or_missing(app, locked_task):
+            actions.append(f"保留锁: {locked_task}（任务仍在进行）")
+            return actions
+        release_lock()
+        actions.append(f"释放孤立锁: {locked_task}")
+        return actions
+
+    if locked_task and active_task and locked_task != active_task:
+        release_lock()
+        try:
+            acquire_lock(active_task)
+            actions.append(f"重对齐锁: {locked_task} -> {active_task}")
+        except Exception as exc:  # pragma: no cover - defensive
+            actions.append(f"重对齐失败: {locked_task} -> {active_task} ({exc})")
+        return actions
+
+    return actions
 
 
 if __name__ == "__main__":

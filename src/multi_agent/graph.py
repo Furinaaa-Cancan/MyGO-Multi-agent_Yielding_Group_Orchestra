@@ -36,6 +36,17 @@ MAX_SNAPSHOTS = 10
 MAX_CONVERSATION_SIZE = 50
 MAX_REQUEST_CHANGES = 3  # DDI research: effectiveness decays 60-80% after 2-3 attempts
 MAX_TASK_DURATION_SEC = 7200  # 2h total task guard (OWASP LLM10:2025 DoW prevention)
+_RUBBER_STAMP_PHRASES = {
+    "lgtm",
+    "looks good",
+    "no issues",
+    "approved",
+    "all good",
+    "ship it",
+    "good to go",
+    "looks fine",
+    "no comments",
+}
 
 
 class GraphStats:
@@ -219,6 +230,12 @@ def save_state_snapshot(task_id: str, node_name: str, state: dict) -> None:
     snap_dir = _ws_dir() / "snapshots"
     snap_dir.mkdir(parents=True, exist_ok=True)
 
+    # G2: Sanitize task_id/node_name to prevent path traversal
+    # (e.g. task_id="../../etc/passwd" would write outside snapshots dir)
+    import re as _re
+    safe_tid = _re.sub(r"[^a-zA-Z0-9._-]", "_", task_id)[:64]
+    safe_node = _re.sub(r"[^a-zA-Z0-9._-]", "_", node_name)[:32]
+
     ts = int(time.time() * 1000)
     safe_state = {}
     for k, v in state.items():
@@ -228,7 +245,7 @@ def save_state_snapshot(task_id: str, node_name: str, state: dict) -> None:
         except (TypeError, ValueError):
             safe_state[k] = str(v)
 
-    path = snap_dir / f"{task_id}-{node_name}-{ts}.json"
+    path = snap_dir / f"{safe_tid}-{safe_node}-{ts}.json"
     try:
         path.write_text(_json.dumps(safe_state, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
@@ -236,7 +253,7 @@ def save_state_snapshot(task_id: str, node_name: str, state: dict) -> None:
 
     # Cleanup old snapshots — sort by filename (embeds timestamp) for reliability
     try:
-        existing = sorted(snap_dir.glob(f"{task_id}-*.json"), key=lambda p: p.name)
+        existing = sorted(snap_dir.glob(f"{safe_tid}-*.json"), key=lambda p: p.name)
         while len(existing) > MAX_SNAPSHOTS:
             existing.pop(0).unlink(missing_ok=True)
     except OSError:
@@ -338,6 +355,8 @@ class WorkflowState(TypedDict, total=False):
     done_criteria: list[str]
     timeout_sec: int
     input_payload: dict[str, Any]
+    workflow_mode: str         # "strict" | "normal"
+    review_policy: dict[str, Any]
 
     # Flow control
     current_role: str          # "builder" or "reviewer"
@@ -362,6 +381,43 @@ class WorkflowState(TypedDict, total=False):
     # Terminal
     error: str | None
     final_status: str | None
+
+
+def _is_rubber_stamp_approval(reviewer_output: dict[str, Any]) -> bool:
+    """Detect shallow reviewer approvals that lack independent verification."""
+    decision = str(reviewer_output.get("decision", "")).lower().strip()
+    if decision != "approve":
+        return False
+    summary = str(reviewer_output.get("summary", ""))
+    reasoning = str(reviewer_output.get("reasoning", ""))
+    policy = reviewer_output.get("_rubber_policy")
+    if isinstance(policy, dict):
+        phrases_raw = policy.get("generic_phrases")
+        if isinstance(phrases_raw, list):
+            phrases = [str(p).strip().lower() for p in phrases_raw if str(p).strip()]
+        else:
+            phrases = list(_RUBBER_STAMP_PHRASES)
+        generic_max = policy.get("generic_summary_max_len", 50)
+        shallow_max = policy.get("shallow_summary_max_len", 30)
+    else:
+        phrases = list(_RUBBER_STAMP_PHRASES)
+        generic_max = 50
+        shallow_max = 30
+    try:
+        generic_max = int(generic_max)
+    except (TypeError, ValueError):
+        generic_max = 50
+    try:
+        shallow_max = int(shallow_max)
+    except (TypeError, ValueError):
+        shallow_max = 30
+    if generic_max <= 0:
+        generic_max = 50
+    if shallow_max <= 0:
+        shallow_max = 30
+    is_generic = any(p in summary.lower() for p in phrases) and len(summary) < generic_max
+    is_shallow = not reasoning.strip() and len(summary) < shallow_max
+    return is_generic or is_shallow
 
 
 # ── TASK.md — Universal Entry Point ──────────────────────
@@ -853,22 +909,23 @@ def _review_node_inner(state: WorkflowState) -> dict:
 
     # Rubber-stamp detection (MAST NeurIPS 2025 TV-1; collusion-aware oversight):
     # Flag approvals that lack substantive independent verification evidence.
-    if decision == "approve":
-        reasoning = result.get("reasoning", "")
-        summary = result.get("summary", "")
-        _RUBBER_STAMP_PHRASES = {"lgtm", "looks good", "no issues", "approved", "all good",
-                                  "ship it", "good to go", "looks fine", "no comments"}
-        is_generic = any(p in summary.lower() for p in _RUBBER_STAMP_PHRASES) and len(summary) < 50
-        is_shallow = not reasoning and len(summary) < 40
-        if is_shallow or is_generic:
-            _log.warning(
-                "Rubber-stamp approve detected: reasoning=%r, summary=%r (len=%d). "
-                "Collusion risk — reviewer may not have performed independent verification "
-                "(MAST NeurIPS 2025 TV-1).",
-                reasoning[:60] if reasoning else "", summary[:60], len(summary),
-            )
-            # Inject warning into output so decide_node can see it
-            result["_rubber_stamp_warning"] = True
+    review_policy = state.get("review_policy")
+    rubber_policy = review_policy.get("rubber_stamp") if isinstance(review_policy, dict) else None
+    detector_input = dict(result)
+    if isinstance(rubber_policy, dict):
+        detector_input["_rubber_policy"] = rubber_policy
+
+    if _is_rubber_stamp_approval(detector_input):
+        reasoning = str(result.get("reasoning", ""))
+        summary = str(result.get("summary", ""))
+        _log.warning(
+            "Rubber-stamp approve detected: reasoning=%r, summary=%r (len=%d). "
+            "Collusion risk — reviewer may not have performed independent verification "
+            "(MAST NeurIPS 2025 TV-1).",
+            reasoning[:60] if reasoning else "", summary[:60], len(summary),
+        )
+        # Inject warning into output so decide_node can see it
+        result["_rubber_stamp_warning"] = True
 
     review_result = {
         "reviewer_output": result,
@@ -936,7 +993,34 @@ def _decide_node_inner(state: WorkflowState) -> dict:
         state = {**state, "conversation": trimmed}
 
     reviewer_output = state.get("reviewer_output", {})
-    decision = reviewer_output.get("decision", "reject")
+    review_policy = state.get("review_policy")
+    rubber_policy = review_policy.get("rubber_stamp") if isinstance(review_policy, dict) else {}
+    reviewer_for_detect = dict(reviewer_output) if isinstance(reviewer_output, dict) else {}
+    if isinstance(rubber_policy, dict):
+        reviewer_for_detect["_rubber_policy"] = rubber_policy
+    decision = str(reviewer_output.get("decision", "reject")).lower().strip()
+    strict_mode = str(state.get("workflow_mode", "")).lower().strip() == "strict"
+    rubber_stamp = bool(reviewer_output.get("_rubber_stamp_warning")) or _is_rubber_stamp_approval(reviewer_for_detect)
+    block_on_strict = True
+    if isinstance(rubber_policy, dict):
+        block_on_strict = bool(rubber_policy.get("block_on_strict", True))
+
+    if decision == "approve" and rubber_stamp and strict_mode and block_on_strict:
+        _log.warning(
+            "Strict mode blocks rubber-stamp approval for task %s; forcing request_changes.",
+            state.get("task_id", "?"),
+        )
+        reviewer_output = dict(reviewer_output)
+        feedback = str(reviewer_output.get("feedback", "")).strip()
+        if not feedback:
+            feedback = (
+                "审批被 strict 模式拦截：检测到 rubber-stamp 评审。"
+                "请给出独立验证证据（失败/通过用例、风险点、文件级检查结论）后再提交 approve。"
+            )
+        reviewer_output["decision"] = "request_changes"
+        reviewer_output["feedback"] = feedback
+        reviewer_output["_rubber_stamp_warning"] = True
+        decision = "request_changes"
 
     # Track retry effectiveness (DDI measurement) — count all review rounds,
     # not just reject retries. request_changes doesn't increment retry_count
@@ -952,7 +1036,7 @@ def _decide_node_inner(state: WorkflowState) -> dict:
         # C1: Check rubber-stamp warning from review_node (MAST NeurIPS 2025 TV-1).
         # If reviewer approved without substantive reasoning, record audit trail.
         convo_entries: list[dict] = []
-        if reviewer_output.get("_rubber_stamp_warning"):
+        if rubber_stamp:
             _log.warning(
                 "Task %s approved with rubber-stamp warning — review may lack "
                 "independent verification (MAST TV-1). Approving with audit note.",
@@ -1181,9 +1265,11 @@ def build_graph() -> StateGraph:
     return g
 
 
-# Task 11: singleton connection pool — reuse connections per db_path
+# Task 11: singleton connection pool — reuse connections per db_path.
+# Use RLock because compile_graph() may call _get_connection() while already
+# holding this lock during cold-start path compilation.
 _conn_pool: dict[str, "sqlite3.Connection"] = {}
-_conn_lock = __import__("threading").Lock()
+_conn_lock = __import__("threading").RLock()
 
 
 def _get_connection(path: str) -> "sqlite3.Connection":
@@ -1223,21 +1309,31 @@ def reset_graph() -> None:
 
 
 def compile_graph(*, db_path: str | None = None):
-    """Compile graph with SQLite checkpointer (connection-pooled, cached)."""
+    """Compile graph with SQLite checkpointer (connection-pooled, cached).
+
+    G3: Protected by _conn_lock to prevent concurrent threads from
+    compiling the graph simultaneously (double-checked locking pattern).
+    """
     from pathlib import Path as _Path
 
     path = db_path or str(store_db_path())
 
+    # Fast path — no lock needed if already cached (CPython GIL makes dict read safe)
     if path in _compiled_cache:
         return _compiled_cache[path]
 
-    g = build_graph()
+    with _conn_lock:
+        # Double-check after acquiring lock
+        if path in _compiled_cache:
+            return _compiled_cache[path]
 
-    # Ensure parent directory exists
-    _Path(path).parent.mkdir(parents=True, exist_ok=True)
+        g = build_graph()
 
-    conn = _get_connection(path)
-    checkpointer = SqliteSaver(conn)
-    compiled = g.compile(checkpointer=checkpointer)
-    _compiled_cache[path] = compiled
-    return compiled
+        # Ensure parent directory exists
+        _Path(path).parent.mkdir(parents=True, exist_ok=True)
+
+        conn = _get_connection(path)
+        checkpointer = SqliteSaver(conn)
+        compiled = g.compile(checkpointer=checkpointer)
+        _compiled_cache[path] = compiled
+        return compiled

@@ -226,16 +226,28 @@ class TestHandleErrorsDecorator:
             raise_exit()
         assert exc_info.value.code == 42
 
-    def test_exception_releases_lock(self):
+    def test_exception_does_not_auto_release_lock(self):
         from multi_agent.cli import handle_errors
 
         @handle_errors
         def raise_error():
             raise RuntimeError("boom")
 
-        with patch("multi_agent.cli.read_lock", return_value=None):
+        class _Root:
+            params = {"verbose": False}
+
+        class _Ctx:
+            params = {"task_id": "task-123"}
+
+            def find_root(self):
+                return _Root()
+
+        with patch("multi_agent.cli.click.get_current_context", return_value=_Ctx()), \
+             patch("multi_agent.cli.read_lock", return_value="task-123"), \
+             patch("multi_agent.cli.release_lock") as rel:
             with pytest.raises(SystemExit):
                 raise_error()
+            rel.assert_not_called()
 
     def test_keyboard_interrupt_releases_lock(self):
         from multi_agent.cli import handle_errors
@@ -249,7 +261,25 @@ class TestHandleErrorsDecorator:
             with pytest.raises(SystemExit) as exc_info:
                 raise_kb()
             assert exc_info.value.code == 0
-            rel.assert_called_once()
+            rel.assert_not_called()
+
+    def test_keyboard_interrupt_does_not_auto_release_lock_even_with_task_context(self):
+        from multi_agent.cli import handle_errors
+
+        @handle_errors
+        def raise_kb():
+            raise KeyboardInterrupt()
+
+        class _Ctx:
+            params = {"task_id": "task-123"}
+
+        with patch("multi_agent.cli.click.get_current_context", return_value=_Ctx()), \
+             patch("multi_agent.cli.read_lock", return_value="task-123"), \
+             patch("multi_agent.cli.release_lock") as rel:
+            with pytest.raises(SystemExit) as exc_info:
+                raise_kb()
+            assert exc_info.value.code == 0
+            rel.assert_not_called()
 
 
 class TestDuplicateSubTaskId:
@@ -747,6 +777,40 @@ class TestStructuredRetryFeedback:
         assert "Quality Gate Warnings" not in feedback
 
 
+class TestLegacyResumeNormalization:
+    """Legacy go/watch/done path should match session-mode reviewer gating."""
+
+    def test_reviewer_pass_alias_normalized(self):
+        from multi_agent.cli import _normalize_resume_output
+
+        state_values = {"workflow_mode": "strict"}
+        output = {"decision": "pass", "summary": "ok", "evidence": ["unit test pass"]}
+        normalized = _normalize_resume_output("reviewer", output, state_values)
+        assert normalized["decision"] == "approve"
+
+    def test_reviewer_approve_needs_evidence_in_strict(self):
+        from multi_agent.cli import _normalize_resume_output
+
+        state_values = {
+            "workflow_mode": "strict",
+            "review_policy": {"reviewer": {"require_evidence_on_approve": True, "min_evidence_items": 1}},
+        }
+        output = {"decision": "approve", "summary": "looks good"}
+        with pytest.raises(ValueError, match="reviewer approve requires evidence"):
+            _normalize_resume_output("reviewer", output, state_values)
+
+    def test_reviewer_evidence_check_can_be_disabled(self):
+        from multi_agent.cli import _normalize_resume_output
+
+        state_values = {
+            "workflow_mode": "strict",
+            "review_policy": {"reviewer": {"require_evidence_on_approve": False}},
+        }
+        output = {"decision": "approve", "summary": "looks good"}
+        normalized = _normalize_resume_output("reviewer", output, state_values)
+        assert normalized["decision"] == "approve"
+
+
 # ── R19 regression tests ─────────────────────────────────────────────
 
 
@@ -849,3 +913,63 @@ class TestWatcherContentHashDedup:
         results2 = poller.check_once()
         assert len(results2) == 1
         assert results2[0][1]["summary"] == "v2"
+
+
+# ── R20 regression tests ─────────────────────────────────────────────
+
+
+class TestDecomposePromptBraces:
+    """R20 G1: decompose prompt doesn't crash when requirement contains braces."""
+
+    def test_requirement_with_braces(self, tmp_path, monkeypatch):
+        from multi_agent import decompose, config
+        monkeypatch.setattr(config, "workspace_dir", lambda: tmp_path)
+        monkeypatch.setattr(config, "inbox_dir", lambda: tmp_path / "inbox")
+        (tmp_path / "inbox").mkdir()
+        # This would crash with str.format() due to {user_id}
+        result = decompose.write_decompose_prompt(
+            "implement endpoint GET /users/{user_id}/profile",
+            lang="en",
+            project_context="test project",
+        )
+        content = result.read_text(encoding="utf-8")
+        assert "{user_id}" in content
+        assert "implement endpoint" in content
+
+    def test_requirement_with_curly_json(self, tmp_path, monkeypatch):
+        from multi_agent import decompose, config
+        monkeypatch.setattr(config, "workspace_dir", lambda: tmp_path)
+        monkeypatch.setattr(config, "inbox_dir", lambda: tmp_path / "inbox")
+        (tmp_path / "inbox").mkdir()
+        result = decompose.write_decompose_prompt(
+            'parse JSON like {"key": "value"} from input',
+            lang="zh",
+            project_context="test",
+        )
+        content = result.read_text(encoding="utf-8")
+        assert '{"key": "value"}' in content
+
+
+class TestSnapshotPathSanitization:
+    """R20 G2: save_state_snapshot sanitizes task_id to prevent path traversal."""
+
+    def test_traversal_in_task_id(self, tmp_path, monkeypatch):
+        from multi_agent import graph, config
+        monkeypatch.setattr(config, "workspace_dir", lambda: tmp_path)
+        state = {"task_id": "../../etc/passwd", "status": "test"}
+        graph.save_state_snapshot("../../etc/passwd", "build", state)
+        snap_dir = tmp_path / "snapshots"
+        # File must be inside snapshots dir (no path separator escape)
+        snaps = list(snap_dir.glob("*.json"))
+        assert len(snaps) == 1
+        assert "/" not in snaps[0].name
+        assert snaps[0].parent == snap_dir
+
+    def test_normal_task_id_preserved(self, tmp_path, monkeypatch):
+        from multi_agent import graph, config
+        monkeypatch.setattr(config, "workspace_dir", lambda: tmp_path)
+        graph.save_state_snapshot("task-abc-123", "plan", {"x": 1})
+        snap_dir = tmp_path / "snapshots"
+        snaps = list(snap_dir.glob("*.json"))
+        assert len(snaps) == 1
+        assert "task-abc-123" in snaps[0].name

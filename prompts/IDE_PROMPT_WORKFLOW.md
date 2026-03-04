@@ -1,16 +1,18 @@
-# IDE Prompt Workflow（Hub 模式）
+# IDE Prompt Workflow（Session 模式）
 
-用一个入口脚本完成交互，不再手工拼事件命令。
+统一使用 `ma session`，不再手工拼事件命令。
 
 ## Step 1: Start
 
 ```bash
-python3 /Volumes/Seagate/Multi-Agent/scripts/ide_hub.py start \
-  --task /Volumes/Seagate/Multi-Agent/tasks/examples/task-code-implement.json
+PYTHONPATH=/Volumes/Seagate/Multi-Agent/src \
+python3 -m multi_agent.cli session start \
+  --task /Volumes/Seagate/Multi-Agent/tasks/examples/task-code-implement.json \
+  --mode strict
 ```
 
 该命令会：
-- 初始化/刷新 session
+- 初始化/刷新 session（LangGraph SSOT）
 - 自动生成三端提示词：
   - `/Volumes/Seagate/Multi-Agent/prompts/current-windsurf.txt`
   - `/Volumes/Seagate/Multi-Agent/prompts/current-antigravity.txt`
@@ -24,20 +26,21 @@ python3 /Volumes/Seagate/Multi-Agent/scripts/ide_hub.py start \
 ## Step 3: 提交 IDE 返回结果
 
 ```bash
-python3 /Volumes/Seagate/Multi-Agent/scripts/ide_hub.py submit \
-  --task /Volumes/Seagate/Multi-Agent/tasks/examples/task-code-implement.json \
+PYTHONPATH=/Volumes/Seagate/Multi-Agent/src \
+python3 -m multi_agent.cli session push \
+  --task-id task-api-user-create \
   --agent windsurf \
-  --result-file /path/to/windsurf-output.txt
+  --file /Volumes/Seagate/Multi-Agent/.multi-agent/outbox/builder.json
 ```
 
 说明：
-- `--result-file` 支持纯 JSON 或 markdown 代码块中的 JSON。
-- `submit` 会自动推断事件并推进状态（必要时自动补 `builder_start`）。
-- 提交后会自动刷新三端提示词，并告诉你下一位 owner。
+- `--file` 支持 envelope JSON（推荐）。
+- 提交后自动推进状态并刷新提示词。
 
 ## Step 4: 查看当前状态（可选）
 
 ```bash
-python3 /Volumes/Seagate/Multi-Agent/scripts/ide_hub.py status \
-  --task /Volumes/Seagate/Multi-Agent/tasks/examples/task-code-implement.json
+PYTHONPATH=/Volumes/Seagate/Multi-Agent/src \
+python3 -m multi_agent.cli session status \
+  --task-id task-api-user-create
 ```

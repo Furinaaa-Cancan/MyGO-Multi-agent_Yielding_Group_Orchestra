@@ -119,6 +119,12 @@ def spawn_cli_agent(
 
     Returns the thread (for testing). Caller does NOT need to join it.
     If same agent+role is already running, returns the existing thread.
+    
+    Security Note:
+        Uses shell=True for command execution. The command_template comes from
+        agents.yaml and MUST be trusted. Malicious modification of agents.yaml
+        could lead to command injection. Ensure agents.yaml has proper file
+        permissions (0o644 or stricter) and is not writable by untrusted users.
     """
     # Task 10: concurrency protection
     lock_key = f"{agent_id}:{role}"
@@ -127,6 +133,15 @@ def spawn_cli_agent(
         if existing and existing.is_alive():
             logger.info("CLI agent %s already running as %s, returning existing thread", agent_id, role)
             return existing
+
+    # C3: Validate command_template for dangerous shell metacharacters
+    # This is defense-in-depth; primary security relies on trusted agents.yaml
+    dangerous_chars = [";", "|", "&", "$", "`", "(", ")", "<", ">", "\n"]
+    if any(char in command_template for char in dangerous_chars):
+        logger.warning(
+            "Command template for agent '%s' contains shell metacharacters. "
+            "Ensure agents.yaml is from a trusted source.", agent_id
+        )
 
     task_file = str(workspace_dir() / "TASK.md")
     outbox_file = str(outbox_dir() / f"{role}.json")

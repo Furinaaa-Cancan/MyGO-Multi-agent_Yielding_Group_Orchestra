@@ -107,6 +107,15 @@ class TestDoctorCommand:
         assert result.exit_code == 0
         assert "Workspace" in result.output
 
+    def test_doctor_fix_prints_actions(self, runner, tmp_root):
+        from multi_agent.workspace import ensure_workspace
+        ensure_workspace()
+        with patch("multi_agent.cli._auto_fix_runtime_consistency", return_value=["恢复锁: task-1"]):
+            result = runner.invoke(main, ["doctor", "--fix"])
+        assert result.exit_code == 0
+        assert "自动修复" in result.output
+        assert "恢复锁: task-1" in result.output
+
 
 class TestAgentsCommand:
     """Task 97: ma agents command."""

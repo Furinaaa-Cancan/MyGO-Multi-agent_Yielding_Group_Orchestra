@@ -1,475 +1,379 @@
-<div align="center">
-
 # AgentOrchestra
 
-**IDE-Agnostic Multi-Agent Orchestration Framework**
-
-*One command to coordinate any combination of AI coding assistants — Windsurf, Cursor, Codex, Kiro, Copilot, and more*
-
-[![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-655%20passed-brightgreen.svg)]()
-
-[English](#english) | [中文](#中文)
-
-</div>
+IDE 无关的多 Agent 编排框架。  
+当前推荐模式：**LangGraph 单一状态源（SSOT）+ IDE-first Session 流程**。
 
 ---
 
-<a id="english"></a>
+## 你现在应该怎么用（先看这个）
 
-## 30-Second Demo
+如果你是 `Windsurf + Antigravity + Codex` 这类组合，建议只用这条链路：
 
-**Fully automated** (CLI agents like Claude Code, Codex, Aider):
+1. `ma session start` 初始化会话
+2. `ma session pull` 给当前 agent 生成提示词
+3. agent 在 IDE 里完成工作并写 JSON 文件
+4. `ma session push` 提交 JSON，自动推进到下一角色
 
-```bash
-$ ma go "Add input validation" --builder claude --reviewer codex
+关键点：
+- IDE 里只做代码与 JSON 输出，不需要在 IDE 里跑终端命令。
+- 角色默认是 `builder -> reviewer`，且两者必须不同 agent。
+- 所有共享状态以 LangGraph checkpoint 为准，不再维护第二套状态机。
 
-🚀 Task: task-a1b2c3d4
-   Add input validation
+---
 
-🤖 [Build] 自动调用 claude CLI…
-[00:45] 📥 Build 完成 (claude)
-🤖 [Review] 自动调用 codex CLI…
-[01:20] 📥 Review 完成 (codex)
-[01:22] ✅ Task finished — approved
-```
-
-**Semi-automated** (IDE agents like Windsurf, Cursor):
-
-```bash
-$ ma go "Add input validation" --builder windsurf --reviewer cursor
-
-🚀 Task: task-a1b2c3d4
-📋 [Build] 在 windsurf IDE 里对 AI 说:
-   "帮我完成 @.multi-agent/TASK.md 里的任务"
-
-[00:32] 📥 Build 完成 (windsurf)
-[00:32] 📋 在 cursor IDE 里对 AI 说:
-             "帮我完成 @.multi-agent/TASK.md 里的任务"
-[01:15] 📥 Review 完成 (cursor)
-[01:17] ✅ Task finished — approved
-```
-
-**One command.** CLI agents run fully automatic. IDE agents need one sentence per step.
-
-## What is AgentOrchestra?
-
-AgentOrchestra coordinates multiple IDE-based AI coding assistants through a **Plan → Build → Review → Decide** cycle. One AI implements, a different AI reviews. Cross-model adversarial review catches mistakes that self-review misses.
-
-### Why?
-
-AI coding assistants are powerful individually, but:
-- They never review their own blind spots
-- Coordinating two IDEs manually is tedious (copy prompts, track turns, pass feedback)
-- No persistent state across sessions
-
-### How it works
-
-```
-Terminal                    IDE A (builder)              IDE B (reviewer)
-   │                            │                            │
-   │  ma go "requirement"       │                            │
-   │──────────────────────►     │                            │
-   │  writes TASK.md            │                            │
-   │                            │                            │
-   │                       @TASK.md                          │
-   │                       reads prompt                      │
-   │                       does the work                     │
-   │                       saves outbox/builder.json         │
-   │  ◄─── auto-detects ───────┘                            │
-   │                                                         │
-   │  rewrites TASK.md for reviewer                          │
-   │                                                    @TASK.md
-   │                                                    reads prompt
-   │                                                    reviews code
-   │                                                    saves outbox/reviewer.json
-   │  ◄─── auto-detects ────────────────────────────────────┘
-   │
-   │  ✅ approved (or retry with feedback)
-```
-
-**Key insight**: `TASK.md` is self-contained. It embeds the full prompt — the IDE AI gets everything from one `@file` reference, no jumping between files.
-
-## Quick Start
-
-### Install
+## 1. 安装与初始化
 
 ```bash
 git clone https://github.com/Furinaaa-Cancan/AgentOrchestra.git
 cd AgentOrchestra
-python3 -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-### Configure Agents
-
-Edit `agents/agents.yaml`:
-
-```yaml
-agents:
-  # CLI agents — fully automated (driver: cli)
-  - id: claude
-    driver: cli
-    command: "claude -p 'Read {task_file} ...' --allowedTools Read,Edit,Bash,Write"
-    capabilities: [planning, implementation, testing, review, docs]
-
-  - id: codex
-    driver: cli
-    command: "codex exec 'Read {task_file} ...' --full-auto"
-    capabilities: [planning, implementation, testing, review, docs]
-
-  # IDE agents — manual (driver: file, default)
-  - id: windsurf
-    driver: file
-    capabilities: [planning, implementation, testing, docs]
-
-  - id: cursor
-    driver: file
-    capabilities: [planning, implementation, testing, review, docs]
-
-defaults:
-  builder: windsurf
-  reviewer: cursor
-```
-
-### Use
+查看命令：
 
 ```bash
-# Fully automated with CLI agents
-ma go "Implement POST /users" --builder claude --reviewer codex
-
-# Semi-automated with IDE agents
-ma go "Implement POST /users" --builder windsurf --reviewer cursor
-# Then tell each IDE: "帮我完成 @.multi-agent/TASK.md 里的任务"
+ma --help
+ma session --help
 ```
 
-### Supported Tools
+---
 
-| Type | Tools | Automation |
-|------|-------|-----------|
-| **CLI** (driver: cli) | Claude Code, Codex, Aider, Goose | Fully automatic |
-| **IDE** (driver: file) | Windsurf, Cursor, Kiro, Antigravity, Copilot | One sentence per step |
+## 2. 最小可用流程（MVP）
 
-Add any tool in `agents.yaml`. No code changes needed.
+示例任务文件：`tasks/examples/task-code-implement.json`  
+示例 task_id：`task-api-user-create`
 
-## Architecture
+### 2.1 启动会话
 
-### 4-Node LangGraph Cycle
-
-```
-               ┌─────────┐
-               │  START   │
-               └────┬────┘
-                    │
-               ┌────▼────┐
-          ┌───▶│  plan   │  Resolve roles, render prompt into TASK.md
-          │    └────┬────┘
-          │         │
-          │    ┌────▼────┐
-          │    │  build  │  interrupt() — IDE AI reads TASK.md, saves outbox
-          │    └────┬────┘
-          │         │ (validate output, check quality gates)
-          │    ┌────▼────┐
-          │    │ review  │  interrupt() — reviewer IDE reads TASK.md, saves outbox
-          │    └────┬────┘
-          │         │
-          │    ┌────▼────┐
-          │    │ decide  │  approve → END, reject → retry with feedback
-          │    └────┬────┘
-          │         │
-          └─────────┘
+```bash
+ma session start \
+  --task tasks/examples/task-code-implement.json \
+  --mode strict \
+  --config config/workmode.yaml
 ```
 
-### Decompose Flow (--decompose)
+首次启动会输出：
+- `state`
+- `current_agent`
+- `current_role`
+- `prompt_paths`
 
-```
-  ┌──────────────┐
-  │  Requirement  │
-  └──────┬───────┘
-         │ ma go "..." --decompose
-  ┌──────▼───────┐
-  │  Decompose   │  Break into sub-tasks via IDE/CLI
-  └──────┬───────┘
-         │
-    ┌────▼────────────────────────────────┐
-    │  sub-task₁      sub-task₂     ...   │  (parallel groups)
-    │  ┌─────────┐   ┌─────────┐          │
-    │  │ build → │   │ build → │          │
-    │  │ review  │   │ review  │          │
-    │  └────┬────┘   └────┬────┘          │
-    └───────┼─────────────┼───────────────┘
-            │             │
-       ┌────▼─────────────▼────┐
-       │    Aggregate Results   │
-       └───────────────────────┘
+如果你要重新跑同一个 task_id（清理旧 checkpoint）：
+
+```bash
+ma session start \
+  --task tasks/examples/task-code-implement.json \
+  --mode strict \
+  --config config/workmode.yaml \
+  --reset
 ```
 
-### File Interaction
+### 2.2 拉取 builder 提示词
 
-```
-  CLI (ma go)              TASK.md              IDE AI              outbox/*.json
-     │                        │                    │                     │
-     │── render prompt ──────▶│                    │                     │
-     │                        │◄── @TASK.md ──────│                     │
-     │                        │    read & execute  │                     │
-     │                        │                    │── write result ────▶│
-     │                        │                    │                     │
-     │◄──────────────── Watcher auto-detects ─────────────────────────── │
-     │                        │                    │                     │
-     │── next phase ─────────▶│                    │                     │
+```bash
+ma session pull --task-id task-api-user-create --agent windsurf > prompts/current-windsurf.txt
 ```
 
-### Workspace
+然后在 Windsurf 里执行：
+- 打开 `prompts/current-windsurf.txt`
+- 按提示实现代码
+- 输出 envelope JSON 到 `.multi-agent/outbox/builder.json`
 
+### 2.3 提交 builder 结果
+
+```bash
+ma session push \
+  --task-id task-api-user-create \
+  --agent windsurf \
+  --file .multi-agent/outbox/builder.json
 ```
+
+提交成功后，状态通常变成 `VERIFYING`，owner 切到 reviewer。
+
+### 2.4 reviewer 同样流程
+
+```bash
+ma session pull --task-id task-api-user-create --agent antigravity > prompts/current-antigravity.txt
+ma session push \
+  --task-id task-api-user-create \
+  --agent antigravity \
+  --file .multi-agent/outbox/reviewer.json
+```
+
+### 2.5 查看状态与轨迹
+
+```bash
+ma session status --task-id task-api-user-create
+ma trace --task-id task-api-user-create --format tree
+ma trace --task-id task-api-user-create --format mermaid
+```
+
+---
+
+## 3. IDE 侧协议（必须遵守）
+
+### 3.1 统一 envelope
+
+```json
+{
+  "protocol_version": "1.0",
+  "task_id": "task-api-user-create",
+  "lane_id": "main",
+  "agent": "windsurf",
+  "role": "builder",
+  "state_seen": "RUNNING",
+  "result": {},
+  "recommended_event": "builder_done",
+  "evidence_files": [],
+  "memory_candidates": [],
+  "created_at": "2026-03-02T18:00:00Z"
+}
+```
+
+### 3.2 builder 最小 `result`
+
+```json
+{
+  "status": "completed",
+  "summary": "实现摘要",
+  "changed_files": ["/abs/path/file.py"],
+  "check_results": {
+    "lint": "pass",
+    "unit_test": "pass",
+    "contract_test": "pass",
+    "artifact_checksum": "pass"
+  },
+  "risks": [],
+  "handoff_notes": "给 reviewer 的说明"
+}
+```
+
+### 3.3 reviewer 最小 `result`
+
+```json
+{
+  "decision": "approve",
+  "summary": "评审结论",
+  "feedback": "",
+  "issues": [],
+  "evidence": [],
+  "risks": []
+}
+```
+
+说明：
+- reviewer `decision` 仅允许：`approve | reject | request_changes`
+- `memory_candidates` 支持放 envelope 顶层；为兼容旧输出，系统也会读取 `result.memory_candidates`
+
+---
+
+## 4. 状态模型（Session 视角）
+
+核心状态投影：
+- `ASSIGNED`
+- `RUNNING`（builder 执行中）
+- `VERIFYING`（reviewer 执行中）
+- `DONE | FAILED | ESCALATED | CANCELLED`（终态）
+
+说明：
+- `session` 模式会把 graph 的 `final_status=approved` 投影为 `state=DONE`。
+- 终态任务再次启动时，推荐用 `--reset`。
+
+---
+
+## 5. 项目结构（与会话相关）
+
+```text
 .multi-agent/
-├── TASK.md             ← Self-contained prompt (THE file IDEs read)
-├── inbox/
-│   ├── builder.md      ← Builder prompt source (embedded into TASK.md)
-│   └── reviewer.md     ← Reviewer prompt source (embedded into TASK.md)
+├── TASK.md
+├── MEMORY.md
 ├── outbox/
-│   ├── builder.json    ← Builder writes here → auto-detected
-│   └── reviewer.json   ← Reviewer writes here → auto-detected
-├── dashboard.md        ← Progress panel
-├── tasks/              ← Task state markers (active/completed/failed)
-├── history/            ← Conversation archive
-└── store.db            ← LangGraph SQLite checkpoint
+│   ├── builder.json
+│   └── reviewer.json
+├── tasks/
+│   └── <task_id>.yaml
+├── history/
+│   ├── <task_id>.events.jsonl
+│   └── <task_id>.memory.pending.json
+└── store.db
+
+prompts/
+├── current-windsurf.txt
+├── current-antigravity.txt
+└── current-codex.txt
+
+runtime/handoffs/<task_id>/
+└── *.json
 ```
 
-### CLI Reference
+---
 
-| Command | Description |
-|---------|-------------|
-| `ma go "requirement"` | Start task + auto-watch (default) |
-| `ma go "req" --builder X --reviewer Y` | Specify IDEs |
-| `ma go "req" --decompose` | Decompose complex requirement into sub-tasks first |
-| `ma go "req" --no-watch` | Start without auto-watch |
-| `ma watch` | Resume watching (after `--no-watch`) |
-| `ma done` | Manually submit output |
-| `ma done --file output.json` | Submit from specific file |
-| `ma status` | Show current task state |
-| `ma cancel` | Cancel active task |
-| `ma render "req"` | Preview rendered prompt (dry-run) |
-| `ma init` | Initialize project structure |
-| `ma history` | Show task history |
+## 6. 命令速查
 
-## Research Foundation
+### 推荐命令（session 主链路）
 
-| Paper | Venue | Design Principle Applied |
-|-------|-------|------------------------|
-| Evolving Orchestration | **NeurIPS 2025** | Compact cyclic graph (4 nodes) outperforms complex DAGs |
-| ChatDev | **ACL 2024** | One requirement in → fully automated role-pair chain |
-| MetaGPT | **ICLR 2024** | Publish-subscribe artifacts (outbox auto-detection) |
-| MASAI | **ICSE 2025** | Modular sub-agents with well-defined objectives per role |
-| HULA | **ICSE 2025** | Minimal-friction human-in-the-loop (one sentence per IDE) |
-| SWE-agent | **ICLR 2025** | Agent-Computer Interface design (TASK.md as ACI) |
-| Agentless | **FSE 2025** | Simple pipeline beats over-engineered agents |
-| MapCoder | **ACL 2024** | Verification stage as separate agent (reviewer role) |
+| 命令 | 作用 |
+|---|---|
+| `ma session start --task <task.json> --mode strict` | 初始化会话 |
+| `ma session status --task-id <id>` | 查看 owner/状态 |
+| `ma session pull --task-id <id> --agent <agent>` | 生成 agent 提示词 |
+| `ma session push --task-id <id> --agent <agent> --file <json>` | 提交结果并推进 |
+| `ma trace --task-id <id> --format tree\|mermaid` | 查看事件轨迹 |
 
-### Key Design Decisions
+### 兼容命令（保留但不推荐作为主入口）
 
-| Decision | Rationale | Paper |
-|----------|-----------|-------|
-| Self-contained TASK.md | IDE AI needs ONE file reference, not multi-hop | SWE-agent ACI |
-| Auto-watch outbox | Zero manual `ma done` in normal flow | MetaGPT publish-subscribe |
-| Builder ≠ Reviewer | Cross-model adversarial review catches self-review blind spots | ChatDev role pairs |
-| 4 graph nodes | RL-trained orchestrators converge to compact cycles | Evolving Orchestration |
-| File-based communication | Works with any IDE, zero integration needed | HULA minimal friction |
-| Retry with reviewer feedback | Reviewer rejection injects concrete feedback into next attempt | MapCoder verification |
-| Task decomposition | Complex requirements → independent sub-tasks with isolated context (5.7x reduction) | MASAI modular sub-agents |
+| 脚本 | 说明 |
+|---|---|
+| `scripts/ide_hub.py` | `ma session` 的兼容封装 |
+| `scripts/workmode_ctl.py` | 配置校验与兼容输出（非主流转） |
+| `scripts/emit_ide_prompt.py` | 纯 IDE 提示词输出 |
 
-## Running Tests
+说明：`ma go / ma done / ma watch` 仍可用，但建议只作为旧链路兼容入口。
+
+---
+
+## 7. Windsurf / Antigravity 实战模板
+
+下面是你当前场景的固定分工建议：
+
+1. `windsurf` 只做 `builder`
+2. `antigravity` 只做 `reviewer`
+3. `codex` 负责 orchestrator（会话推进、修复、兜底）
+
+每轮操作不超过 3 步：
+
+1. 打开 prompt（`ma session pull`）
+2. 在 IDE 执行并产出 envelope JSON
+3. 提交（`ma session push`）
+
+---
+
+## 8. 常见问题（你会遇到的）
+
+### Q1: `task 'xxx' is already active`
+
+原因：同 task_id 已有活跃会话。  
+处理：
+
+```bash
+ma session start --task <task.json> --mode strict --reset
+```
+
+### Q2: `current owner is 'A', not 'B'`
+
+原因：不是当前轮到的 agent 提交。  
+处理：
+
+```bash
+ma session status --task-id <id>
+```
+
+确认 `current_agent` 后由对应 agent 提交。
+
+### Q2.1: `invalid role mapping: builder and reviewer must differ`
+
+原因：角色映射把 builder/reviewer 配成了同一个 agent。  
+处理：在 `config/workmode.yaml` 或 `agents/agents.yaml` 里改成不同 agent 后重试。
+
+### Q3: lock 相关错误（`blocked` / `lock not found`）
+
+先用同一个 DB 路径检查：
+
+```bash
+python3 scripts/lockctl.py --db runtime/locks.db list
+python3 scripts/lockctl.py --db runtime/locks.db doctor
+```
+
+再按 owner 释放：
+
+```bash
+python3 scripts/lockctl.py --db runtime/locks.db release --task-id <holder> --file-path <same-file>
+```
+
+### Q4: reviewer 通过了但 MEMORY 没更新
+
+确认 reviewer 输出里有 `memory_candidates`，并且 `decision=approve`。  
+通过后会把 pending 候选提升到 `.multi-agent/MEMORY.md`。
+
+### Q5: strict 模式下 reviewer 写了 `approve` 但任务没完成
+
+如果 reviewer 输出被判定为 rubber-stamp（例如只有 `LGTM`/缺少独立验证证据），
+strict 模式会自动降级为 `request_changes`，不会直接 `DONE`。  
+处理方式：在 reviewer envelope 的 `result` 里补充具体 `reasoning` 和可核验证据，再提交。
+
+---
+
+## 9. 配置
+
+### 9.1 workmode 角色
+
+`config/workmode.yaml`（默认 strict）：
+
+```yaml
+version: 1
+modes:
+  strict:
+    roles:
+      orchestrator: codex
+      builder: windsurf
+      reviewer: antigravity
+    review_policy:
+      rubber_stamp:
+        generic_summary_max_len: 50
+        shallow_summary_max_len: 30
+        block_on_strict: true
+      reviewer:
+        require_evidence_on_approve: true
+        min_evidence_items: 1
+```
+
+### 9.2 agent 配置
+
+在 `agents/agents.yaml` 定义 agent 能力、driver、默认 builder/reviewer。
+
+约束：
+- `builder` 与 `reviewer` 不能是同一 agent。
+- `driver: file` 适合 IDE 对话流。
+- `driver: cli` 适合全自动 CLI agent。
+
+---
+
+## 10. 测试与验收
 
 ```bash
 pytest tests/ -v
-# 575 tests passed
+./scripts/smoke_mvp.sh
+./scripts/workmode_demo.sh
 ```
 
-## License
+建议在你每次改协议后至少跑：
 
-**CC BY-NC-SA 4.0** — Non-commercial use with attribution. See [LICENSE](LICENSE).
+```bash
+pytest -q tests/test_session_cli.py tests/test_emit_ide_prompt.py tests/test_lockctl.py tests/test_memory.py tests/test_trace.py
+```
 
 ---
 
-<a id="中文"></a>
+## 11. 设计原则（当前版本）
 
-<div align="center">
-
-# AgentOrchestra
-
-**IDE 无关的多智能体编排框架**
-
-*一个命令协调任意 AI 编程助手组合*
-
-</div>
-
-## 30 秒演示
-
-**全自动模式**（CLI 工具：Claude Code, Codex, Aider）：
-
-```bash
-$ ma go "添加输入校验" --builder claude --reviewer codex
-
-🚀 Task: task-a1b2c3d4
-   添加输入校验
-
-🤖 [Build] 自动调用 claude CLI…
-[00:45] 📥 Build 完成 (claude)
-🤖 [Review] 自动调用 codex CLI…
-[01:20] 📥 Review 完成 (codex)
-[01:22] ✅ Task finished — approved
-```
-
-**半自动模式**（IDE 工具：Windsurf, Cursor）：
-
-```bash
-$ ma go "添加输入校验" --builder windsurf --reviewer cursor
-
-🚀 Task: task-a1b2c3d4
-📋 [Build] 在 windsurf IDE 里对 AI 说:
-   "帮我完成 @.multi-agent/TASK.md 里的任务"
-
-[00:32] 📥 Build 完成 (windsurf)
-[00:32] 📋 在 cursor IDE 里对 AI 说:
-             "帮我完成 @.multi-agent/TASK.md 里的任务"
-[01:15] 📥 Review 完成 (cursor)
-[01:17] ✅ Task finished — approved
-```
-
-**一个命令。** CLI 工具全自动运行，IDE 工具每步说一句话。
-
-## 这是什么？
-
-AgentOrchestra 协调多个 IDE 的 AI 编程助手，通过 **Plan → Build → Review → Decide** 循环协作。一个 AI 实现，另一个 AI 审查。跨模型对抗审查能捕获自我审查的盲点。
-
-### 为什么需要？
-
-- AI 助手从不审查自己的盲点
-- 手动协调两个 IDE 很麻烦（复制 prompt、追踪轮次、传递反馈）
-- 会话间无持久化状态
-
-### 工作原理
-
-```
-终端                        IDE A (builder)              IDE B (reviewer)
-  │                              │                            │
-  │  ma go "需求"                │                            │
-  │──────────────────────►       │                            │
-  │  写入 TASK.md                │                            │
-  │                         @TASK.md                          │
-  │                         读取完整 prompt                    │
-  │                         执行开发工作                       │
-  │                         保存 outbox/builder.json          │
-  │  ◄─── 自动检测 ────────────┘                              │
-  │                                                           │
-  │  重写 TASK.md (reviewer prompt)                           │
-  │                                                      @TASK.md
-  │                                                      读取审查 prompt
-  │                                                      审查代码
-  │                                                      保存 outbox/reviewer.json
-  │  ◄─── 自动检测 ──────────────────────────────────────────┘
-  │
-  │  ✅ 通过 (或带反馈重试)
-```
-
-**核心**: `TASK.md` 是自包含的完整 prompt。IDE AI 通过一次 `@file` 引用获取所有信息。
-
-## 快速开始
-
-### 安装
-
-```bash
-git clone https://github.com/Furinaaa-Cancan/AgentOrchestra.git
-cd AgentOrchestra
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-```
-
-### 配置 Agent
-
-编辑 `agents/agents.yaml`：
-
-```yaml
-agents:
-  # CLI 工具 — 全自动 (driver: cli)
-  - id: claude
-    driver: cli
-    command: "claude -p 'Read {task_file} ...' --allowedTools Read,Edit,Bash,Write"
-    capabilities: [planning, implementation, testing, review, docs]
-
-  # IDE 工具 — 半自动 (driver: file, 默认)
-  - id: windsurf
-    driver: file
-    capabilities: [planning, implementation, testing, docs]
-
-defaults:
-  builder: windsurf
-  reviewer: cursor
-```
-
-### 使用
-
-```bash
-# 全自动 (CLI 工具)
-ma go "实现 POST /users" --builder claude --reviewer codex
-
-# 半自动 (IDE 工具)
-ma go "实现 POST /users" --builder windsurf --reviewer cursor
-# 然后在每个 IDE 里说: "帮我完成 @.multi-agent/TASK.md 里的任务"
-```
-
-### CLI 命令
-
-| 命令 | 说明 |
-|------|------|
-| `ma go "需求"` | 启动任务 + 自动监听 |
-| `ma go "需求" --builder X --reviewer Y` | 指定工具 |
-| `ma go "需求" --no-watch` | 启动但不自动监听 |
-| `ma watch` | 恢复监听 |
-| `ma done` | 手动提交输出 |
-| `ma status` | 查看任务状态（含锁/driver 模式） |
-| `ma cancel` | 取消任务 |
-| `ma render "需求"` | 预览渲染后的 prompt（不执行） |
-| `ma init` | 初始化项目结构 |
-| `ma history` | 查看任务历史 |
-
-### 支持的工具
-
-| 类型 | 工具 | 自动化程度 |
-|------|------|-----------|
-| **CLI** (driver: cli) | Claude Code, Codex, Aider, Goose | 全自动 |
-| **IDE** (driver: file) | Windsurf, Cursor, Kiro, Antigravity, Copilot | 每步一句话 |
-
-在 `agents.yaml` 中添加任意工具，无需改代码。
-
-## 研究基础
-
-| 论文 | 会议 | 应用的设计原则 |
-|------|------|---------------|
-| Evolving Orchestration | **NeurIPS 2025** | 4 节点紧凑循环优于复杂 DAG |
-| ChatDev | **ACL 2024** | 一个需求输入 → 全自动角色链 |
-| MetaGPT | **ICLR 2024** | 发布-订阅制品（outbox 自动检测） |
-| MASAI | **ICSE 2025** | 模块化子代理，每角色有明确目标 |
-| HULA | **ICSE 2025** | 最小摩擦人机交互（每 IDE 一句话） |
-| SWE-agent | **ICLR 2025** | Agent-Computer Interface 设计（TASK.md 即 ACI） |
-| Agentless | **FSE 2025** | 简单管道优于过度工程化的代理 |
-| MapCoder | **ACL 2024** | 验证阶段作为独立代理（reviewer 角色） |
-
-## 测试
-
-```bash
-pytest tests/ -v   # 575 tests passed
-```
-
-## 许可证
-
-**CC BY-NC-SA 4.0** — 非商业用途，需署名。详见 [LICENSE](LICENSE)。
+1. **单入口**：`ma session` 是主入口。
+2. **单状态源**：LangGraph checkpoint 是唯一真相。
+3. **纯文件协议**：IDE 只读 prompt、写 JSON。
+4. **可审计**：handoff、trace、memory 都落盘可追溯。
+5. **低耦合**：兼容层可用，但不再承担核心编排逻辑。
 
 ---
 
-<div align="center">
+## 12. License
 
-Made with determination by [@Furinaaa-Cancan](https://github.com/Furinaaa-Cancan)
+CC BY-NC-SA 4.0，详见 `LICENSE`。
 
-</div>
+---
+
+## Short English Note
+
+AgentOrchestra is now documented and optimized for the **IDE-first session flow**:
+`ma session start -> pull -> IDE writes envelope JSON -> ma session push`.
+LangGraph is the only source of truth, and all artifacts are file-based/auditable.

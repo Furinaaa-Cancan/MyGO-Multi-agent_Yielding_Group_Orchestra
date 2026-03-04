@@ -72,6 +72,63 @@ class TestDecideNode:
         mock_archive.assert_called_once()
 
     @patch("multi_agent.graph.write_dashboard")
+    def test_strict_mode_blocks_rubber_stamp_approve(self, mock_dash):
+        state = self._base_state(
+            workflow_mode="strict",
+            reviewer_output={"decision": "approve", "summary": "LGTM", "reasoning": ""},
+        )
+        result = decide_node(state)
+        assert "final_status" not in result
+        assert result["conversation"][0]["action"] == "request_changes"
+        assert "rubber-stamp" in result["conversation"][0]["feedback"]
+
+    @patch("multi_agent.graph.archive_conversation")
+    @patch("multi_agent.graph.write_dashboard")
+    def test_non_strict_rubber_stamp_keeps_approve(self, mock_dash, mock_archive):
+        state = self._base_state(
+            reviewer_output={"decision": "approve", "summary": "LGTM", "reasoning": ""},
+        )
+        result = decide_node(state)
+        assert result["final_status"] == "approved"
+        assert any(e.get("action") == "rubber_stamp_warning" for e in result["conversation"])
+        mock_archive.assert_called_once()
+
+    @patch("multi_agent.graph.write_dashboard")
+    def test_strict_mode_rubber_threshold_can_be_configured(self, mock_dash):
+        state = self._base_state(
+            workflow_mode="strict",
+            review_policy={
+                "rubber_stamp": {
+                    "generic_phrases": ["ship it"],
+                    "generic_summary_max_len": 80,
+                    "shallow_summary_max_len": 60,
+                    "block_on_strict": True,
+                }
+            },
+            reviewer_output={
+                "decision": "approve",
+                "summary": "Implementation appears correct after a quick manual scan.",
+                "reasoning": "",
+            },
+        )
+        result = decide_node(state)
+        assert "final_status" not in result
+        assert result["conversation"][0]["action"] == "request_changes"
+
+    @patch("multi_agent.graph.archive_conversation")
+    @patch("multi_agent.graph.write_dashboard")
+    def test_strict_mode_can_disable_rubber_stamp_block(self, mock_dash, mock_archive):
+        state = self._base_state(
+            workflow_mode="strict",
+            review_policy={"rubber_stamp": {"block_on_strict": False}},
+            reviewer_output={"decision": "approve", "summary": "LGTM", "reasoning": ""},
+        )
+        result = decide_node(state)
+        assert result["final_status"] == "approved"
+        assert any(e.get("action") == "rubber_stamp_warning" for e in result["conversation"])
+        mock_archive.assert_called_once()
+
+    @patch("multi_agent.graph.write_dashboard")
     def test_reject_with_budget(self, mock_dash):
         state = self._base_state(
             reviewer_output={"decision": "reject", "feedback": "fix tests"},
@@ -1341,6 +1398,32 @@ class TestCompileGraphCaching:
             g1 = compile_graph(db_path=db1)
             g2 = compile_graph(db_path=db2)
             assert g1 is not g2
+        finally:
+            reset_graph()
+
+    def test_compile_graph_cold_start_not_deadlock(self, tmp_path):
+        """Regression: compile_graph should not self-deadlock on cold start."""
+        import threading
+
+        from multi_agent.graph import compile_graph, reset_graph
+
+        db = str(tmp_path / "cold-start.db")
+        result: dict[str, object] = {}
+        errors: list[Exception] = []
+
+        def _run():
+            try:
+                result["graph"] = compile_graph(db_path=db)
+            except Exception as exc:  # pragma: no cover - defensive
+                errors.append(exc)
+
+        try:
+            t = threading.Thread(target=_run, daemon=True)
+            t.start()
+            t.join(timeout=2)
+            assert not t.is_alive(), "compile_graph deadlocked on cold start"
+            assert not errors
+            assert "graph" in result
         finally:
             reset_graph()
 

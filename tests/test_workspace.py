@@ -91,10 +91,20 @@ class TestLock:
         workspace.release_lock()  # should not raise
 
     def test_overwrite_lock(self, tmp_workspace):
+        """C2 fix: acquire_lock now raises RuntimeError if lock already held."""
         workspace.ensure_workspace()
         workspace.acquire_lock("task-1")
-        workspace.acquire_lock("task-2")
-        assert workspace.read_lock() == "task-2"
+        with pytest.raises(RuntimeError, match="Lock already held by task 'task-1'"):
+            workspace.acquire_lock("task-2")
+        # Lock should still hold task-1
+        assert workspace.read_lock() == "task-1"
+
+    def test_acquire_lock_self_heals_empty_lock_file(self, tmp_workspace):
+        workspace.ensure_workspace()
+        lock_file = tmp_workspace / ".lock"
+        lock_file.write_text("", encoding="utf-8")
+        workspace.acquire_lock("task-heal")
+        assert workspace.read_lock() == "task-heal"
 
 
 class TestClearRuntimeDecompose:

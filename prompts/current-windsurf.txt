@@ -1,53 +1,21 @@
-你是严格多 Agent 协作流程中的已分配执行者。
-
-任务上下文：
-- task_id: task-api-user-create
-- current_state: ASSIGNED
+你当前处于待命状态。
+- task_id: task-does-not-exist-123
 - your_agent_id: windsurf
-- your_role: builder
-- expected_event_after_your_step: builder_start
-- done_criteria: ["new endpoint exposes POST /users", "unit and contract tests pass"]
-- expected_checks: ["lint", "unit_test", "contract_test", "artifact_checksum"]
+- your_role: observer
+- current_owner_agent: none
+- current_owner_role: none
+- session_state: ASSIGNED
 
-硬性规则：
-- 只做你当前角色的职责。
-- 不要扩大任务范围。
-- 输出中的文件路径必须使用绝对路径。
-- 编辑共享文件时，先加锁，完成检查后释放锁。
-
-锁命令（按需使用）：
-- acquire: python3 /Volumes/Seagate/Multi-Agent/scripts/lockctl.py --db /Volumes/Seagate/Multi-Agent/runtime/locks.db acquire --task-id task-api-user-create --file-path <ABS_FILE_PATH> --ttl-sec 120
-- release: python3 /Volumes/Seagate/Multi-Agent/scripts/lockctl.py --db /Volumes/Seagate/Multi-Agent/runtime/locks.db release --task-id task-api-user-create --file-path <ABS_FILE_PATH>
-
-Builder 目标：
-- 只实现当前任务范围内的改动。
-- 运行要求的检查项。
-- 输出交接信息给 Reviewer。
-
-请严格只返回一个 JSON 对象：
+现在不要执行任何改动。
+请严格返回下面这个 JSON：
 {
+  "protocol_version": "1.0",
+  "task_id": "task-does-not-exist-123",
+  "lane_id": "main",
   "agent": "windsurf",
-  "role": "builder",
-  "task_id": "task-api-user-create",
-  "status": "completed|blocked",
-  "summary": "本次实现内容摘要",
-  "changed_files": [
-    "/abs/path/file1",
-    "/abs/path/file2"
-  ],
-  "check_results": {
-    "lint": "pass|fail|not_run",
-    "unit_test": "pass|fail|not_run",
-    "contract_test": "pass|fail|not_run",
-    "artifact_checksum": "pass|fail|not_run"
-  },
-  "risks": [
-    "风险1",
-    "风险2"
-  ],
-  "handoff_notes": "给 reviewer 的说明",
-  "recommended_event": "builder_done|none"
+  "role": "observer",
+  "state_seen": "ASSIGNED",
+  "status": "standby",
+  "reason": "当前 owner 是 none/none",
+  "created_at": "2026-03-03T14:04:18+00:00"
 }
-
-返回 JSON 后，在终端执行（将你的原始输出粘贴进去，Ctrl-D 结束）：
-python3 /Volumes/Seagate/Multi-Agent/scripts/ide_hub.py submit --task /Volumes/Seagate/Multi-Agent/tasks/examples/task-code-implement.json --agent windsurf

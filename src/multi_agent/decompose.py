@@ -42,9 +42,9 @@ DECOMPOSE_PROMPT = """\
 输出以下 JSON:
 
 ```json
-{{
+{
   "sub_tasks": [
-    {{
+    {
       "id": "subtask-id",
       "description": "要实现什么",
       "done_criteria": ["标准1", "标准2"],
@@ -53,11 +53,11 @@ DECOMPOSE_PROMPT = """\
       "skill_id": "code-implement",
       "priority": "normal",
       "estimated_minutes": 30
-    }}
+    }
   ],
   "total_estimated_minutes": 60,
   "reasoning": "为什么这样拆分"
-}}
+}
 ```
 
 字段说明:
@@ -90,9 +90,9 @@ DECOMPOSE_PROMPT_EN = """\
 Output the following JSON:
 
 ```json
-{{
+{
   "sub_tasks": [
-    {{
+    {
       "id": "subtask-id",
       "description": "what to implement",
       "done_criteria": ["criterion 1", "criterion 2"],
@@ -101,11 +101,11 @@ Output the following JSON:
       "skill_id": "code-implement",
       "priority": "normal",
       "estimated_minutes": 30
-    }}
+    }
   ],
   "total_estimated_minutes": 60,
   "reasoning": "why this decomposition"
-}}
+}
 ```
 
 Field notes:
@@ -185,7 +185,10 @@ def write_decompose_prompt(requirement: str, *, lang: str = "zh", project_contex
         project_context: Optional project context string. If empty, auto-collected.
     """
     template = DECOMPOSE_PROMPT_EN if lang == "en" else DECOMPOSE_PROMPT
-    prompt = template.format(requirement=requirement)
+    # G1: Use str.replace instead of str.format to avoid KeyError/ValueError
+    # when user requirement contains stray { or } characters
+    # (e.g. "implement {user_id} endpoint" would crash str.format).
+    prompt = template.replace("{requirement}", requirement)
 
     # Inject project context
     if not project_context:

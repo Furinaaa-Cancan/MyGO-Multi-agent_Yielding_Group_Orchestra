@@ -89,6 +89,48 @@ Registry for lifecycle callbacks: `on_node_enter()`, `on_node_exit()`, `on_error
 
 ---
 
+## session
+
+### `start_session(task_file, mode="strict", config_path=None, reset=False) -> dict`
+Start an IDE-first session using LangGraph as the single source of truth.
+
+### `session_status(task_id) -> dict`
+Return projected session state (`RUNNING`, `VERIFYING`, `DONE`, etc.), owner role/agent, and prompt paths.
+
+### `session_pull(task_id, agent, out=None) -> dict`
+Generate one pure-IDE prompt file for the specified agent.
+
+### `session_push(task_id, agent, file_path) -> dict`
+Submit one envelope JSON and auto-progress graph state.
+
+### `session_trace(task_id, fmt) -> str`
+Render trace output in `tree` or `mermaid` format.
+
+---
+
+## memory
+
+### `ensure_memory_file() -> Path`
+Create `.multi-agent/MEMORY.md` if missing.
+
+### `add_pending_candidates(task_id, items, actor) -> dict`
+Append proposed long-term memory items to pending storage.
+
+### `promote_pending_candidates(task_id, actor) -> dict`
+Promote pending items into `MEMORY.md` (deduplicated, auditable).
+
+---
+
+## trace
+
+### `append_trace_event(...) -> dict`
+Append a structured event to `.multi-agent/history/<task_id>.events.jsonl`.
+
+### `render_trace(task_id, fmt) -> str`
+Render full event chain as tree text or Mermaid graph.
+
+---
+
 ## router
 
 ### `load_agents(path=None) → list[AgentProfile]`
@@ -198,10 +240,14 @@ Get prompt version and timestamp metadata.
 | Command | Description |
 |---------|-------------|
 | `ma go "req"` | Start task + auto-watch |
-| `ma done` | Manually submit output |
+| `ma session start --task task.json --mode strict` | Start IDE-first session |
+| `ma session status --task-id ID` | Show owner/state in session mode |
+| `ma session pull --task-id ID --agent X` | Output pure IDE prompt |
+| `ma session push --task-id ID --agent X --file output.json` | Submit envelope and auto-progress |
+| `ma trace --task-id ID --format tree\|mermaid` | Render event trace |
+| `ma go "req"` / `ma done` / `ma watch` | Legacy compatibility commands (prefer `ma session *`) |
 | `ma status` | Show task state |
 | `ma cancel` | Cancel active task |
-| `ma watch` | Resume outbox watching |
 | `ma render "req"` | Preview prompt (dry-run) |
 | `ma init` | Initialize project structure |
 | `ma history` | Show task history |

@@ -21,4 +21,4 @@ __pycache__/
 .multi-agent/store.db-wal
 .multi-agent/dashboard.md
 .multi-agent/TASK.md
-.multi-agent/lock
+.multi-agent/.lock

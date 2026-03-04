@@ -25,6 +25,16 @@ def _mock_app():
     return app
 
 
+def _mock_app_terminal(final_status="failed"):
+    app = MagicMock()
+    snapshot = MagicMock()
+    snapshot.next = []
+    snapshot.tasks = []
+    snapshot.values = {"final_status": final_status}
+    app.get_state = MagicMock(return_value=snapshot)
+    return app
+
+
 def _raise_graph_interrupt(*a, **kw):
     from langgraph.errors import GraphInterrupt
     raise GraphInterrupt()
@@ -35,6 +45,7 @@ class TestGoCommand:
         with patch("multi_agent.graph.compile_graph", return_value=_mock_app()), \
              patch("multi_agent.cli.ensure_workspace"), \
              patch("multi_agent.cli.read_lock", return_value=None), \
+             patch("multi_agent.cli._detect_active_task", return_value=None), \
              patch("multi_agent.cli.clear_runtime"), \
              patch("multi_agent.cli.acquire_lock"), \
              patch("multi_agent.cli.save_task_yaml"), \
@@ -48,6 +59,7 @@ class TestGoCommand:
         with patch("multi_agent.graph.compile_graph", return_value=_mock_app()), \
              patch("multi_agent.cli.ensure_workspace"), \
              patch("multi_agent.cli.read_lock", return_value=None), \
+             patch("multi_agent.cli._detect_active_task", return_value=None), \
              patch("multi_agent.cli.clear_runtime"), \
              patch("multi_agent.cli.acquire_lock"), \
              patch("multi_agent.cli.save_task_yaml"), \
@@ -62,6 +74,7 @@ class TestGoCommand:
         with patch("multi_agent.graph.compile_graph", return_value=_mock_app()), \
              patch("multi_agent.cli.ensure_workspace"), \
              patch("multi_agent.cli.read_lock", return_value=None), \
+             patch("multi_agent.cli._detect_active_task", return_value=None), \
              patch("multi_agent.cli.clear_runtime"), \
              patch("multi_agent.cli.acquire_lock"), \
              patch("multi_agent.cli.save_task_yaml"), \
@@ -76,6 +89,7 @@ class TestGoCommand:
         with patch("multi_agent.graph.compile_graph", return_value=_mock_app()), \
              patch("multi_agent.cli.ensure_workspace"), \
              patch("multi_agent.cli.read_lock", return_value=None), \
+             patch("multi_agent.cli._detect_active_task", return_value=None), \
              patch("multi_agent.cli.clear_runtime"), \
              patch("multi_agent.cli.acquire_lock"), \
              patch("multi_agent.cli.save_task_yaml") as sty, \
@@ -92,6 +106,7 @@ class TestGoCommand:
         with patch("multi_agent.graph.compile_graph", return_value=app), \
              patch("multi_agent.cli.ensure_workspace"), \
              patch("multi_agent.cli.read_lock", return_value=None), \
+             patch("multi_agent.cli._detect_active_task", return_value=None), \
              patch("multi_agent.cli.clear_runtime"), \
              patch("multi_agent.cli.acquire_lock"), \
              patch("multi_agent.cli.save_task_yaml"), \
@@ -110,6 +125,7 @@ class TestGoCommand:
         with patch("multi_agent.graph.compile_graph", return_value=app), \
              patch("multi_agent.cli.ensure_workspace"), \
              patch("multi_agent.cli.read_lock", return_value=None), \
+             patch("multi_agent.cli._detect_active_task", return_value=None), \
              patch("multi_agent.cli.clear_runtime"), \
              patch("multi_agent.cli.acquire_lock"), \
              patch("multi_agent.cli.save_task_yaml"), \
@@ -122,6 +138,24 @@ class TestGoCommand:
         call_args = app.invoke.call_args[0][0]
         assert call_args["timeout_sec"] == 900
 
+    def test_injects_workflow_mode_and_review_policy(self, runner):
+        app = _mock_app()
+        with patch("multi_agent.graph.compile_graph", return_value=app), \
+             patch("multi_agent.cli.ensure_workspace"), \
+             patch("multi_agent.cli.read_lock", return_value=None), \
+             patch("multi_agent.cli._detect_active_task", return_value=None), \
+             patch("multi_agent.cli.clear_runtime"), \
+             patch("multi_agent.cli.acquire_lock"), \
+             patch("multi_agent.cli.save_task_yaml"), \
+             patch("multi_agent.cli._show_waiting"), \
+             patch("multi_agent.cli._run_watch_loop"):
+            result = runner.invoke(main, ["go", "do thing", "--mode", "strict", "--no-watch"])
+        assert result.exit_code == 0
+        call_args = app.invoke.call_args[0][0]
+        assert call_args["workflow_mode"] == "strict"
+        assert isinstance(call_args["review_policy"], dict)
+        assert call_args["review_policy"]["reviewer"]["require_evidence_on_approve"] is True
+
     def test_active_task_blocks(self, runner):
         with patch("multi_agent.graph.compile_graph", return_value=_mock_app()), \
              patch("multi_agent.cli.ensure_workspace"), \
@@ -130,12 +164,40 @@ class TestGoCommand:
         assert result.exit_code != 0
         assert "正在进行中" in result.output or "task-existing" in result.output
 
+    def test_stale_lock_is_auto_cleaned(self, runner):
+        app = _mock_app_terminal("failed")
+        with patch("multi_agent.graph.compile_graph", return_value=app), \
+             patch("multi_agent.cli.ensure_workspace"), \
+             patch("multi_agent.cli.read_lock", return_value="task-stale"), \
+             patch("multi_agent.cli._detect_active_task", return_value=None), \
+             patch("multi_agent.cli.release_lock") as rel, \
+             patch("multi_agent.cli.clear_runtime"), \
+             patch("multi_agent.cli.acquire_lock"), \
+             patch("multi_agent.cli.save_task_yaml"), \
+             patch("multi_agent.cli._show_waiting"), \
+             patch("multi_agent.cli._run_watch_loop"):
+            result = runner.invoke(main, ["go", "new task", "--no-watch"])
+        assert result.exit_code == 0
+        assert "陈旧锁" in result.output
+        rel.assert_called_once()
+
+    def test_active_marker_without_lock_blocks(self, runner):
+        with patch("multi_agent.graph.compile_graph", return_value=_mock_app()), \
+             patch("multi_agent.cli.ensure_workspace"), \
+             patch("multi_agent.cli.read_lock", return_value=None), \
+             patch("multi_agent.cli._detect_active_task", return_value="task-orphan"), \
+             patch("multi_agent.cli.acquire_lock"):
+            result = runner.invoke(main, ["go", "new task"])
+        assert result.exit_code != 0
+        assert "活跃任务标记" in result.output or "task-orphan" in result.output
+
     def test_skill_not_found(self, runner):
         app = MagicMock()
         app.invoke = MagicMock(side_effect=FileNotFoundError("Skill 'nonexistent' not found"))
         with patch("multi_agent.graph.compile_graph", return_value=app), \
              patch("multi_agent.cli.ensure_workspace"), \
              patch("multi_agent.cli.read_lock", return_value=None), \
+             patch("multi_agent.cli._detect_active_task", return_value=None), \
              patch("multi_agent.cli.clear_runtime"), \
              patch("multi_agent.cli.acquire_lock"), \
              patch("multi_agent.cli.save_task_yaml"), \
@@ -150,6 +212,7 @@ class TestGoCommand:
         with patch("multi_agent.graph.compile_graph", return_value=app), \
              patch("multi_agent.cli.ensure_workspace"), \
              patch("multi_agent.cli.read_lock", return_value=None), \
+             patch("multi_agent.cli._detect_active_task", return_value=None), \
              patch("multi_agent.cli.clear_runtime"), \
              patch("multi_agent.cli.acquire_lock"), \
              patch("multi_agent.cli.save_task_yaml"), \
@@ -161,6 +224,7 @@ class TestGoCommand:
         with patch("multi_agent.graph.compile_graph", return_value=_mock_app()), \
              patch("multi_agent.cli.ensure_workspace"), \
              patch("multi_agent.cli.read_lock", return_value=None), \
+             patch("multi_agent.cli._detect_active_task", return_value=None), \
              patch("multi_agent.cli.clear_runtime"), \
              patch("multi_agent.cli.acquire_lock"), \
              patch("multi_agent.cli.save_task_yaml"), \
@@ -174,6 +238,7 @@ class TestGoCommand:
         with patch("multi_agent.graph.compile_graph", return_value=_mock_app()), \
              patch("multi_agent.cli.ensure_workspace"), \
              patch("multi_agent.cli.read_lock", return_value=None), \
+             patch("multi_agent.cli._detect_active_task", return_value=None), \
              patch("multi_agent.cli.clear_runtime"), \
              patch("multi_agent.cli.acquire_lock"), \
              patch("multi_agent.cli._run_decomposed") as rd:
@@ -194,6 +259,7 @@ class TestGoCommand:
         with patch("multi_agent.graph.compile_graph", return_value=_mock_app()), \
              patch("multi_agent.cli.ensure_workspace"), \
              patch("multi_agent.cli.read_lock", return_value=None), \
+             patch("multi_agent.cli._detect_active_task", return_value=None), \
              patch("multi_agent.cli.clear_runtime"), \
              patch("multi_agent.cli.acquire_lock"), \
              patch("multi_agent.cli._run_decomposed") as rd:

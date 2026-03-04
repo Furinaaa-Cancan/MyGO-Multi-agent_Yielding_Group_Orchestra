@@ -53,7 +53,7 @@ agents:
 role_strategy: manual
 
 # Default role mapping (used when role_strategy is "manual")
-# You can override per-task with: ma go --builder windsurf --reviewer cursor
+# You can override per-task with: ma go --builder windsurf --reviewer antigravity
 defaults:
   builder: windsurf
-  reviewer: cursor
+  reviewer: antigravity

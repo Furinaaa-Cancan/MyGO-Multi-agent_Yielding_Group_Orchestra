@@ -1,0 +1,71 @@
+version: 1
+modes:
+  strict:
+    roles:
+      orchestrator: codex
+      builder: windsurf
+      reviewer: antigravity
+    review_policy:
+      rubber_stamp:
+        generic_phrases:
+          - lgtm
+          - looks good
+          - no issues
+          - approved
+          - all good
+          - ship it
+          - good to go
+          - looks fine
+          - no comments
+        generic_summary_max_len: 50
+        shallow_summary_max_len: 30
+        block_on_strict: true
+      reviewer:
+        require_evidence_on_approve: true
+        min_evidence_items: 1
+    role_priority:
+      - builder
+      - reviewer
+      - orchestrator
+routing:
+  capability_to_role:
+    planning: orchestrator
+    docs: orchestrator
+    implementation: builder
+    testing: builder
+    review: reviewer
+    security: reviewer
+  default_role: orchestrator
+events:
+  builder_start:
+    from: ASSIGNED
+    to: RUNNING
+    next_role: builder
+  builder_done:
+    from: RUNNING
+    to: VERIFYING
+    next_role: reviewer
+  review_pass:
+    from: VERIFYING
+    to: APPROVED
+    next_role: orchestrator
+  review_fail:
+    from: VERIFYING
+    to: RETRY
+    next_role: orchestrator
+  retry_dispatch:
+    from: RETRY
+    to: ASSIGNED
+    next_role: builder
+  merge_done:
+    from: APPROVED
+    to: MERGED
+    next_role: orchestrator
+  close_done:
+    from: MERGED
+    to: DONE
+    next_role: orchestrator
+guardrails:
+  enforce_absolute_db_path: true
+  require_lock_for_builder: true
+  allow_manual_override: false

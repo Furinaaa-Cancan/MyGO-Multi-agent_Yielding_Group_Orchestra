@@ -54,7 +54,17 @@ For IDE-based agents (Windsurf, Cursor, Kiro, etc.):
   capabilities: [implementation, review]
 ```
 
-The orchestrator writes prompts to `TASK.md`. The user tells the IDE AI to read it. The agent writes results to `outbox/`.
+The orchestrator writes prompts to `TASK.md`. In IDE-first session mode, agents only need:
+1. Read current prompt (`TASK.md` or `ma session pull` output)
+2. Write a structured envelope JSON to `outbox/`
+
+Recommended commands:
+
+```bash
+ma session start --task tasks/examples/task-code-implement.json --mode strict
+ma session pull --task-id task-api-user-create --agent windsurf
+ma session push --task-id task-api-user-create --agent windsurf --file .multi-agent/outbox/builder.json
+```
 
 ### CLI Driver (automated agents)
 
@@ -88,7 +98,7 @@ The orchestrator spawns the CLI process automatically.
   capabilities: [planning, implementation, testing, docs]
 ```
 
-Usage: Tell Windsurf AI — `"帮我完成 @.multi-agent/TASK.md 里的任务"`
+Usage: Tell Windsurf AI — `"帮我完成 @.multi-agent/TASK.md 里的任务，并把 envelope JSON 写到 outbox"`
 
 ### Cursor
 
@@ -98,7 +108,7 @@ Usage: Tell Windsurf AI — `"帮我完成 @.multi-agent/TASK.md 里的任务"`
   capabilities: [planning, implementation, testing, review, docs]
 ```
 
-Usage: Tell Cursor AI — `"帮我完成 @.multi-agent/TASK.md 里的任务"`
+Usage: Tell Cursor AI — `"帮我完成 @.multi-agent/TASK.md 里的任务，并把 envelope JSON 写到 outbox"`
 
 ### Claude Code (CLI)
 
@@ -143,6 +153,12 @@ Error: Reviewer cannot be the same as builder
 ```
 
 Cross-model adversarial review requires different agents for builder and reviewer roles. Configure at least 2 agents.
+
+Session mode startup also enforces this and returns:
+
+```
+invalid role mapping: builder and reviewer must differ (both are 'xxx')
+```
 
 ### Health check
 
