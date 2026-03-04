@@ -114,6 +114,30 @@ Field notes:
 """
 
 
+def _extract_pyproject_deps(root: Path) -> str | None:
+    """Extract dependencies section from pyproject.toml."""
+    pyproject = root / "pyproject.toml"
+    if not pyproject.exists():
+        return None
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+        in_deps = False
+        dep_lines: list[str] = []
+        for line in text.splitlines():
+            if "dependencies" in line.lower():
+                in_deps = True
+                dep_lines.append(line)
+                continue
+            if in_deps:
+                if line.strip().startswith("]"):
+                    dep_lines.append(line)
+                    break
+                dep_lines.append(line)
+        return "依赖:\n" + "\n".join(dep_lines) if dep_lines else None
+    except Exception:
+        return None
+
+
 def collect_project_context(max_chars: int = 2000) -> str:
     """Collect project context for decomposition prompts.
 
@@ -143,27 +167,9 @@ def collect_project_context(max_chars: int = 2000) -> str:
             pass
 
     # 3. pyproject.toml dependencies
-    pyproject = root / "pyproject.toml"
-    if pyproject.exists():
-        try:
-            text = pyproject.read_text(encoding="utf-8")
-            # Extract dependencies section
-            in_deps = False
-            dep_lines = []
-            for line in text.splitlines():
-                if "dependencies" in line.lower():
-                    in_deps = True
-                    dep_lines.append(line)
-                    continue
-                if in_deps:
-                    if line.strip().startswith("]"):
-                        dep_lines.append(line)
-                        break
-                    dep_lines.append(line)
-            if dep_lines:
-                parts.append("依赖:\n" + "\n".join(dep_lines))
-        except Exception:
-            pass
+    deps_section = _extract_pyproject_deps(root)
+    if deps_section:
+        parts.append(deps_section)
 
     if not parts:
         return ""
@@ -439,17 +445,25 @@ def validate_decompose_result(result: DecomposeResult) -> list[str]:
         if st.id in st.deps:
             errors.append(f"sub_task '{st.id}' depends on itself")
 
-    # Check circular dependencies (DFS cycle detection)
-    adj: dict[str, list[str]] = {st.id: list(st.deps) for st in result.sub_tasks}
+    # Check circular dependencies
+    errors.extend(_detect_circular_deps(result.sub_tasks))
+
+    return errors
+
+
+def _detect_circular_deps(sub_tasks: list[SubTask]) -> list[str]:
+    """DFS cycle detection on sub-task dependency graph."""
+    adj: dict[str, list[str]] = {st.id: list(st.deps) for st in sub_tasks}
     visited: set[str] = set()
     in_stack: set[str] = set()
+    cycle_errors: list[str] = []
 
     def _has_cycle(node: str) -> bool:
         visited.add(node)
         in_stack.add(node)
         for dep in adj.get(node, []):
             if dep in in_stack:
-                errors.append(f"circular dependency detected involving '{node}' → '{dep}'")
+                cycle_errors.append(f"circular dependency detected involving '{node}' → '{dep}'")
                 return True
             if dep not in visited and _has_cycle(dep):
                 return True
@@ -460,7 +474,7 @@ def validate_decompose_result(result: DecomposeResult) -> list[str]:
         if sid not in visited:
             _has_cycle(sid)
 
-    return errors
+    return cycle_errors
 
 
 def topo_sort_grouped(sub_tasks: list[SubTask]) -> list[list[SubTask]]:

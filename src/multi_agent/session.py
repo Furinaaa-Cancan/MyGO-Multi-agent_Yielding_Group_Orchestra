@@ -512,6 +512,35 @@ def _parse_json_payload(raw: str) -> dict[str, Any]:
 
 
 
+def _normalize_reviewer_decision(
+    result: dict[str, Any],
+    env: dict[str, Any],
+    workflow_mode: str,
+    review_policy: dict[str, Any] | None,
+) -> None:
+    """Normalize reviewer decision aliases and validate evidence requirements."""
+    decision = str(result.get("decision", "")).lower().strip()
+    if decision == "pass":
+        result["decision"] = "approve"
+    elif decision == "fail":
+        result["decision"] = "reject"
+    decision = str(result.get("decision", "")).lower().strip()
+    reviewer_cfg = (review_policy or {}).get("reviewer")
+    if not isinstance(reviewer_cfg, dict):
+        reviewer_cfg = {}
+    require_evidence = bool(reviewer_cfg.get("require_evidence_on_approve", workflow_mode == "strict"))
+    min_evidence = _positive_int(reviewer_cfg.get("min_evidence_items"), 1) if require_evidence else 0
+    if decision == "approve" and require_evidence:
+        evidence_items = _count_nonempty_entries(result.get("evidence"))
+        evidence_items += _count_nonempty_entries(env.get("evidence_files"))
+        if evidence_items < min_evidence:
+            raise ValueError(
+                "reviewer approve requires evidence: "
+                f"need >= {min_evidence}, got {evidence_items}. "
+                "Provide result.evidence and/or evidence_files."
+            )
+
+
 def _normalize_envelope(
     raw_obj: dict[str, Any],
     *,
@@ -565,26 +594,7 @@ def _normalize_envelope(
         raise ValueError("payload.result must be an object")
 
     if current_role == "reviewer":
-        decision = str(result.get("decision", "")).lower().strip()
-        if decision == "pass":
-            result["decision"] = "approve"
-        elif decision == "fail":
-            result["decision"] = "reject"
-        decision = str(result.get("decision", "")).lower().strip()
-        reviewer_cfg = (review_policy or {}).get("reviewer")
-        if not isinstance(reviewer_cfg, dict):
-            reviewer_cfg = {}
-        require_evidence = bool(reviewer_cfg.get("require_evidence_on_approve", workflow_mode == "strict"))
-        min_evidence = _positive_int(reviewer_cfg.get("min_evidence_items"), 1) if require_evidence else 0
-        if decision == "approve" and require_evidence:
-            evidence_items = _count_nonempty_entries(result.get("evidence"))
-            evidence_items += _count_nonempty_entries(env.get("evidence_files"))
-            if evidence_items < min_evidence:
-                raise ValueError(
-                    "reviewer approve requires evidence: "
-                    f"need >= {min_evidence}, got {evidence_items}. "
-                    "Provide result.evidence and/or evidence_files."
-                )
+        _normalize_reviewer_decision(result, env, workflow_mode, review_policy)
 
     errors = validate_outbox_data(current_role, result)
     if errors:

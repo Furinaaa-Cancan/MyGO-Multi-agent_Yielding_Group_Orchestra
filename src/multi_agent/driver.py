@@ -224,18 +224,10 @@ def spawn_cli_agent(
             stdout_text = stdout_lines[0] if stdout_lines else ""
             stderr_text = stderr_lines[0] if stderr_lines else ""
 
-            # If the CLI tool didn't write the outbox file itself,
-            # try to extract JSON from stdout and write it
-            outbox_path = Path(outbox_file)
-            if not outbox_path.exists() and stdout_text.strip():
-                _try_extract_json(stdout_text, outbox_path)
-            # If outbox still missing after extraction attempt → report error
-            if not outbox_path.exists():
-                stderr_hint = stderr_text.strip()[:200]
-                if proc.returncode != 0:
-                    _write_error(outbox_file, f"{agent_id} CLI exited with code {proc.returncode}: {stderr_hint}")
-                else:
-                    _write_error(outbox_file, f"{agent_id} CLI produced no parseable JSON output")
+            _ensure_outbox_written(
+                outbox_file, stdout_text, stderr_text,
+                agent_id, proc.returncode,
+            )
         except subprocess.TimeoutExpired:
             if proc:
                 proc.kill()
@@ -252,6 +244,22 @@ def spawn_cli_agent(
         _active_agents[lock_key] = t
     t.start()
     return t
+
+
+def _ensure_outbox_written(
+    outbox_file: str, stdout_text: str, stderr_text: str,
+    agent_id: str, returncode: int | None,
+) -> None:
+    """Ensure outbox file exists after CLI run; extract from stdout or write error."""
+    outbox_path = Path(outbox_file)
+    if not outbox_path.exists() and stdout_text.strip():
+        _try_extract_json(stdout_text, outbox_path)
+    if not outbox_path.exists():
+        stderr_hint = stderr_text.strip()[:200]
+        if returncode != 0:
+            _write_error(outbox_file, f"{agent_id} CLI exited with code {returncode}: {stderr_hint}")
+        else:
+            _write_error(outbox_file, f"{agent_id} CLI produced no parseable JSON output")
 
 
 def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:

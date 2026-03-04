@@ -182,21 +182,7 @@ class ProjectSettings:
 
         # Layer 3: workmode.yaml mode defaults
         mode = mode or self._merged.get("workflow_mode", "strict")
-        wm_path = root_dir() / "config" / "workmode.yaml"
-        if wm_path.exists():
-            try:
-                wm = yaml.safe_load(wm_path.read_text(encoding="utf-8")) or {}
-                mode_cfg = (wm.get("modes") or {}).get(mode) or {}
-                if isinstance(mode_cfg, dict):
-                    roles = mode_cfg.get("roles") or {}
-                    if isinstance(roles, dict):
-                        for k in ("builder", "reviewer"):
-                            if roles.get(k):
-                                self._merged[k] = roles[k]
-                    if "review_policy" in mode_cfg:
-                        self._merged["review_policy"] = mode_cfg["review_policy"]
-            except Exception:
-                pass
+        self._apply_workmode(mode)
 
         # Layer 2: .ma.yaml
         proj = load_project_config()
@@ -209,6 +195,26 @@ class ProjectSettings:
             for k, v in overrides.items():
                 if v is not None and v != "":
                     self._merged[k] = v
+
+    def _apply_workmode(self, mode: str) -> None:
+        """Load workmode.yaml and apply mode-specific defaults."""
+        wm_path = root_dir() / "config" / "workmode.yaml"
+        if not wm_path.exists():
+            return
+        try:
+            wm = yaml.safe_load(wm_path.read_text(encoding="utf-8")) or {}
+            mode_cfg = (wm.get("modes") or {}).get(mode) or {}
+            if not isinstance(mode_cfg, dict):
+                return
+            roles = mode_cfg.get("roles") or {}
+            if isinstance(roles, dict):
+                for k in ("builder", "reviewer"):
+                    if roles.get(k):
+                        self._merged[k] = roles[k]
+            if "review_policy" in mode_cfg:
+                self._merged["review_policy"] = mode_cfg["review_policy"]
+        except Exception:
+            pass
 
     def get(self, key: str, default: Any = None) -> Any:
         return self._merged.get(key, default)
