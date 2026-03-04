@@ -17,9 +17,14 @@ import click
 
 from multi_agent._utils import (
     SAFE_TASK_ID_RE as _SAFE_TASK_ID_RE,
-    TERMINAL_FINAL_STATUSES,
+)
+from multi_agent._utils import (
     count_nonempty_entries as _count_nonempty_entries,
+)
+from multi_agent._utils import (
     is_terminal_final_status as _is_terminal_final_status,
+)
+from multi_agent._utils import (
     positive_int as _positive_int,
 )
 from multi_agent.workspace import (
@@ -74,8 +79,9 @@ def handle_errors(f):
 def _log_error_to_file(command: str, error: Exception):
     """Write error details to .multi-agent/logs/."""
     try:
-        from multi_agent.config import workspace_dir
         from datetime import datetime
+
+        from multi_agent.config import workspace_dir
         logs_dir = workspace_dir() / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -197,8 +203,9 @@ def _is_task_terminal_or_missing(app, task_id: str) -> bool:
 
 def _mark_task_inactive(task_id: str, *, status: str, reason: str) -> bool:
     """Update task YAML status so it is no longer treated as active."""
-    from multi_agent.config import tasks_dir
     import yaml
+
+    from multi_agent.config import tasks_dir
 
     path = tasks_dir() / f"{task_id}.yaml"
     if not path.exists():
@@ -332,8 +339,8 @@ def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer
       ma go "Fix login bug" --no-watch
       ma go "实现完整用户认证模块" --decompose
     """
-    from multi_agent.graph import compile_graph
     from multi_agent.config import load_project_config
+    from multi_agent.graph import compile_graph
 
     ensure_workspace()
 
@@ -388,10 +395,10 @@ def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer
             locked = None
         else:
             click.echo(f"❌ 任务 '{locked}' 正在进行中。", err=True)
-            click.echo(f"   先完成或取消当前任务:", err=True)
-            click.echo(f"   • ma cancel   — 取消当前任务", err=True)
-            click.echo(f"   • ma done     — 手动提交结果", err=True)
-            click.echo(f"   • ma status   — 查看任务状态", err=True)
+            click.echo("   先完成或取消当前任务:", err=True)
+            click.echo("   • ma cancel   — 取消当前任务", err=True)
+            click.echo("   • ma done     — 手动提交结果", err=True)
+            click.echo("   • ma status   — 查看任务状态", err=True)
             sys.exit(1)
     if active_task:
         if _is_task_terminal_or_missing(app, active_task):
@@ -416,7 +423,7 @@ def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer
             click.echo(f"❌ 检测到活跃任务标记 '{active_task}'，请先恢复或取消该任务。", err=True)
             click.echo(f"   • ma watch --task-id {active_task}   — 恢复自动推进", err=True)
             click.echo(f"   • ma cancel --task-id {active_task}  — 取消并清理", err=True)
-            click.echo(f"   • ma doctor --fix                    — 自动修复常见状态不一致", err=True)
+            click.echo("   • ma doctor --fix                    — 自动修复常见状态不一致", err=True)
             sys.exit(1)
 
     task_id = task_id or _generate_task_id(requirement)
@@ -472,14 +479,14 @@ def _run_single_task(app, task_id, requirement, skill, builder, reviewer,
     except FileNotFoundError as e:
         release_lock()
         click.echo(f"❌ {e}", err=True)
-        click.echo(f"   确认你在 AgentOrchestra 项目根目录运行, 且 skills/ 和 agents/ 存在。", err=True)
-        click.echo(f"   或设置 MA_ROOT 环境变量指向项目根目录。", err=True)
+        click.echo("   确认你在 AgentOrchestra 项目根目录运行, 且 skills/ 和 agents/ 存在。", err=True)
+        click.echo("   或设置 MA_ROOT 环境变量指向项目根目录。", err=True)
         save_task_yaml(task_id, {"task_id": task_id, "status": "failed", "error": str(e)})
         sys.exit(1)
     except ValueError as e:
         release_lock()
         click.echo(f"❌ {e}", err=True)
-        click.echo(f"   检查 agents/agents.yaml 配置是否正确。", err=True)
+        click.echo("   检查 agents/agents.yaml 配置是否正确。", err=True)
         save_task_yaml(task_id, {"task_id": task_id, "status": "failed", "error": str(e)})
         sys.exit(1)
     except Exception as e:
@@ -506,9 +513,10 @@ def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
                     auto_confirm: bool = False, decompose_file: str | None = None,
                     no_cache: bool = False):
     """Decompose → sequential sub-task build-review cycles → aggregate."""
-    from multi_agent.decompose import write_decompose_prompt, read_decompose_result, topo_sort, topo_sort_grouped
-    from multi_agent.meta_graph import build_sub_task_state, aggregate_results
     from langgraph.errors import GraphInterrupt
+
+    from multi_agent.decompose import read_decompose_result, topo_sort, topo_sort_grouped, write_decompose_prompt
+    from multi_agent.meta_graph import aggregate_results, build_sub_task_state
 
     click.echo(f"🧩 Task Decomposition: {parent_task_id}")
     click.echo(f"   {requirement}")
@@ -524,11 +532,12 @@ def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
         from multi_agent.decompose import get_cached_decompose
         decompose_result = get_cached_decompose(requirement, skill_id=skill)
         if decompose_result:
-            click.echo(f"💾 使用缓存的分解结果 (原始需求相同)")
+            click.echo("💾 使用缓存的分解结果 (原始需求相同)")
 
     # Task 29: Read decompose result from file if provided (JSON or YAML)
     if decompose_result is None and decompose_file:
         import json as _json
+
         from multi_agent.schema import DecomposeResult
         try:
             raw = Path(decompose_file).read_text(encoding="utf-8")
@@ -547,11 +556,11 @@ def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
     if decompose_result is None:
         # Phase 1: Write decompose prompt → wait for agent to decompose
         write_decompose_prompt(requirement)
-        click.echo(f"📋 分解任务中… 在 IDE 里对 AI 说:")
-        click.echo(f'   "帮我完成 @.multi-agent/TASK.md 里的任务"')
+        click.echo("📋 分解任务中… 在 IDE 里对 AI 说:")
+        click.echo('   "帮我完成 @.multi-agent/TASK.md 里的任务"')
 
         # Check if builder has CLI driver → auto-spawn for decomposition
-        from multi_agent.driver import get_agent_driver, spawn_cli_agent, can_use_cli
+        from multi_agent.driver import can_use_cli, get_agent_driver, spawn_cli_agent
         from multi_agent.router import load_agents
         agents = load_agents()
         decompose_agent = builder if builder else (agents[0].id if agents else "?")
@@ -560,7 +569,7 @@ def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
             click.echo(f"🤖 自动调用 {decompose_agent} CLI 进行任务分解…")
             spawn_cli_agent(decompose_agent, "decompose", drv["command"], timeout_sec=timeout)
 
-        click.echo(f"👁️  等待任务分解结果… (Ctrl-C 停止)")
+        click.echo("👁️  等待任务分解结果… (Ctrl-C 停止)")
 
         # Poll for decompose.json (with timeout)
         deadline = time.time() + timeout
@@ -576,7 +585,7 @@ def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
                     sys.exit(1)
                 time.sleep(2)
         except KeyboardInterrupt:
-            click.echo(f"\n⏹️  Decomposition stopped.")
+            click.echo("\n⏹️  Decomposition stopped.")
             release_lock()
             clear_runtime()
             return
@@ -593,7 +602,7 @@ def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
     from multi_agent.decompose import validate_decompose_result
     validation_errors = validate_decompose_result(decompose_result)
     if validation_errors:
-        click.echo(f"⚠️  分解结果存在问题:", err=True)
+        click.echo("⚠️  分解结果存在问题:", err=True)
         for ve in validation_errors:
             click.echo(f"   - {ve}", err=True)
 
@@ -607,7 +616,7 @@ def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
         sys.exit(1)
 
     if not sorted_tasks:
-        click.echo(f"⚠️  分解结果为空，降级为单任务模式")
+        click.echo("⚠️  分解结果为空，降级为单任务模式")
         _run_single_task(app, parent_task_id, requirement, skill, builder, reviewer,
                          retry_budget, timeout, no_watch, workflow_mode, review_policy)
         return
@@ -640,7 +649,7 @@ def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
 
     # Phase 3: Execute each sub-task sequentially
     # C2: Load checkpoint for crash recovery (MAS-FIRE 2026 fault tolerance)
-    from multi_agent.meta_graph import save_checkpoint, load_checkpoint, clear_checkpoint
+    from multi_agent.meta_graph import clear_checkpoint, load_checkpoint, save_checkpoint
     ckpt = load_checkpoint(parent_task_id)
     prior_results: list[dict] = ckpt["prior_results"] if ckpt else []
     completed_ids: set[str] = set(ckpt["completed_ids"]) if ckpt else set()
@@ -720,8 +729,8 @@ def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
 
         if no_watch:
             click.echo(f"📌 Sub-task {st.id}: 等待手动 ma done")
-            click.echo(f"⚠️  --no-watch 模式下 --decompose 只执行第一步分解。")
-            click.echo(f"   后续请逐个手动执行各子任务。")
+            click.echo("⚠️  --no-watch 模式下 --decompose 只执行第一步分解。")
+            click.echo("   后续请逐个手动执行各子任务。")
             save_task_yaml(parent_task_id, {
                 "task_id": parent_task_id, "status": "decomposed",
                 "sub_tasks": [s.model_dump() for s in sorted_tasks],
@@ -819,7 +828,7 @@ def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
 
     # Phase 4: Aggregate
     click.echo(f"\n{'='*60}")
-    click.echo(f"  📊 汇总结果")
+    click.echo("  📊 汇总结果")
     click.echo(f"{'='*60}")
 
     agg = aggregate_results(parent_task_id, prior_results)
@@ -830,7 +839,7 @@ def _run_decomposed(app, parent_task_id, requirement, skill, builder, reviewer,
     if agg["failed"]:
         click.echo(f"  ❌ 失败: {', '.join(agg['failed'])}")
     else:
-        click.echo(f"  ✅ 全部通过")
+        click.echo("  ✅ 全部通过")
     click.echo(f"  修改文件: {', '.join(agg['all_changed_files']) or '无'}")
 
     # Task 26: Write Markdown report
@@ -941,16 +950,16 @@ def done(task_id: str | None, file_path: str | None):
     # Validate output before submitting to graph
     validation_errors = validate_outbox_data(role, output_data)
     if validation_errors:
-        click.echo(f"⚠️  Output validation warnings:", err=True)
+        click.echo("⚠️  Output validation warnings:", err=True)
         for ve in validation_errors:
             click.echo(f"   - {ve}", err=True)
 
     click.echo(f"📤 Submitting {role} output for task {task_id} (IDE: {agent_id})")
 
-    from langgraph.types import Command
     from langgraph.errors import GraphInterrupt
+    from langgraph.types import Command
     try:
-        result = app.invoke(Command(resume=output_data), config)
+        app.invoke(Command(resume=output_data), config)
     except GraphInterrupt:
         pass  # Normal — graph paused at next interrupt()
     except Exception as e:
@@ -1088,7 +1097,7 @@ def watch(task_id: str | None, interval: float):
     locked = read_lock()
     if locked and locked != task_id:
         click.echo(f"❌ 锁文件指向 '{locked}', 但你要 watch '{task_id}'。", err=True)
-        click.echo(f"   同时只能有一个活跃任务。", err=True)
+        click.echo("   同时只能有一个活跃任务。", err=True)
         sys.exit(1)
     if not locked:
         acquire_lock(task_id)
@@ -1137,7 +1146,7 @@ def _show_waiting(app, config):
     step_label = "Build" if role == "builder" else "Review"
 
     # Check if agent has CLI driver → auto-spawn (with graceful degradation)
-    from multi_agent.driver import get_agent_driver, spawn_cli_agent, can_use_cli
+    from multi_agent.driver import can_use_cli, get_agent_driver, spawn_cli_agent
     drv = get_agent_driver(agent)
     if drv["driver"] == "cli" and drv["command"]:
         if can_use_cli(drv["command"]):
@@ -1149,23 +1158,24 @@ def _show_waiting(app, config):
             binary = drv["command"].split()[0]
             click.echo(f"⚠️  {agent} 配置为 CLI 模式但 `{binary}` 未安装，降级为手动模式")
             click.echo(f"📋 [{step_label}] 在 {agent} IDE 里对 AI 说:")
-            click.echo(f'   "帮我完成 @.multi-agent/TASK.md 里的任务"')
+            click.echo('   "帮我完成 @.multi-agent/TASK.md 里的任务"')
     else:
         click.echo(f"📋 [{step_label}] 在 {agent} IDE 里对 AI 说:")
-        click.echo(f'   "帮我完成 @.multi-agent/TASK.md 里的任务"')
+        click.echo('   "帮我完成 @.multi-agent/TASK.md 里的任务"')
     click.echo()
 
 
 def _run_watch_loop(app, config, task_id: str, interval: float = 2.0, manage_lock: bool = True):
     """Shared watch loop — polls outbox/ and auto-submits output."""
-    from multi_agent.watcher import OutboxPoller
-    from langgraph.types import Command
     from langgraph.errors import GraphInterrupt
+    from langgraph.types import Command
+
+    from multi_agent.watcher import OutboxPoller
 
     poller = OutboxPoller(poll_interval=interval)
     start_time = time.time()
 
-    click.echo(f"👁️  等待 IDE 完成任务… (Ctrl-C 停止)")
+    click.echo("👁️  等待 IDE 完成任务… (Ctrl-C 停止)")
     click.echo()
 
     try:
@@ -1251,7 +1261,6 @@ def _run_watch_loop(app, config, task_id: str, interval: float = 2.0, manage_loc
                         next_info = next_snap.tasks[0].interrupts[0].value
                         next_role = next_info.get("role", "?")
                         next_agent = next_info.get("agent", "?")
-                        next_label = "Build" if next_role == "builder" else "Review"
                         # Show retry feedback if this is a retry
                         next_vals = next_snap.values or {}
                         retry_n = next_vals.get("retry_count", 0)
@@ -1263,7 +1272,7 @@ def _run_watch_loop(app, config, task_id: str, interval: float = 2.0, manage_loc
                             if feedback:
                                 click.echo(f"             {feedback}")
                         # Auto-spawn CLI agent or show manual instructions
-                        from multi_agent.driver import get_agent_driver, spawn_cli_agent, can_use_cli
+                        from multi_agent.driver import can_use_cli, get_agent_driver, spawn_cli_agent
                         drv = get_agent_driver(next_agent)
                         if drv["driver"] == "cli" and drv["command"] and can_use_cli(drv["command"]):
                             t_sec = next_vals.get("timeout_sec", 600)
@@ -1274,12 +1283,12 @@ def _run_watch_loop(app, config, task_id: str, interval: float = 2.0, manage_loc
                                 binary = drv["command"].split()[0]
                                 click.echo(f"[{mins:02d}:{secs:02d}] ⚠️  `{binary}` 未安装，降级手动模式")
                             click.echo(f"[{mins:02d}:{secs:02d}] 📋 在 {next_agent} IDE 里对 AI 说:")
-                            click.echo(f'             "帮我完成 @.multi-agent/TASK.md 里的任务"')
+                            click.echo('             "帮我完成 @.multi-agent/TASK.md 里的任务"')
                     break
 
             time.sleep(interval)
     except KeyboardInterrupt:
-        click.echo(f"\n⏹️  Watch stopped. Task still active — resume with: ma watch")
+        click.echo("\n⏹️  Watch stopped. Task still active — resume with: ma watch")
 
 
 @main.command()
@@ -1288,8 +1297,9 @@ def _run_watch_loop(app, config, task_id: str, interval: float = 2.0, manage_loc
 @click.option("--status", "filter_status", default=None, help="Filter by status (active/approved/failed/cancelled)")
 def history(limit: int, filter_status: str | None):
     """查看历史任务记录."""
-    from multi_agent.config import tasks_dir
     import yaml
+
+    from multi_agent.config import tasks_dir
 
     td = tasks_dir()
     if not td.exists() or not list(td.glob("*.yaml")):
@@ -1329,6 +1339,7 @@ def history(limit: int, filter_status: str | None):
 def init(force: bool):
     """初始化 AgentOrchestra 项目."""
     from pathlib import Path
+
     import yaml
 
     cwd = Path.cwd()
@@ -1378,7 +1389,7 @@ def init(force: bool):
 
     # Create workspace
     ensure_workspace()
-    click.echo(f"  ✅ .multi-agent/")
+    click.echo("  ✅ .multi-agent/")
 
     click.echo("\n🎉 初始化完成！下一步:")
     click.echo('  ma go "实现用户登录功能"')
@@ -1396,6 +1407,7 @@ def render(requirement: str, skill: str, role: str, builder_output_file: str | N
     """预览 prompt（不执行任何操作）."""
     _validate_skill_id(skill)
     import json
+
     from multi_agent.contract import load_contract
     from multi_agent.prompt import render_builder_prompt, render_reviewer_prompt
     from multi_agent.schema import Task
@@ -1448,8 +1460,13 @@ def cache_stats():
 def schema(model: str):
     """导出 Pydantic 模型的 JSON Schema."""
     import json as _json
+
     from multi_agent.schema import (
-        Task, BuilderOutput, ReviewerOutput, SubTask, DecomposeResult,
+        BuilderOutput,
+        DecomposeResult,
+        ReviewerOutput,
+        SubTask,
+        Task,
     )
     models = {
         "Task": Task, "BuilderOutput": BuilderOutput,
@@ -1510,7 +1527,7 @@ def doctor(fix: bool):
 @handle_errors
 def agents():
     """显示所有 agent 状态."""
-    from multi_agent.router import load_agents, check_agent_health
+    from multi_agent.router import check_agent_health, load_agents
     agent_list = load_agents()
     if not agent_list:
         click.echo("暂无配置的 agent")
@@ -1563,6 +1580,7 @@ def export(task_id: str, fmt: str):
     """导出任务执行结果."""
     _validate_task_id(task_id)
     import json as _json
+
     from multi_agent.config import history_dir, tasks_dir
     history_file = history_dir() / f"{task_id}.json"
     task_file = tasks_dir() / f"{task_id}.yaml"
@@ -1605,6 +1623,7 @@ def replay(task_id: str, from_step: int):
     """重放任务历史."""
     _validate_task_id(task_id)
     import json as _json
+
     from multi_agent.config import history_dir
     history_file = history_dir() / f"{task_id}.json"
     if not history_file.exists():
@@ -1619,7 +1638,6 @@ def replay(task_id: str, from_step: int):
             continue
         role = entry.get("role", "?")
         action = entry.get("action", "?")
-        t = entry.get("t", "")
         click.echo(f"  [{i}] {role}: {action}")
         if "summary" in entry:
             click.echo(f"       {entry['summary'][:100]}")
@@ -1633,6 +1651,7 @@ def version():
     """显示版本信息."""
     import sys
     from pathlib import Path
+
     from multi_agent import __version__
     click.echo(f"AgentOrchestra v{__version__}")
     click.echo(f"Python {sys.version}")

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from functools import lru_cache
+from pathlib import Path
 
 import yaml
 
@@ -138,7 +138,7 @@ def load_project_config() -> dict:
             data = yaml.safe_load(f)
         if not isinstance(data, dict):
             import warnings
-            warnings.warn(f".ma.yaml is not a valid mapping, ignoring.", stacklevel=2)
+            warnings.warn(".ma.yaml is not a valid mapping, ignoring.", stacklevel=2)
             return {}
         return data
     except Exception as e:

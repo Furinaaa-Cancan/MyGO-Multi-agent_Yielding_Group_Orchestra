@@ -10,15 +10,13 @@ with dependency ordering.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
 
-import hashlib
-
-from multi_agent.config import workspace_dir, outbox_dir, inbox_dir
+from multi_agent.config import inbox_dir, outbox_dir, workspace_dir
 from multi_agent.schema import DecomposeResult, SubTask
-
 
 DECOMPOSE_PROMPT = """\
 # 🧩 任务分解

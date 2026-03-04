@@ -12,11 +12,11 @@ import time
 from pathlib import Path
 
 from multi_agent.config import (
-    workspace_dir,
+    history_dir,
     inbox_dir,
     outbox_dir,
     tasks_dir,
-    history_dir,
+    workspace_dir,
 )
 
 _log = logging.getLogger(__name__)

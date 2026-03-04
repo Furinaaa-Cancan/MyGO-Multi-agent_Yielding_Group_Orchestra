@@ -8,7 +8,6 @@ from pathlib import Path
 
 from multi_agent.config import outbox_dir
 
-
 MAX_OUTBOX_SIZE = 10 * 1024 * 1024  # 10 MB
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from multi_agent.config import skills_dir, load_yaml
+from multi_agent.config import load_yaml, skills_dir
 from multi_agent.schema import SkillContract
 
 _SAFE_SKILL_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")

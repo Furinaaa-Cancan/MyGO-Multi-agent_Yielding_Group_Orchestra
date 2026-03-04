@@ -9,8 +9,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from multi_agent._utils import SAFE_TASK_ID_RE as _ID_RE, now_utc as _now_utc
-
+from multi_agent._utils import SAFE_TASK_ID_RE as _ID_RE
+from multi_agent._utils import now_utc as _now_utc
 
 # ── Enums ─────────────────────────────────────────────────
 

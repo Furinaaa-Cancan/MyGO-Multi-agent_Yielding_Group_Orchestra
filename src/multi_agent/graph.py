@@ -4,20 +4,18 @@ from __future__ import annotations
 
 import functools
 import json
+import logging
 import re
+import sqlite3
 import time
 from operator import add
 from typing import Annotated, Any
 
-from typing_extensions import TypedDict
-
-from langgraph.errors import GraphInterrupt
-from langgraph.graph import StateGraph, START, END
-from langgraph.types import interrupt
 from langgraph.checkpoint.sqlite import SqliteSaver
-
-import logging
-_log = logging.getLogger(__name__)
+from langgraph.errors import GraphInterrupt
+from langgraph.graph import END, START, StateGraph
+from langgraph.types import interrupt
+from typing_extensions import TypedDict
 
 from multi_agent._utils import DEFAULT_RUBBER_STAMP_PHRASES as _RUBBER_STAMP_PHRASES
 from multi_agent.config import store_db_path
@@ -35,6 +33,8 @@ from multi_agent.workspace import (
     clear_outbox,
     write_inbox,
 )
+
+_log = logging.getLogger(__name__)
 
 MAX_SNAPSHOTS = 10
 MAX_CONVERSATION_SIZE = 50
@@ -471,7 +471,7 @@ def _write_task_md(state: dict, builder_id: str, reviewer_id: str, current_role:
     TASK.md embeds the full prompt content inline so the IDE AI gets
     everything it needs from ONE file reference. No jumping to inbox files.
     """
-    from multi_agent.config import workspace_dir, inbox_dir, outbox_dir
+    from multi_agent.config import inbox_dir, outbox_dir, workspace_dir
 
     outbox_rel = f".multi-agent/outbox/{current_role}.json"
     outbox_abs = str(outbox_dir() / f"{current_role}.json")
@@ -1078,7 +1078,7 @@ def decide_node(state: WorkflowState) -> dict:
     if isinstance(prev_builder, dict):
         gw = prev_builder.get("gate_warnings")
         if gw:
-            sections.append(f"### Quality Gate Warnings\n" + "\n".join(f"- {w}" for w in gw))
+            sections.append("### Quality Gate Warnings\n" + "\n".join(f"- {w}" for w in gw))
     sections.append(f"### Retry Status\nAttempt {retry_count}/{budget}")
     feedback = "\n\n".join(sections)
 
@@ -1137,8 +1137,9 @@ def _is_cancelled(task_id: str) -> bool:
     below treats any parse failure as "not cancelled", which is the safe
     default — the next poll cycle will re-check.
     """
-    from multi_agent.config import tasks_dir
     import yaml
+
+    from multi_agent.config import tasks_dir
     path = tasks_dir() / f"{task_id}.yaml"
     if not path.exists():
         return False

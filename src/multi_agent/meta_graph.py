@@ -112,7 +112,6 @@ def format_prior_context(
         return ""
 
     dep_set = set(dep_ids or [])
-    recent_set = {pr.get("sub_id") for pr in prior_results[-max_items:]}
     # Include: all dependency results + most recent max_items (deduplicated)
     selected: list[dict] = []
     seen: set[str] = set()

@@ -13,11 +13,10 @@ import json
 import logging
 from pathlib import Path
 
-_log = logging.getLogger(__name__)
-
 from multi_agent.config import agents_profile_path, load_yaml, root_dir
 from multi_agent.schema import AgentProfile, SkillContract
 
+_log = logging.getLogger(__name__)
 
 # ── Registry Loading ──────────────────────────────────────
 

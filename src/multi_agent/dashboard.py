@@ -44,7 +44,7 @@ def generate_dashboard(
         emoji = "🔵" if current_role == "builder" else "🟡"
         action = "执行 builder 任务" if current_role == "builder" else "执行审查"
         lines.append(f"{emoji} **{current_agent}** 正在{action}")
-        lines.append(f"📄 任务文件: `.multi-agent/TASK.md`")
+        lines.append("📄 任务文件: `.multi-agent/TASK.md`")
         if timeout_remaining:
             lines.append(f"⏱️ 剩余时间: {timeout_remaining}")
     lines.append("")

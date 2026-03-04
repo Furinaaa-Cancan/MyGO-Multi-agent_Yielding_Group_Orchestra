@@ -9,7 +9,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 # ── Input Validation ──────────────────────────────────────
 
 SAFE_TASK_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")

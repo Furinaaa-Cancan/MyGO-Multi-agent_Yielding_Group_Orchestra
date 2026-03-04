@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import logging
 import warnings
-from pathlib import Path
-
 from functools import lru_cache
+from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -135,6 +134,7 @@ def render_reviewer_prompt(
 def get_prompt_metadata(role: str) -> str:
     """Generate HTML comment with version and timestamp for prompt tracking."""
     from datetime import datetime, timezone
+
     from multi_agent import __version__
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     return f"<!-- AgentOrchestra v{__version__} | prompt: {role} | rendered: {ts} -->"

@@ -20,7 +20,7 @@ import threading
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from multi_agent.config import workspace_dir, outbox_dir
+from multi_agent.config import outbox_dir, workspace_dir
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +149,7 @@ def spawn_cli_agent(
 
     Returns the thread (for testing). Caller does NOT need to join it.
     If same agent+role is already running, returns the existing thread.
-    
+
     Security Note:
         Uses shell=True for command execution. The command_template comes from
         agents.yaml and MUST be trusted. Malicious modification of agents.yaml
