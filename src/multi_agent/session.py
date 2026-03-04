@@ -262,17 +262,18 @@ def _resolve_roles(mode: str, config_path: str | None) -> SessionRoles:
 
 
 def _config(task_id: str) -> dict[str, Any]:
-    return {"configurable": {"thread_id": task_id}}
+    from multi_agent.orchestrator import make_config
+    return make_config(task_id)
 
 
 def compile_graph():
     """Compatibility wrapper for tests and call sites.
 
-    Kept as a module attribute so tests can monkeypatch `multi_agent.session.compile_graph`.
+    Delegates to orchestrator.compile_graph(). Kept as a module attribute
+    so tests can monkeypatch `multi_agent.session.compile_graph`.
     """
-    from multi_agent.graph import compile_graph as _compile_graph
-
-    return _compile_graph()
+    from multi_agent.orchestrator import compile_graph as _orch_compile
+    return _orch_compile()
 
 
 def _compile_graph_app():
@@ -282,23 +283,18 @@ def _compile_graph_app():
 
 
 def _waiting_info(snapshot: Any) -> tuple[str | None, str | None]:
-    if not snapshot or not snapshot.next:
-        return None, None
-    if snapshot.tasks and snapshot.tasks[0].interrupts:
-        info = snapshot.tasks[0].interrupts[0].value
-        if isinstance(info, dict):
-            role = info.get("role")
-            agent = info.get("agent")
-            if isinstance(role, str) and isinstance(agent, str):
-                return role, agent
-    return None, None
+    from multi_agent.orchestrator import get_waiting_info
+    return get_waiting_info(snapshot)
 
 
 def _state_from_snapshot(snapshot: Any) -> tuple[str, str | None, str | None]:
+    # Use orchestrator's structured TaskStatus, then unpack to legacy tuple format
     if not snapshot:
         return "UNKNOWN", None, None
-
-    vals = snapshot.values or {}
+    # We need to reconstruct TaskStatus logic without re-querying the graph.
+    # Since _state_from_snapshot receives a snapshot directly, replicate
+    # the same logic via orchestrator helpers.
+    vals = (snapshot.values if snapshot else {}) or {}
     final_status = str(vals.get("final_status", "")).lower().strip()
     if final_status:
         mapping = {
@@ -309,7 +305,6 @@ def _state_from_snapshot(snapshot: Any) -> tuple[str, str | None, str | None]:
             "cancelled": "CANCELLED",
         }
         return mapping.get(final_status, final_status.upper()), None, None
-
     role, agent = _waiting_info(snapshot)
     if role == "builder":
         return "RUNNING", role, agent

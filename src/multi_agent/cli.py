@@ -99,7 +99,8 @@ def _thread_id(task_id: str) -> str:
 
 
 def _make_config(task_id: str) -> dict:
-    return {"configurable": {"thread_id": _thread_id(task_id)}}
+    from multi_agent.orchestrator import make_config
+    return make_config(task_id)
 
 
 _SAFE_SKILL_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
@@ -448,6 +449,8 @@ def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer
 def _run_single_task(app, task_id, requirement, skill, builder, reviewer,
                      retry_budget, timeout, no_watch, workflow_mode, review_policy):
     """Run a single monolithic build-review cycle (original behavior)."""
+    from multi_agent.orchestrator import TaskStartError, start_task
+
     initial_state = {
         "task_id": task_id,
         "requirement": requirement,
@@ -468,34 +471,27 @@ def _run_single_task(app, task_id, requirement, skill, builder, reviewer,
     click.echo(f"   {requirement}")
     click.echo()
 
-    config = _make_config(task_id)
-
-    # Run until first interrupt (plan → build interrupt)
-    from langgraph.errors import GraphInterrupt
+    # Delegate to orchestrator for graph invocation
     try:
-        app.invoke(initial_state, config)
-    except GraphInterrupt:
-        pass
-    except FileNotFoundError as e:
+        start_task(app, task_id, initial_state)
+    except TaskStartError as e:
         release_lock()
-        click.echo(f"❌ {e}", err=True)
-        click.echo("   确认你在 AgentOrchestra 项目根目录运行, 且 skills/ 和 agents/ 存在。", err=True)
-        click.echo("   或设置 MA_ROOT 环境变量指向项目根目录。", err=True)
-        save_task_yaml(task_id, {"task_id": task_id, "status": "failed", "error": str(e)})
-        sys.exit(1)
-    except ValueError as e:
-        release_lock()
-        click.echo(f"❌ {e}", err=True)
-        click.echo("   检查 agents/agents.yaml 配置是否正确。", err=True)
-        save_task_yaml(task_id, {"task_id": task_id, "status": "failed", "error": str(e)})
-        sys.exit(1)
-    except Exception as e:
-        release_lock()
-        click.echo(f"❌ Task failed to start: {e}", err=True)
-        save_task_yaml(task_id, {"task_id": task_id, "status": "failed", "error": str(e)})
+        cause = e.cause
+        if isinstance(cause, FileNotFoundError):
+            click.echo(f"❌ {cause}", err=True)
+            click.echo("   确认你在 AgentOrchestra 项目根目录运行, 且 skills/ 和 agents/ 存在。", err=True)
+            click.echo("   或设置 MA_ROOT 环境变量指向项目根目录。", err=True)
+        elif isinstance(cause, ValueError):
+            click.echo(f"❌ {cause}", err=True)
+            click.echo("   检查 agents/agents.yaml 配置是否正确。", err=True)
+        else:
+            click.echo(f"❌ Task failed to start: {cause}", err=True)
+        save_task_yaml(task_id, {"task_id": task_id, "status": "failed", "error": str(cause)})
         sys.exit(1)
 
     save_task_yaml(task_id, {"task_id": task_id, "skill": skill, "status": "active"})
+
+    config = _make_config(task_id)
 
     # Show what to do
     _show_waiting(app, config)
@@ -956,12 +952,9 @@ def done(task_id: str | None, file_path: str | None):
 
     click.echo(f"📤 Submitting {role} output for task {task_id} (IDE: {agent_id})")
 
-    from langgraph.errors import GraphInterrupt
-    from langgraph.types import Command
+    from multi_agent.orchestrator import resume_task
     try:
-        app.invoke(Command(resume=output_data), config)
-    except GraphInterrupt:
-        pass  # Normal — graph paused at next interrupt()
+        status = resume_task(app, task_id, output_data)
     except Exception as e:
         release_lock()
         clear_runtime()
@@ -970,10 +963,8 @@ def done(task_id: str | None, file_path: str | None):
         sys.exit(1)
 
     # Mark task completed if graph finished
-    snapshot = app.get_state(config)
-    if snapshot and not snapshot.next:
-        vals = snapshot.values or {}
-        final = vals.get("final_status", "")
+    if status.is_terminal:
+        final = status.final_status or ""
         if final:
             save_task_yaml(task_id, {"task_id": task_id, "status": final})
         release_lock()
