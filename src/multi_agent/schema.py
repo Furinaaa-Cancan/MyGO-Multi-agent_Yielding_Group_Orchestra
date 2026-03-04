@@ -10,7 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from multi_agent._utils import SAFE_TASK_ID_RE as _ID_RE
+from multi_agent._utils import SAFE_TASK_ID_RE as _ID_RE, now_utc as _now_utc
 
 
 # ── Enums ─────────────────────────────────────────────────
@@ -83,8 +83,7 @@ class ReviewDecision(str, Enum):
 _TRACE_RE = re.compile(r"^[a-f0-9-]{16,64}$")
 
 
-def _now_utc() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+# _now_utc imported from _utils
 
 
 # ── Task ──────────────────────────────────────────────────

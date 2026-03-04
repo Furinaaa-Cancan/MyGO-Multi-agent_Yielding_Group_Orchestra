@@ -61,6 +61,14 @@ def is_terminal_final_status(value: object) -> bool:
     return value.strip().lower() in TERMINAL_FINAL_STATUSES
 
 
+# ── Timestamps ────────────────────────────────────────────
+
+def now_utc() -> str:
+    """Return current UTC time as ISO-8601 string (seconds precision)."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
 # ── Review Policy Constants ───────────────────────────────
 
 DEFAULT_RUBBER_STAMP_PHRASES: frozenset[str] = frozenset({

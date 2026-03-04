@@ -17,9 +17,11 @@ from langgraph.errors import GraphInterrupt
 from langgraph.types import Command
 
 from multi_agent._utils import (
+    DEFAULT_RUBBER_STAMP_PHRASES,
     SAFE_TASK_ID_RE,
     TERMINAL_STATES,
     count_nonempty_entries as _count_nonempty_entries,
+    now_utc as _now_utc,
     positive_int as _positive_int,
     validate_task_id as _validate_task_id_core,
 )
@@ -40,17 +42,7 @@ from multi_agent.workspace import (
 _SAFE_TASK_ID_RE = SAFE_TASK_ID_RE
 DEFAULT_REVIEW_POLICY: dict[str, Any] = {
     "rubber_stamp": {
-        "generic_phrases": [
-            "lgtm",
-            "looks good",
-            "no issues",
-            "approved",
-            "all good",
-            "ship it",
-            "good to go",
-            "looks fine",
-            "no comments",
-        ],
+        "generic_phrases": sorted(DEFAULT_RUBBER_STAMP_PHRASES),
         "generic_summary_max_len": 50,
         "shallow_summary_max_len": 30,
         "block_on_strict": True,
@@ -75,9 +67,6 @@ class SessionRoles:
             "reviewer": self.reviewer,
         }
 
-
-def _now_utc() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _load_json(path: Path) -> dict[str, Any]:

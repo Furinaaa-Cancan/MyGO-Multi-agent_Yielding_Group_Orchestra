@@ -9,16 +9,13 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from multi_agent._utils import now_utc as _now_utc
 from multi_agent.config import history_dir
 
 try:
     import fcntl
 except ImportError:  # pragma: no cover - non-POSIX fallback
     fcntl = None
-
-
-def _now_utc() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def trace_file(task_id: str) -> Path:

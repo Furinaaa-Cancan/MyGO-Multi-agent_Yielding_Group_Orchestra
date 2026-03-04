@@ -7,11 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from multi_agent._utils import now_utc as _now_utc
 from multi_agent.config import history_dir, workspace_dir
-
-
-def _now_utc() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def memory_file() -> Path:
