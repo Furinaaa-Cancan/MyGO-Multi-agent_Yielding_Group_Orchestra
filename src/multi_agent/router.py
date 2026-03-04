@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 from multi_agent.config import agents_profile_path, load_yaml, root_dir
 from multi_agent.schema import AgentProfile, SkillContract
@@ -71,16 +72,17 @@ def load_agents(path: Path | None = None) -> list[AgentProfile]:
     return result
 
 
-def get_defaults(path: Path | None = None) -> dict:
+def get_defaults(path: Path | None = None) -> dict[str, Any]:
     """Get default role assignments from registry."""
     reg = load_registry(path)
-    return reg.get("defaults", {})
+    result = reg.get("defaults", {})
+    return result if isinstance(result, dict) else {}
 
 
 def get_strategy(path: Path | None = None) -> str:
     """Get role assignment strategy: 'manual' or 'auto'."""
     reg = load_registry(path)
-    return reg.get("role_strategy", "manual")
+    return str(reg.get("role_strategy", "manual"))
 
 
 # ── Role Assignment ───────────────────────────────────────
@@ -106,7 +108,7 @@ def resolve_builder(
 
     defaults = get_defaults()
     if defaults.get("builder"):
-        return defaults["builder"]
+        return str(defaults["builder"])
 
     # Auto fallback: pick by capabilities
     candidates = _eligible(agents, contract, ["implementation"])
@@ -151,7 +153,7 @@ def resolve_reviewer(
     defaults = get_defaults()
     default_reviewer = defaults.get("reviewer")
     if default_reviewer and default_reviewer != builder_id:
-        return default_reviewer
+        return str(default_reviewer)
 
     # Auto fallback: pick by capabilities, exclude builder
     candidates = _eligible(agents, contract, ["review"], exclude=[builder_id])

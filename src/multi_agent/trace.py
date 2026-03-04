@@ -12,9 +12,10 @@ from multi_agent._utils import now_utc as _now_utc
 from multi_agent.config import history_dir
 
 try:
-    import fcntl
+    import fcntl as _fcntl
 except ImportError:  # pragma: no cover - non-POSIX fallback
-    fcntl = None
+    _fcntl = None  # type: ignore[assignment]
+fcntl = _fcntl
 
 
 def trace_file(task_id: str) -> Path:

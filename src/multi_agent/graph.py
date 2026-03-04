@@ -350,7 +350,7 @@ def _graph_node(node_name: str):
             _t0 = time.time()
             _ok = False
             try:
-                result = inner_fn(state)
+                result: dict[str, Any] = inner_fn(state)
                 _ok = result.get("final_status") != "failed"
                 return result
             except GraphInterrupt:
@@ -601,8 +601,8 @@ def plan_node(state: WorkflowState) -> dict:
         "current_role": "builder",
         "builder_id": builder_id,
         "reviewer_id": reviewer_id,
-        "started_at": now,
-        "task_started_at": state.get("task_started_at") or now,  # DoW guard anchor
+        "started_at": now,  # type: ignore[dict-item]  # LangGraph partial state
+        "task_started_at": state.get("task_started_at") or now,  # type: ignore[dict-item]
         "conversation": [
             {"role": "orchestrator", "action": "assigned", "agent": builder_id, "t": now}
         ],
@@ -908,7 +908,7 @@ def decide_node(state: WorkflowState) -> dict:
                               "original_status": fs, "t": time.time()}],
         }
         if state.get("error"):
-            passthrough["error"] = state["error"]
+            passthrough["error"] = state["error"]  # type: ignore[assignment]  # LangGraph partial state
         graph_hooks.fire_exit("decide", state, passthrough)
         return passthrough
 

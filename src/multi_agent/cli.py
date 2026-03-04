@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+
 import functools
 import hashlib
 import json
@@ -12,6 +17,7 @@ import sys
 import time
 import traceback
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -1422,7 +1428,7 @@ def schema(model: str):
         SubTask,
         Task,
     )
-    models = {
+    models: dict[str, type[BaseModel]] = {
         "Task": Task, "BuilderOutput": BuilderOutput,
         "ReviewerOutput": ReviewerOutput, "SubTask": SubTask,
         "DecomposeResult": DecomposeResult,
@@ -1539,7 +1545,7 @@ def export(task_id: str, fmt: str):
     history_file = history_dir() / f"{task_id}.json"
     task_file = tasks_dir() / f"{task_id}.yaml"
 
-    result = {"task_id": task_id}
+    result: dict[str, Any] = {"task_id": task_id}
     if task_file.exists():
         import yaml
         try:
