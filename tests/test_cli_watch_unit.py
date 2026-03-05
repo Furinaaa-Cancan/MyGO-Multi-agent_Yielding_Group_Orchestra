@@ -322,3 +322,112 @@ class TestProcessOutbox:
         result = _process_outbox(poller, "reviewer", "cursor", status, MagicMock(), "t-1", "00:10", True)
         # normalize fails → continues (doesn't return)
         assert result == "continue"
+
+
+# ── _show_next_agent CLI fallback (lines 154-155) ────────
+
+
+class TestShowNextAgentCliFallback:
+    """Cover lines 154-155: CLI binary not installed fallback."""
+
+    def test_cli_binary_not_installed_warning(self, capsys):
+        from multi_agent.cli_watch import _show_next_agent
+        status = SimpleNamespace(
+            waiting_role="builder", waiting_agent="windsurf",
+            values={"retry_count": 0, "timeout_sec": 600},
+        )
+        with patch("multi_agent.driver.get_agent_driver", return_value={"driver": "cli", "command": "windsurf-cli run"}), \
+             patch("multi_agent.driver.can_use_cli", return_value=False):
+            _show_next_agent(status, "01:00")
+        out = capsys.readouterr().out
+        assert "未安装" in out or "windsurf-cli" in out
+
+
+# ── _process_outbox validation warnings (lines 176-178) ──
+
+
+class TestProcessOutboxValidationWarnings:
+    """Cover lines 176-178: validation warnings printed to stderr."""
+
+    def _make_status(self, values=None):
+        s = SimpleNamespace()
+        s.values = values or {}
+        s.is_terminal = False
+        s.waiting_role = "builder"
+        s.waiting_agent = "windsurf"
+        return s
+
+    @patch("multi_agent.cli_watch.release_lock")
+    @patch("multi_agent.cli_watch.clear_runtime")
+    @patch("multi_agent.cli_watch.save_task_yaml")
+    @patch("multi_agent.cli_watch.validate_outbox_data", return_value=["missing summary", "bad format"])
+    def test_validation_warnings_printed(self, mock_val, mock_save, mock_clear, mock_rel, capsys):
+        poller = MagicMock()
+        poller.check_once.return_value = [("builder", {"summary": "done", "status": "completed"})]
+        next_status = SimpleNamespace(
+            is_terminal=False, waiting_role="reviewer", waiting_agent="cursor",
+            values={"retry_count": 0},
+        )
+        with patch("multi_agent.orchestrator.resume_task", return_value=next_status), \
+             patch("multi_agent.cli_watch._show_next_agent"):
+            result = _process_outbox(poller, "builder", "ws", self._make_status(), MagicMock(), "t-1", "00:10", True)
+        assert result == "continue"
+        err = capsys.readouterr().err
+        assert "missing summary" in err
+        assert "bad format" in err
+
+
+# ── _run_watch_loop (lines 197-227) ──────────────────────
+
+
+class TestRunWatchLoop:
+    """Cover lines 197-227: the main watch loop."""
+
+    @patch("multi_agent.cli_watch.time")
+    def test_terminal_status_exits_loop(self, mock_time, capsys):
+        from multi_agent.cli_watch import _run_watch_loop
+        mock_time.time.return_value = 0
+        mock_time.sleep = MagicMock()
+
+        terminal_status = SimpleNamespace(
+            is_terminal=True, final_status="approved",
+            values={"final_status": "approved"},
+            waiting_role=None, waiting_agent=None,
+        )
+        with patch("multi_agent.orchestrator.get_task_status", return_value=terminal_status), \
+             patch("multi_agent.watcher.OutboxPoller"), \
+             patch("multi_agent.cli_watch._handle_terminal") as mock_ht:
+            _run_watch_loop(MagicMock(), {"configurable": {"thread_id": "t-1"}}, "t-1", interval=1.0)
+        mock_ht.assert_called_once()
+
+    @patch("multi_agent.cli_watch.time")
+    def test_process_outbox_return_exits_loop(self, mock_time, capsys):
+        from multi_agent.cli_watch import _run_watch_loop
+        mock_time.time.return_value = 0
+        mock_time.sleep = MagicMock()
+
+        active_status = SimpleNamespace(
+            is_terminal=False, waiting_role="builder", waiting_agent="ws",
+            values={},
+        )
+        with patch("multi_agent.orchestrator.get_task_status", return_value=active_status), \
+             patch("multi_agent.watcher.OutboxPoller"), \
+             patch("multi_agent.cli_watch._process_outbox", return_value="return"):
+            _run_watch_loop(MagicMock(), {"configurable": {"thread_id": "t-1"}}, "t-1", interval=1.0)
+
+    @patch("multi_agent.cli_watch.time")
+    def test_keyboard_interrupt_stops(self, mock_time, capsys):
+        from multi_agent.cli_watch import _run_watch_loop
+        mock_time.time.return_value = 0
+        mock_time.sleep.side_effect = KeyboardInterrupt
+
+        active_status = SimpleNamespace(
+            is_terminal=False, waiting_role="builder", waiting_agent="ws",
+            values={},
+        )
+        with patch("multi_agent.orchestrator.get_task_status", return_value=active_status), \
+             patch("multi_agent.watcher.OutboxPoller"), \
+             patch("multi_agent.cli_watch._process_outbox", return_value="continue"):
+            _run_watch_loop(MagicMock(), {"configurable": {"thread_id": "t-1"}}, "t-1", interval=1.0)
+        out = capsys.readouterr().out
+        assert "Watch stopped" in out
