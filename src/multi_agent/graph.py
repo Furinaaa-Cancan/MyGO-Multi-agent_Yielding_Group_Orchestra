@@ -54,8 +54,6 @@ MAX_REQUEST_CHANGES = 3  # DDI research: effectiveness decays 60-80% after 2-3 a
 MAX_TASK_DURATION_SEC = 7200  # 2h total task guard (OWASP LLM10:2025 DoW prevention)
 
 
-
-
 # ── Node Decorator ────────────────────────────────────────
 
 
@@ -814,15 +812,23 @@ def decide_node(state: WorkflowState) -> dict[str, Any]:
         graph_hooks.fire_exit("decide", state, passthrough)
         return passthrough
 
+    # Track retry effectiveness (DDI measurement)
+    # NOTE: count from ORIGINAL conversation BEFORE trimming, to avoid
+    # undercounting retry rounds when trim removes middle entries.
+    original_convo = state.get("conversation", [])
+    review_round = sum(
+        1 for e in original_convo
+        if e.get("action") in ("retry", "request_changes")
+    )
+
     # Task 74: trim conversation if oversized
-    convo = state.get("conversation", [])
-    trimmed = trim_conversation(convo)
-    if len(trimmed) < len(convo):
+    trimmed = trim_conversation(original_convo)
+    if len(trimmed) < len(original_convo):
         state = {**state, "conversation": trimmed}
 
     reviewer_output: dict[str, Any] = state.get("reviewer_output") or {}
     review_policy = state.get("review_policy")
-    rubber_policy = review_policy.get("rubber_stamp") if isinstance(review_policy, dict) else {}
+    rubber_policy = review_policy.get("rubber_stamp") if isinstance(review_policy, dict) else None
     reviewer_for_detect = dict(reviewer_output)
     if isinstance(rubber_policy, dict):
         reviewer_for_detect["_rubber_policy"] = rubber_policy
@@ -837,12 +843,6 @@ def decide_node(state: WorkflowState) -> dict[str, Any]:
         reviewer_output, decision = _block_rubber_stamp(
             state.get("task_id", "?"), reviewer_output,
         )
-
-    # Track retry effectiveness (DDI measurement)
-    review_round = sum(
-        1 for e in state.get("conversation", [])
-        if e.get("action") in ("retry", "request_changes")
-    )
     if review_round > 0:
         graph_stats.record_retry_outcome(review_round, decision)
 
