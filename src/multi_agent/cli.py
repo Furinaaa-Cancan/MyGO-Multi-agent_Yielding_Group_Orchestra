@@ -424,6 +424,11 @@ def _run_single_task(app: Any, task_id: str, requirement: str, skill: str, build
     """Run a single monolithic build-review cycle (original behavior)."""
     from multi_agent.orchestrator import TaskStartError, start_task
 
+    # Resolve orchestrator for state persistence (used by session_push/status)
+    from multi_agent.router import get_defaults as _get_defaults
+    _defaults = _get_defaults()
+    _orchestrator = str(_defaults.get("orchestrator", "")).strip() or "codex"
+
     initial_state = {
         "task_id": task_id,
         "requirement": requirement,
@@ -437,6 +442,7 @@ def _run_single_task(app: Any, task_id: str, requirement: str, skill: str, build
         "input_payload": {"requirement": requirement},
         "builder_explicit": builder,
         "reviewer_explicit": reviewer,
+        "orchestrator_id": _orchestrator,
         "conversation": [],
     }
 

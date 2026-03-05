@@ -722,6 +722,7 @@ def _build_initial_state(
         "input_payload": task.get("input_payload", {}),
         "builder_explicit": roles.builder,
         "reviewer_explicit": roles.reviewer,
+        "orchestrator_id": roles.orchestrator,
         "conversation": [],
     }
 
