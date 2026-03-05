@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from multi_agent._utils import SAFE_TASK_ID_RE as _ID_RE
+from multi_agent._utils import validate_task_id as _validate_task_id
 from multi_agent.schema import SubTask
 
 _log = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ def save_checkpoint(parent_task_id: str, prior_results: list[dict[str, Any]],
 
     Saves after each sub-task completion so progress is never lost.
     """
+    _validate_task_id(parent_task_id)
     from multi_agent.config import workspace_dir
     ckpt_dir = workspace_dir() / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -45,6 +47,7 @@ def save_checkpoint(parent_task_id: str, prior_results: list[dict[str, Any]],
 
 def load_checkpoint(parent_task_id: str) -> dict[str, Any] | None:
     """Load decompose checkpoint if it exists. Returns None if no checkpoint."""
+    _validate_task_id(parent_task_id)
     from multi_agent.config import workspace_dir
     ckpt_path = workspace_dir() / "checkpoints" / f"decompose-{parent_task_id}.json"
     if not ckpt_path.exists():
@@ -61,6 +64,7 @@ def load_checkpoint(parent_task_id: str) -> dict[str, Any] | None:
 
 def clear_checkpoint(parent_task_id: str) -> None:
     """Remove checkpoint after successful completion."""
+    _validate_task_id(parent_task_id)
     from multi_agent.config import workspace_dir
     ckpt_path = workspace_dir() / "checkpoints" / f"decompose-{parent_task_id}.json"
     if ckpt_path.exists():

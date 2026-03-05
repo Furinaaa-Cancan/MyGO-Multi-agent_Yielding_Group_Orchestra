@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from multi_agent._utils import validate_agent_id as _validate_agent_id
+from multi_agent._utils import validate_task_id as _validate_task_id
 from multi_agent.config import (
     history_dir,
     inbox_dir,
@@ -175,6 +176,7 @@ def save_task_yaml(task_id: str, data: dict[str, Any]) -> Path:
     """Save task state to tasks/{task_id}.yaml (atomic write)."""
     import yaml
 
+    _validate_task_id(task_id)
     ensure_workspace()
     path = tasks_dir() / f"{task_id}.yaml"
     fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp", prefix=f".{task_id}-")
@@ -212,6 +214,7 @@ def acquire_lock(task_id: str) -> None:
     Raises RuntimeError if lock is already held by another task.
     """
     import os
+    _validate_task_id(task_id)
     ensure_workspace()
     lock_path = _lock_path()
 
@@ -387,6 +390,7 @@ def cleanup_old_files(max_age_days: int = 7) -> int:
 @retry_file_op()
 def archive_conversation(task_id: str, conversation: list[dict[str, Any]]) -> Path:
     """Archive conversation history to history/{task_id}.json (atomic write)."""
+    _validate_task_id(task_id)
     ensure_workspace()
     path = history_dir() / f"{task_id}.json"
     fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp", prefix=f".{task_id}-")
