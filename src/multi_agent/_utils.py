@@ -81,6 +81,42 @@ def now_utc() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+# ── Duration Formatting ───────────────────────────────────
+
+def format_duration(seconds: float) -> str:
+    """Convert seconds to human-readable duration string.
+
+    Examples:
+        >>> format_duration(0)
+        '0s'
+        >>> format_duration(45)
+        '45s'
+        >>> format_duration(150)
+        '2m 30s'
+        >>> format_duration(3661)
+        '1h 1m 1s'
+        >>> format_duration(86400)
+        '1d 0h 0m 0s'
+    """
+    if seconds < 0:
+        seconds = 0.0
+    total = int(seconds)
+    if total < 60:
+        return f"{total}s"
+    parts: list[str] = []
+    if total >= 86400:
+        days, total = divmod(total, 86400)
+        parts.append(f"{days}d")
+    if total >= 3600:
+        hours, total = divmod(total, 3600)
+        parts.append(f"{hours}h")
+    if total >= 60:
+        minutes, total = divmod(total, 60)
+        parts.append(f"{minutes}m")
+    parts.append(f"{total}s")
+    return " ".join(parts)
+
+
 # ── Review Policy Constants ───────────────────────────────
 
 DEFAULT_RUBBER_STAMP_PHRASES: frozenset[str] = frozenset({

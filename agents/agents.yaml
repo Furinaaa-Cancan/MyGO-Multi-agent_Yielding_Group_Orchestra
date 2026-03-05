@@ -30,8 +30,8 @@ agents:
     capabilities: [planning, implementation, testing, review, docs, security]
 
   - id: codex
-    driver: cli
-    command: "codex exec 'Read {task_file} and complete the task. Save the JSON output to {outbox_file}' --full-auto"
+    driver: gui
+    app_name: "Codex"
     capabilities: [planning, implementation, testing, review, docs]
 
   - id: aider

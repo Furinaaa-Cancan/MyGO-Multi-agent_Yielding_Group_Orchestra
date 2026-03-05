@@ -112,7 +112,8 @@ class TestLoadAgents:
         # CLI agents should have driver="cli" and a command
         assert by_id["claude"].driver == "cli"
         assert "claude" in by_id["claude"].command
-        assert by_id["codex"].driver == "cli"
+        assert by_id["codex"].driver == "gui"
+        assert by_id["codex"].app_name == "Codex"
         # IDE agents should have driver="file"
         assert by_id["windsurf"].driver == "file"
         assert by_id["windsurf"].command == ""

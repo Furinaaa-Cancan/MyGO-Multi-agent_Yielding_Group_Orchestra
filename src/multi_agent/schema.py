@@ -253,8 +253,9 @@ class AgentProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(..., pattern=r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
-    driver: str = "file"  # "file" (IDE, manual) or "cli" (auto-spawn)
+    driver: str = "file"  # "file" (IDE, manual) | "cli" (auto-spawn) | "gui" (macOS AppleScript)
     command: str = ""      # CLI command template (for driver="cli")
+    app_name: str = ""     # macOS app name (for driver="gui", e.g. "Codex")
     capabilities: list[str] = Field(default_factory=list)
     reliability: float = 0.9
     queue_health: float = 0.9

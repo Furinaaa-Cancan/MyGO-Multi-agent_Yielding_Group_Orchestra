@@ -1,9 +1,14 @@
-"""Agent drivers — spawn CLI agents or show file-based instructions.
+"""Agent drivers — spawn CLI agents, GUI automation, or show file-based instructions.
 
 Architecture note (defect B1): All driver-type dispatch is consolidated in
 ``dispatch_agent()`` to eliminate the 4x duplicated if/else pattern that was
 previously scattered across cli.py.  Callers should use ``dispatch_agent()``
 instead of manually checking ``get_agent_driver()["driver"]``.
+
+Supported drivers:
+- ``file``  — write TASK.md, user manually tells IDE (default)
+- ``cli``   — spawn CLI tool automatically (e.g. claude, aider)
+- ``gui``   — macOS AppleScript automation for desktop IDE apps (e.g. Codex)
 """
 
 from __future__ import annotations
@@ -59,8 +64,8 @@ def get_agent_driver(agent_id: str) -> dict[str, Any]:
 
     for agent in load_agents():
         if agent.id == agent_id:
-            return {"driver": agent.driver, "command": agent.command}
-    return {"driver": "file", "command": ""}
+            return {"driver": agent.driver, "command": agent.command, "app_name": agent.app_name}
+    return {"driver": "file", "command": "", "app_name": ""}
 
 
 def get_latest_log(agent_id: str) -> Path | None:
@@ -295,6 +300,95 @@ def _write_error(outbox_file: str, error_msg: str) -> None:
     _atomic_write_json(Path(outbox_file), {"status": "error", "summary": error_msg})
 
 
+# ── GUI Driver (macOS AppleScript automation) ────────────
+
+def can_use_gui() -> bool:
+    """Check if macOS GUI automation is available (osascript exists)."""
+    return shutil.which("osascript") is not None
+
+
+def send_gui_message(app_name: str, message: str) -> bool:
+    """Send a message to a macOS desktop IDE app via AppleScript.
+
+    Activates the target app window, pastes the message via clipboard,
+    and presses Enter to submit. Requires macOS Accessibility permission.
+
+    Returns True on success, False on failure.
+    """
+    if not can_use_gui():
+        logger.warning("osascript not found — GUI automation unavailable")
+        return False
+
+    applescript = f'''
+tell application "{app_name}" to activate
+delay 1.0
+tell application "System Events"
+    tell process "{app_name}"
+        set frontmost to true
+        delay 0.5
+        keystroke "v" using command down
+        delay 0.3
+        keystroke return
+    end tell
+end tell
+'''
+    try:
+        # Set clipboard content
+        clip_proc = subprocess.run(
+            ["pbcopy"], input=message, text=True,
+            capture_output=True, timeout=5,
+        )
+        if clip_proc.returncode != 0:
+            logger.error("pbcopy failed: %s", clip_proc.stderr)
+            return False
+
+        # Execute AppleScript
+        result = subprocess.run(
+            ["osascript", "-e", applescript],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode != 0:
+            logger.error("AppleScript failed: %s", result.stderr.strip())
+            return False
+
+        logger.info("GUI message sent to %s", app_name)
+        return True
+    except subprocess.TimeoutExpired:
+        logger.error("GUI automation timed out for %s", app_name)
+        return False
+    except Exception as e:
+        logger.error("GUI automation error for %s: %s", app_name, e)
+        return False
+
+
+def spawn_gui_agent(
+    agent_id: str,
+    role: str,
+    app_name: str,
+) -> threading.Thread:
+    """Send task prompt to a desktop IDE app via GUI automation.
+
+    The GUI agent reads TASK.md content and sends it as a message.
+    The watcher will detect the outbox file written by the IDE.
+    Returns the thread (non-blocking).
+    """
+    message = "帮我完成 @.multi-agent/TASK.md 里的任务"
+
+    def _run() -> None:
+        try:
+            success = send_gui_message(app_name, message)
+            if success:
+                logger.info("GUI agent %s (%s) message sent to %s", agent_id, role, app_name)
+            else:
+                logger.warning("GUI agent %s (%s) failed to send to %s, falling back to manual", agent_id, role, app_name)
+        except Exception as e:
+            logger.error("GUI agent %s error: %s", agent_id, e)
+
+    t = threading.Thread(target=_run, daemon=True, name=f"gui-{agent_id}-{role}")
+    t.start()
+    return t
+
+
 # ── Unified Dispatch (defect B1 fix) ─────────────────────
 
 class DispatchResult:
@@ -340,6 +434,26 @@ def dispatch_agent(
             thread=None,
             message=(
                 f"⚠️  {agent_id} 配置为 CLI 模式但 `{binary}` 未安装，降级为手动模式\n"
+                f"📋 [{step_label}] 在 {agent_id} IDE 里对 AI 说:\n"
+                f'   "帮我完成 @.multi-agent/TASK.md 里的任务"'
+            ),
+        )
+
+    if drv["driver"] == "gui" and drv.get("app_name"):
+        app_name = drv["app_name"]
+        if can_use_gui():
+            thread = spawn_gui_agent(agent_id, role, app_name)
+            return DispatchResult(
+                mode="auto",
+                thread=thread,
+                message=f"🖥️  [{step_label}] 自动向 {app_name} 发送任务…",
+            )
+        # macOS GUI not available → degrade gracefully
+        return DispatchResult(
+            mode="degraded",
+            thread=None,
+            message=(
+                f"⚠️  {agent_id} 配置为 GUI 模式但 osascript 不可用，降级为手动模式\n"
                 f"📋 [{step_label}] 在 {agent_id} IDE 里对 AI 说:\n"
                 f'   "帮我完成 @.multi-agent/TASK.md 里的任务"'
             ),

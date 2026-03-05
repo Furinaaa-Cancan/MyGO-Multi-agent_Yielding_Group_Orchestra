@@ -60,6 +60,7 @@ def load_agents(path: Path | None = None) -> list[AgentProfile]:
                 id=a["id"],
                 driver=a.get("driver", "file"),
                 command=a.get("command", ""),
+                app_name=a.get("app_name", ""),
                 capabilities=a.get("capabilities", []),
                 reliability=a.get("reliability", 0.9),
                 queue_health=a.get("queue_health", 0.9),
