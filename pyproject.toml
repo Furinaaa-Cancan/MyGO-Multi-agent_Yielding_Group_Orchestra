@@ -28,7 +28,7 @@ mcp = [
 ]
 
 [project.scripts]
-mygo = "multi_agent.cli:main"
+my = "multi_agent.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/multi_agent"]

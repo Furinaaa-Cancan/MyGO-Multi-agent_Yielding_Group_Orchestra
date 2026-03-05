@@ -201,4 +201,4 @@ def _run_watch_loop(app: Any, config: dict[str, Any], task_id: str, interval: fl
 
             time.sleep(interval)
     except KeyboardInterrupt:
-        click.echo("\n⏹️  Watch stopped. Task still active — resume with: mygo watch")
+        click.echo("\n⏹️  Watch stopped. Task still active — resume with: my watch")
