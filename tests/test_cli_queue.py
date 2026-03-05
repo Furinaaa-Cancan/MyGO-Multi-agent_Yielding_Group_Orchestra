@@ -9,7 +9,12 @@ import pytest
 from click.testing import CliRunner
 
 from multi_agent.cli import main
-from multi_agent.cli_queue import extract_tasks_from_md, run_queue
+from multi_agent.cli_queue import (
+    _print_summary,
+    extract_tasks_from_md,
+    run_queue,
+    run_single_queue_task,
+)
 
 
 @pytest.fixture
@@ -53,6 +58,14 @@ class TestExtractTasks:
         tasks = extract_tasks_from_md(md)
         assert len(tasks) == 1
         assert tasks[0][0] == 1
+
+    def test_single_newline_between_heading_and_code(self, tmp_path):
+        """Regex should match even with only one newline after heading."""
+        md = tmp_path / "single.md"
+        md.write_text("### 1. Task\n```\nprompt text\n```\n")
+        tasks = extract_tasks_from_md(md)
+        assert len(tasks) == 1
+        assert tasks[0] == (1, "Task", "prompt text")
 
 
 # ── queue list command ───────────────────────────────────
@@ -114,7 +127,28 @@ class TestQueueRunCommand:
             ])
         assert result.exit_code == 0
         assert "执行完成" in result.output
+        # Assert results file was written
+        report = tmp_path / ".multi-agent" / "queue-results.json"
+        assert report.exists()
+        data = json.loads(report.read_text())
+        assert data["passed"] == [1]
         root_dir.cache_clear()
+
+    def test_only_invalid_input(self, runner, queue_md):
+        """--only with non-numeric values should show friendly error."""
+        result = runner.invoke(main, [
+            "queue", "run", str(queue_md), "--only", "a,b",
+        ])
+        assert result.exit_code == 0
+        assert "格式错误" in result.output
+
+    def test_only_with_trailing_comma(self, runner, queue_md):
+        """--only '1,' should not crash (empty segment ignored)."""
+        result = runner.invoke(main, [
+            "queue", "run", str(queue_md), "--dry-run", "--only", "1,",
+        ])
+        assert result.exit_code == 0
+        assert "1 条任务" in result.output
 
 
 # ── queue status command ─────────────────────────────────
@@ -166,3 +200,49 @@ class TestRunQueueFunction:
         assert results["passed"] == [1]
         assert results["failed"] == [2]
         assert results["total"] == 2
+
+
+# ── run_single_queue_task ──────────────────────────────
+
+
+class TestRunSingleQueueTask:
+    def test_success(self):
+        """Successful subprocess returns passed status."""
+        mock_result = type("R", (), {"returncode": 0})()
+        with patch("subprocess.run", return_value=mock_result):
+            result = run_single_queue_task(1, "T1", "prompt", "ws", "ag", 60)
+        assert result["status"] == "passed"
+        assert result["task_id"] == "task-queue-001"
+        assert result["num"] == 1
+        assert "elapsed_sec" in result
+
+    def test_failure(self):
+        """Non-zero return code → failed status."""
+        mock_result = type("R", (), {"returncode": 1})()
+        with patch("subprocess.run", return_value=mock_result):
+            result = run_single_queue_task(2, "T2", "prompt", "ws", "ag", 60)
+        assert result["status"] == "failed"
+
+    def test_timeout(self):
+        """TimeoutExpired → timeout status, cancel attempt is safe."""
+        import subprocess as sp
+        with patch("subprocess.run", side_effect=sp.TimeoutExpired("ma", 60)):
+            result = run_single_queue_task(3, "T3", "prompt", "ws", "ag", 60)
+        assert result["status"] == "timeout"
+
+    def test_keyboard_interrupt(self):
+        """KeyboardInterrupt is re-raised after cancel attempt."""
+        with patch("subprocess.run", side_effect=KeyboardInterrupt), pytest.raises(KeyboardInterrupt):
+            run_single_queue_task(4, "T4", "prompt", "ws", "ag", 60)
+
+
+# ── _print_summary ────────────────────────────────────
+
+
+class TestPrintSummary:
+    def test_prints_passed_and_failed(self, capsys):
+        _print_summary({"passed": [1, 2], "failed": [3], "elapsed": "0h 0m 5s"})
+        out = capsys.readouterr().out
+        assert "通过: 2" in out
+        assert "失败: 1" in out
+        assert "0h 0m 5s" in out

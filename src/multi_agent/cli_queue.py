@@ -11,6 +11,7 @@ Usage:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import subprocess
@@ -70,7 +71,11 @@ def register_queue_commands(main: click.Group) -> None:  # noqa: C901
 
         # Filter tasks
         if only:
-            only_set = {int(x.strip()) for x in only.split(",")}
+            try:
+                only_set = {int(x.strip()) for x in only.split(",") if x.strip()}
+            except ValueError:
+                click.echo("❌ --only 参数格式错误，请使用逗号分隔的数字，如 --only 1,3,5")
+                return
             tasks = [t for t in tasks if t[0] in only_set]
         else:
             tasks = [t for t in tasks if start <= t[0] <= end]
@@ -90,7 +95,7 @@ def register_queue_commands(main: click.Group) -> None:  # noqa: C901
             return
 
         results = run_queue(tasks, builder, reviewer, timeout, pause)
-        _print_summary(results, tasks)
+        _print_summary(results)
 
         # Save results
         from multi_agent.config import workspace_dir
@@ -132,7 +137,7 @@ def extract_tasks_from_md(md_path: Path) -> list[tuple[int, str, str]]:
         ```
     """
     text = md_path.read_text(encoding="utf-8")
-    pattern = r"### (\d+)\.\s+(.+?)\n\n```\n(.*?)```"
+    pattern = r"### (\d+)\.\s+(.+?)\n\n?```\n(.*?)```"
     matches = re.findall(pattern, text, re.DOTALL)
     tasks: list[tuple[int, str, str]] = []
     for num_str, title, prompt in matches:
@@ -162,12 +167,14 @@ def run_single_queue_task(
     except subprocess.TimeoutExpired:
         elapsed = time.time() - start_time
         click.echo(f"  ⏰ TIMEOUT after {timeout}s")
-        subprocess.run(["ma", "cancel"], capture_output=True, timeout=30)
+        with contextlib.suppress(Exception):
+            subprocess.run(["ma", "cancel"], capture_output=True, timeout=30)
         status = "timeout"
         success = False
     except KeyboardInterrupt:
         click.echo(f"\n  🛑 User interrupted at task #{num}")
-        subprocess.run(["ma", "cancel"], capture_output=True, timeout=30)
+        with contextlib.suppress(Exception):
+            subprocess.run(["ma", "cancel"], capture_output=True, timeout=30)
         raise
 
     return {
@@ -215,7 +222,7 @@ def run_queue(
     }
 
 
-def _print_summary(results: dict[str, Any], tasks: list[tuple[int, str, str]]) -> None:
+def _print_summary(results: dict[str, Any]) -> None:
     """Print execution summary to terminal."""
     click.echo(f"\n{'=' * 60}")
     click.echo("📊 队列执行完成")
