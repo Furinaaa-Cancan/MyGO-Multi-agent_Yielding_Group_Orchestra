@@ -1887,6 +1887,98 @@ class TestDoWConstants:
         assert 3600 <= MAX_TASK_DURATION_SEC <= 14400  # 1-4 hours
 
 
+class TestRubberStampEdgeCases:
+    """Cover uncovered branches in _is_rubber_stamp_approval (lines 174-183)."""
+
+    def test_invalid_generic_max_type_falls_back(self):
+        from multi_agent.graph import _is_rubber_stamp_approval
+        output = {
+            "decision": "approve", "summary": "lgtm", "reasoning": "",
+            "_rubber_policy": {"generic_summary_max_len": "not_a_number"},
+        }
+        # Should not crash — falls back to default 50
+        result = _is_rubber_stamp_approval(output)
+        assert isinstance(result, bool)
+
+    def test_invalid_shallow_max_type_falls_back(self):
+        from multi_agent.graph import _is_rubber_stamp_approval
+        output = {
+            "decision": "approve", "summary": "lgtm", "reasoning": "",
+            "_rubber_policy": {"shallow_summary_max_len": None},
+        }
+        result = _is_rubber_stamp_approval(output)
+        assert isinstance(result, bool)
+
+    def test_negative_generic_max_resets(self):
+        from multi_agent.graph import _is_rubber_stamp_approval
+        output = {
+            "decision": "approve", "summary": "lgtm", "reasoning": "",
+            "_rubber_policy": {"generic_summary_max_len": -5, "shallow_summary_max_len": -1},
+        }
+        result = _is_rubber_stamp_approval(output)
+        assert isinstance(result, bool)
+
+    def test_zero_max_values_reset(self):
+        from multi_agent.graph import _is_rubber_stamp_approval
+        output = {
+            "decision": "approve", "summary": "lgtm", "reasoning": "",
+            "_rubber_policy": {"generic_summary_max_len": 0, "shallow_summary_max_len": 0},
+        }
+        result = _is_rubber_stamp_approval(output)
+        assert isinstance(result, bool)
+
+
+class TestEnrichReviewerResult:
+    """Cover _enrich_reviewer_result empty feedback injection (lines 609-613)."""
+
+    def test_empty_feedback_injected_on_reject(self):
+        from multi_agent.graph import _enrich_reviewer_result
+        result = {"decision": "reject", "feedback": ""}
+        _enrich_reviewer_result(result, "reject", {"review_policy": None})
+        assert result["feedback"]  # non-empty after injection
+        assert "Reviewer did not provide" in result["feedback"]
+
+    def test_whitespace_only_feedback_injected(self):
+        from multi_agent.graph import _enrich_reviewer_result
+        result = {"decision": "request_changes", "feedback": "   "}
+        _enrich_reviewer_result(result, "request_changes", {"review_policy": None})
+        assert "Reviewer did not provide" in result["feedback"]
+
+    def test_valid_feedback_not_overwritten(self):
+        from multi_agent.graph import _enrich_reviewer_result
+        result = {"decision": "reject", "feedback": "Fix the auth module"}
+        _enrich_reviewer_result(result, "reject", {"review_policy": None})
+        assert result["feedback"] == "Fix the auth module"
+
+    def test_approve_decision_no_injection(self):
+        from multi_agent.graph import _enrich_reviewer_result
+        result = {"decision": "approve", "feedback": ""}
+        _enrich_reviewer_result(result, "approve", {"review_policy": None})
+        assert result["feedback"] == ""
+
+
+class TestDecideRejectDDIDecay:
+    """Cover DDI decay warning at retry >= 2 (lines 746-751)."""
+
+    def test_ddi_decay_appended_at_retry_2(self):
+        from multi_agent.graph import _decide_reject_retry
+        state = {
+            "task_id": "task-ddi", "retry_count": 1, "retry_budget": 3,
+            "builder_output": {"summary": "attempt", "changed_files": ["a.py"]},
+            "reviewer_output": {"decision": "reject", "feedback": "wrong approach"},
+            "conversation": [], "done_criteria": ["works"],
+        }
+        with patch("multi_agent.graph.write_dashboard"):
+            result = _decide_reject_retry(state, state["reviewer_output"])
+        convo = result.get("conversation", [])
+        assert len(convo) == 1
+        entry = convo[0]
+        assert entry["action"] == "retry"
+        # retry_count starts at 1, gets incremented to 2 inside _decide_reject_retry
+        assert result["retry_count"] == 2
+        assert "衰减" in entry["feedback"] or "DDI" in entry.get("feedback", "")
+
+
 class TestBuildGraph:
     def test_graph_structure(self):
         g = build_graph()

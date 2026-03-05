@@ -515,6 +515,49 @@ class TestBuildInitialStateOrchestratorId:
         assert state["orchestrator_id"] == "codex"
 
 
+class TestSessionPushValidation:
+    """Cover session_push guard clauses (lines 966-971)."""
+
+    def test_push_rejects_terminal_state(self):
+        from multi_agent.session import session_push
+        snapshot = MagicMock()
+        snapshot.values = {"final_status": "approved"}
+        snapshot.next = []
+        snapshot.tasks = []
+        with patch("multi_agent.session._compile_graph_app") as mock_app, \
+             patch("multi_agent.session._config"), \
+             patch("multi_agent.orchestrator.get_waiting_info", return_value=(None, None)):
+            mock_app.return_value.get_state.return_value = snapshot
+            with pytest.raises(ValueError, match="already terminal"):
+                session_push("task-term-1", "ws", "/tmp/fake.json")
+
+    def test_push_rejects_agent_mismatch(self):
+        from multi_agent.session import session_push
+        snapshot = MagicMock()
+        snapshot.values = {"builder_id": "cursor"}
+        snapshot.next = ["build_node"]
+        snapshot.tasks = []
+        with patch("multi_agent.session._compile_graph_app") as mock_app, \
+             patch("multi_agent.session._config"), \
+             patch("multi_agent.orchestrator.get_waiting_info", return_value=("builder", "cursor")):
+            mock_app.return_value.get_state.return_value = snapshot
+            with pytest.raises(ValueError, match="current owner is 'cursor', not 'windsurf'"):
+                session_push("task-mismatch", "windsurf", "/tmp/fake.json")
+
+    def test_push_rejects_unsupported_role(self):
+        from multi_agent.session import session_push
+        snapshot = MagicMock()
+        snapshot.values = {}
+        snapshot.next = ["plan_node"]
+        snapshot.tasks = []
+        with patch("multi_agent.session._compile_graph_app") as mock_app, \
+             patch("multi_agent.session._config"), \
+             patch("multi_agent.orchestrator.get_waiting_info", return_value=("orchestrator", "codex")):
+            mock_app.return_value.get_state.return_value = snapshot
+            with pytest.raises(ValueError, match="unsupported current role"):
+                session_push("task-badrole", "codex", "/tmp/fake.json")
+
+
 class TestSubmitMemoryCandidates:
     def test_nested_candidates_from_result(self):
         from multi_agent.session import _submit_memory_candidates
