@@ -1,315 +1,305 @@
 # AgentOrchestra
 
-IDE 无关的多 Agent 编排框架。  
-当前推荐模式：**LangGraph 单一状态源（SSOT）+ IDE-first Session 流程**。
+IDE 无关的多 Agent 编排框架 (v0.6.0)。  
+基于 **LangGraph 单一状态源（SSOT）** 驱动 4 节点工作流（plan → build → review → decide），  
+支持全自动 CLI 和手动 IDE 两种运行模式。
 
 ---
 
-## 你现在应该怎么用（先看这个）
+## 快速开始
 
-如果你是 `Windsurf + Antigravity + Codex` 这类组合，建议只用这条链路：
-
-1. `ma session start` 初始化会话
-2. `ma session pull` 给当前 agent 生成提示词
-3. agent 在 IDE 里完成工作并写 JSON 文件
-4. `ma session push` 提交 JSON，自动推进到下一角色
-
-关键点：
-- IDE 里只做代码与 JSON 输出，不需要在 IDE 里跑终端命令。
-- 角色默认是 `builder -> reviewer`，且两者必须不同 agent。
-- 所有共享状态以 LangGraph checkpoint 为准，不再维护第二套状态机。
-
----
-
-## 1. 安装与初始化
+### 安装
 
 ```bash
 git clone https://github.com/Furinaaa-Cancan/AgentOrchestra.git
 cd AgentOrchestra
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-查看命令：
+### 初始化项目
 
 ```bash
-ma --help
-ma session --help
+ma init          # 创建 skills/ + agents/ + .multi-agent/
+ma agents        # 检查 agent 健康状态
+ma list-skills   # 查看可用技能
+```
+
+### 一条命令跑起来
+
+```bash
+ma go "实现用户登录功能"
+```
+
+系统自动完成：锁定任务 → 生成 prompt → 自动/手动调用 builder → 等待输出 → 交给 reviewer → 决策 → 完成/重试。
+
+---
+
+## 两种运行模式
+
+### 模式 A：自动化流程（推荐）
+
+```bash
+# 单任务：一条命令完成 build → review → decide
+ma go "实现 REST API 用户注册接口"
+
+# 复杂任务：自动分解为子任务并依次执行
+ma go "实现完整用户认证模块" --decompose
+
+# 自定义角色
+ma go "修复登录 bug" --builder windsurf --reviewer cursor --mode strict
+```
+
+关键命令：
+
+| 命令 | 作用 |
+|---|---|
+| `ma go "<需求>"` | 启动任务（自动 watch） |
+| `ma done` | 提交当前角色的输出 |
+| `ma watch` | 恢复中断的自动检测 |
+| `ma status` | 查看当前任务状态 |
+| `ma cancel` | 取消当前任务 |
+
+### 模式 B：IDE-first Session 流程
+
+适合需要精细控制每一步的场景：
+
+```bash
+ma session start --task tasks/examples/task-code-implement.json --mode strict
+ma session pull --task-id <id> --agent windsurf     # 生成 builder prompt
+# → IDE 中完成工作，输出 JSON 到 .multi-agent/outbox/builder.json
+ma session push --task-id <id> --agent windsurf --file .multi-agent/outbox/builder.json
+ma session pull --task-id <id> --agent antigravity   # 生成 reviewer prompt
+# → reviewer 完成审查
+ma session push --task-id <id> --agent antigravity --file .multi-agent/outbox/reviewer.json
+```
+
+| 命令 | 作用 |
+|---|---|
+| `ma session start --task <json> --mode strict` | 初始化会话 |
+| `ma session pull --task-id <id> --agent <agent>` | 生成 prompt |
+| `ma session push --task-id <id> --agent <agent> --file <json>` | 提交结果 |
+| `ma session status --task-id <id>` | 查看状态 |
+
+---
+
+## Agent 配置
+
+在 `agents/agents.yaml` 中注册你的 IDE/工具：
+
+```yaml
+version: 2
+agents:
+  - id: windsurf
+    driver: file                    # IDE 手动模式
+    capabilities: [planning, implementation, testing, docs]
+  - id: claude
+    driver: cli                     # CLI 全自动模式
+    command: "claude -p '...' --allowedTools Read,Edit,Bash,Write"
+    capabilities: [planning, implementation, testing, review, docs]
+
+role_strategy: manual
+defaults:
+  builder: windsurf
+  reviewer: antigravity
+```
+
+- **`driver: file`** — 写 TASK.md，用户在 IDE 中手动告诉 AI 执行
+- **`driver: cli`** — 自动 spawn CLI 进程完成任务
+- builder/reviewer **必须不同 agent**（对抗性审查）
+- 支持的 agent：windsurf, cursor, claude, codex, aider, antigravity, kiro
+
+---
+
+## 技能与任务分解
+
+### 内置技能
+
+| 技能 | 说明 |
+|---|---|
+| `code-implement` | 实现代码功能（默认） |
+| `test-and-review` | 测试与代码审查 |
+| `task-decompose` | 任务分解 |
+
+### 任务分解
+
+复杂需求可自动分解为子任务，按依赖关系拓扑排序后顺序执行：
+
+```bash
+ma go "实现完整认证模块" --decompose
+ma go "重构支付系统" --decompose --auto-confirm    # 跳过确认
+ma go "..." --decompose-file result.json           # 从文件加载分解结果
+```
+
+每个子任务独立经历完整的 build → review → decide 循环，支持中断恢复（checkpoint）。
+
+---
+
+## 工作流架构
+
+```
+plan → build → review → decide
+  ↑                        │
+  └── retry (budget > 0) ──┘
+```
+
+**4 个节点**：
+- **plan** — 加载技能合约、分配 builder/reviewer
+- **build** — 等待 builder 提交代码（interrupt）
+- **review** — 等待 reviewer 审查（interrupt）
+- **decide** — 根据审查结果 approve / retry / escalate
+
+**安全机制**：
+- **Rubber-stamp 检测**：strict 模式下自动拦截浅层审批（无实质 reasoning/evidence）
+- **重试预算**：默认 2 次，超出后 escalate
+- **request_changes 上限**：连续 3 次 request_changes 后 escalate（防 DDI 衰减）
+- **超时保护**：单步超时 + 全局 2h 上限（OWASP LLM10 DoW 防护）
+- **取消检测**：每次 interrupt 返回后检查 `ma cancel` 状态
+
+---
+
+## 状态机
+
+```
+DRAFT → QUEUED → ASSIGNED → RUNNING → VERIFYING → APPROVED → MERGED → DONE
+                     │          │          │
+                     ↓          ↓          ↓
+                  CANCELLED   FAILED    ESCALATED
+                                ↑
+                              RETRY
+```
+
+终态：`DONE`、`FAILED`、`ESCALATED`、`CANCELLED`
+
+---
+
+## 项目结构
+
+```text
+src/multi_agent/           # 核心包（25 个模块）
+├── cli.py                 # CLI 入口 (ma go/done/watch/cancel/status)
+├── cli_admin.py           # 管理命令 (history/init/doctor/agents/...)
+├── cli_decompose.py       # 任务分解执行
+├── cli_watch.py           # 自动轮询 + agent 调度
+├── cli_queue.py           # 任务队列
+├── graph.py               # LangGraph 4 节点图
+├── graph_infra.py         # 图基础设施 (hooks/stats/trim)
+├── session.py             # IDE-first 会话服务
+├── orchestrator.py        # 统一任务生命周期管理
+├── schema.py              # Pydantic 数据模型
+├── router.py              # Agent 路由 (manual/auto)
+├── driver.py              # Agent 驱动 (file/cli)
+├── workspace.py           # 工作空间文件管理 (原子写入)
+├── config.py              # 路径解析、配置加载
+├── contract.py            # 技能合约加载
+├── prompt.py              # Jinja2 提示词渲染
+├── memory.py              # 长期记忆管理
+├── trace.py               # 事件追踪 (JSONL)
+├── decompose.py           # 任务分解逻辑
+├── meta_graph.py          # 子任务编排 + checkpoint
+├── dashboard.py           # 目标看板生成
+├── watcher.py             # Outbox 文件轮询器
+├── state_machine.py       # 状态转移验证
+├── _utils.py              # 共享工具函数
+└── templates/             # Jinja2 prompt 模板
+
+agents/agents.yaml         # Agent 注册表
+config/workmode.yaml       # 工作模式配置
+skills/                    # 技能定义 (contract.yaml)
+├── code-implement/
+├── task-decompose/
+└── test-and-review/
+
+.multi-agent/              # 运行时工作空间
+├── TASK.md                # 当前任务描述
+├── MEMORY.md              # 长期记忆
+├── dashboard.md           # 目标看板
+├── inbox/                 # Agent prompt 文件
+├── outbox/                # Agent 输出 JSON
+├── tasks/                 # 任务状态 YAML
+├── history/               # 对话历史 JSON
+├── checkpoints/           # 分解任务 checkpoint
+└── store.db               # LangGraph checkpoint DB
 ```
 
 ---
 
-## 2. 最小可用流程（MVP）
+## 全部命令速查
 
-示例任务文件：`tasks/examples/task-code-implement.json`  
-示例 task_id：`task-api-user-create`
+### 核心命令
 
-### 2.1 启动会话
+| 命令 | 说明 |
+|---|---|
+| `ma go "<需求>"` | 启动任务并自动 watch |
+| `ma done` | 提交当前角色输出 |
+| `ma watch` | 恢复自动检测循环 |
+| `ma status` | 查看任务状态 |
+| `ma cancel` | 取消当前任务 |
 
-```bash
-ma session start \
-  --task tasks/examples/task-code-implement.json \
-  --mode strict \
-  --config config/workmode.yaml
-```
+### Session 命令
 
-首次启动会输出：
-- `state`
-- `current_agent`
-- `current_role`
-- `prompt_paths`
+| 命令 | 说明 |
+|---|---|
+| `ma session start` | 初始化会话 |
+| `ma session pull` | 生成 agent prompt |
+| `ma session push` | 提交 agent 输出 |
+| `ma session status` | 查看会话状态 |
 
-如果你要重新跑同一个 task_id（清理旧 checkpoint）：
+### 管理与诊断
 
-```bash
-ma session start \
-  --task tasks/examples/task-code-implement.json \
-  --mode strict \
-  --config config/workmode.yaml \
-  --reset
-```
-
-### 2.2 拉取 builder 提示词
-
-```bash
-ma session pull --task-id task-api-user-create --agent windsurf > prompts/current-windsurf.txt
-```
-
-然后在 Windsurf 里执行：
-- 打开 `prompts/current-windsurf.txt`
-- 按提示实现代码
-- 输出 envelope JSON 到 `.multi-agent/outbox/builder.json`
-
-### 2.3 提交 builder 结果
-
-```bash
-ma session push \
-  --task-id task-api-user-create \
-  --agent windsurf \
-  --file .multi-agent/outbox/builder.json
-```
-
-提交成功后，状态通常变成 `VERIFYING`，owner 切到 reviewer。
-
-### 2.4 reviewer 同样流程
-
-```bash
-ma session pull --task-id task-api-user-create --agent antigravity > prompts/current-antigravity.txt
-ma session push \
-  --task-id task-api-user-create \
-  --agent antigravity \
-  --file .multi-agent/outbox/reviewer.json
-```
-
-### 2.5 查看状态与轨迹
-
-```bash
-ma session status --task-id task-api-user-create
-ma trace --task-id task-api-user-create --format tree
-ma trace --task-id task-api-user-create --format mermaid
-```
+| 命令 | 说明 |
+|---|---|
+| `ma init` | 初始化项目 |
+| `ma history` | 查看历史任务 |
+| `ma trace --task-id <id>` | 事件轨迹 (tree/mermaid) |
+| `ma doctor` | 工作空间健康检查 |
+| `ma agents` | Agent 状态 |
+| `ma list-skills` | 可用技能 |
+| `ma render "<需求>"` | 预览 prompt |
+| `ma schema` | 导出 JSON Schema |
+| `ma export <task_id>` | 导出任务结果 |
+| `ma replay <task_id>` | 重放任务历史 |
+| `ma cleanup` | 清理旧文件 |
+| `ma version` | 版本信息 |
 
 ---
 
-## 3. IDE 侧协议（必须遵守）
+## IDE 侧协议
 
-### 3.1 统一 envelope
-
-```json
-{
-  "protocol_version": "1.0",
-  "task_id": "task-api-user-create",
-  "lane_id": "main",
-  "agent": "windsurf",
-  "role": "builder",
-  "state_seen": "RUNNING",
-  "result": {},
-  "recommended_event": "builder_done",
-  "evidence_files": [],
-  "memory_candidates": [],
-  "created_at": "2026-03-02T18:00:00Z"
-}
-```
-
-### 3.2 builder 最小 `result`
+### builder 输出格式
 
 ```json
 {
   "status": "completed",
   "summary": "实现摘要",
-  "changed_files": ["/abs/path/file.py"],
-  "check_results": {
-    "lint": "pass",
-    "unit_test": "pass",
-    "contract_test": "pass",
-    "artifact_checksum": "pass"
-  },
+  "changed_files": ["src/auth.py", "tests/test_auth.py"],
+  "check_results": { "lint": "pass", "unit_test": "pass" },
   "risks": [],
   "handoff_notes": "给 reviewer 的说明"
 }
 ```
 
-### 3.3 reviewer 最小 `result`
+### reviewer 输出格式
 
 ```json
 {
   "decision": "approve",
   "summary": "评审结论",
-  "feedback": "",
+  "feedback": "具体反馈",
   "issues": [],
-  "evidence": [],
-  "risks": []
+  "evidence": ["pytest 全部通过", "代码覆盖率 95%"]
 }
 ```
 
-说明：
-- reviewer `decision` 仅允许：`approve | reject | request_changes`
-- `memory_candidates` 支持放 envelope 顶层；为兼容旧输出，系统也会读取 `result.memory_candidates`
+- `decision` 仅允许：`approve` | `reject` | `request_changes`
+- strict 模式要求 `evidence` 非空，否则触发 rubber-stamp 拦截
+- `memory_candidates` 可放顶层或 `result` 内，approve 后自动写入 MEMORY.md
 
 ---
 
-## 4. 状态模型（Session 视角）
+## 配置
 
-核心状态投影：
-- `ASSIGNED`
-- `RUNNING`（builder 执行中）
-- `VERIFYING`（reviewer 执行中）
-- `DONE | FAILED | ESCALATED | CANCELLED`（终态）
-
-说明：
-- `session` 模式会把 graph 的 `final_status=approved` 投影为 `state=DONE`。
-- 终态任务再次启动时，推荐用 `--reset`。
-
----
-
-## 5. 项目结构（与会话相关）
-
-```text
-.multi-agent/
-├── TASK.md
-├── MEMORY.md
-├── outbox/
-│   ├── builder.json
-│   └── reviewer.json
-├── tasks/
-│   └── <task_id>.yaml
-├── history/
-│   ├── <task_id>.events.jsonl
-│   └── <task_id>.memory.pending.json
-└── store.db
-
-prompts/
-├── current-windsurf.txt
-├── current-antigravity.txt
-└── current-codex.txt
-
-runtime/handoffs/<task_id>/
-└── *.json
-```
-
----
-
-## 6. 命令速查
-
-### 推荐命令（session 主链路）
-
-| 命令 | 作用 |
-|---|---|
-| `ma session start --task <task.json> --mode strict` | 初始化会话 |
-| `ma session status --task-id <id>` | 查看 owner/状态 |
-| `ma session pull --task-id <id> --agent <agent>` | 生成 agent 提示词 |
-| `ma session push --task-id <id> --agent <agent> --file <json>` | 提交结果并推进 |
-| `ma trace --task-id <id> --format tree\|mermaid` | 查看事件轨迹 |
-
-### 兼容命令（保留但不推荐作为主入口）
-
-| 脚本 | 说明 |
-|---|---|
-| `scripts/ide_hub.py` | `ma session` 的兼容封装 |
-| `scripts/workmode_ctl.py` | 配置校验与兼容输出（非主流转） |
-| `scripts/emit_ide_prompt.py` | 纯 IDE 提示词输出 |
-
-说明：`ma go / ma done / ma watch` 仍可用，但建议只作为旧链路兼容入口。
-
----
-
-## 7. Windsurf / Antigravity 实战模板
-
-下面是你当前场景的固定分工建议：
-
-1. `windsurf` 只做 `builder`
-2. `antigravity` 只做 `reviewer`
-3. `codex` 负责 orchestrator（会话推进、修复、兜底）
-
-每轮操作不超过 3 步：
-
-1. 打开 prompt（`ma session pull`）
-2. 在 IDE 执行并产出 envelope JSON
-3. 提交（`ma session push`）
-
----
-
-## 8. 常见问题（你会遇到的）
-
-### Q1: `task 'xxx' is already active`
-
-原因：同 task_id 已有活跃会话。  
-处理：
-
-```bash
-ma session start --task <task.json> --mode strict --reset
-```
-
-### Q2: `current owner is 'A', not 'B'`
-
-原因：不是当前轮到的 agent 提交。  
-处理：
-
-```bash
-ma session status --task-id <id>
-```
-
-确认 `current_agent` 后由对应 agent 提交。
-
-### Q2.1: `invalid role mapping: builder and reviewer must differ`
-
-原因：角色映射把 builder/reviewer 配成了同一个 agent。  
-处理：在 `config/workmode.yaml` 或 `agents/agents.yaml` 里改成不同 agent 后重试。
-
-### Q3: lock 相关错误（`blocked` / `lock not found`）
-
-先用同一个 DB 路径检查：
-
-```bash
-python3 scripts/lockctl.py --db runtime/locks.db list
-python3 scripts/lockctl.py --db runtime/locks.db doctor
-```
-
-再按 owner 释放：
-
-```bash
-python3 scripts/lockctl.py --db runtime/locks.db release --task-id <holder> --file-path <same-file>
-```
-
-### Q4: reviewer 通过了但 MEMORY 没更新
-
-确认 reviewer 输出里有 `memory_candidates`，并且 `decision=approve`。  
-通过后会把 pending 候选提升到 `.multi-agent/MEMORY.md`。
-
-### Q5: strict 模式下 reviewer 写了 `approve` 但任务没完成
-
-如果 reviewer 输出被判定为 rubber-stamp（例如只有 `LGTM`/缺少独立验证证据），
-strict 模式会自动降级为 `request_changes`，不会直接 `DONE`。  
-处理方式：在 reviewer envelope 的 `result` 里补充具体 `reasoning` 和可核验证据，再提交。
-
----
-
-## 9. 配置
-
-### 9.1 workmode 角色
-
-`config/workmode.yaml`（默认 strict）：
+### workmode.yaml
 
 ```yaml
 version: 1
@@ -329,51 +319,120 @@ modes:
         min_evidence_items: 1
 ```
 
-### 9.2 agent 配置
+### agents.yaml
 
-在 `agents/agents.yaml` 定义 agent 能力、driver、默认 builder/reviewer。
+```yaml
+version: 2
+agents:
+  - id: windsurf
+    driver: file
+    capabilities: [planning, implementation, testing, docs]
+  - id: cursor
+    driver: file
+    capabilities: [planning, implementation, testing, review, docs]
+  - id: claude
+    driver: cli
+    command: "claude -p '...' --allowedTools Read,Edit,Bash,Write"
+    capabilities: [planning, implementation, testing, review, docs, security]
 
-约束：
-- `builder` 与 `reviewer` 不能是同一 agent。
-- `driver: file` 适合 IDE 对话流。
-- `driver: cli` 适合全自动 CLI agent。
-
----
-
-## 10. 测试与验收
-
-```bash
-pytest tests/ -v
-./scripts/smoke_mvp.sh
-./scripts/workmode_demo.sh
-```
-
-建议在你每次改协议后至少跑：
-
-```bash
-pytest -q tests/test_session_cli.py tests/test_emit_ide_prompt.py tests/test_lockctl.py tests/test_memory.py tests/test_trace.py
+role_strategy: manual
+defaults:
+  builder: windsurf
+  reviewer: antigravity
 ```
 
 ---
 
-## 11. 设计原则（当前版本）
+## 常见问题
 
-1. **单入口**：`ma session` 是主入口。
-2. **单状态源**：LangGraph checkpoint 是唯一真相。
-3. **纯文件协议**：IDE 只读 prompt、写 JSON。
-4. **可审计**：handoff、trace、memory 都落盘可追溯。
-5. **低耦合**：兼容层可用，但不再承担核心编排逻辑。
+### Q1: `task 'xxx' is already active`
+
+```bash
+ma session start --task <task.json> --mode strict --reset
+# 或
+ma cancel && ma go "..."
+```
+
+### Q2: `current owner is 'A', not 'B'`
+
+```bash
+ma status   # 确认 current_agent
+```
+
+由对应 agent 提交即可。
+
+### Q3: builder/reviewer 是同一个 agent
+
+`agents.yaml` 的 `defaults.builder` 和 `defaults.reviewer` 必须不同。  
+也可在命令行指定：`ma go "..." --builder windsurf --reviewer cursor`
+
+### Q4: lock 相关错误
+
+```bash
+ma doctor --fix   # 自动修复常见状态不一致
+```
+
+### Q5: strict 模式下 approve 被拦截
+
+reviewer 输出被判定为 rubber-stamp（缺少具体 reasoning/evidence）。  
+补充 `evidence` 字段后重新提交。
 
 ---
 
-## 12. License
+## 技术栈
+
+- **Python 3.11+**, hatchling 构建
+- **LangGraph** + langgraph-checkpoint-sqlite（状态图 / checkpoint）
+- **Pydantic v2**（数据模型验证）
+- **Click**（CLI 框架）
+- **Jinja2**（prompt 模板渲染）
+- **PyYAML**（配置解析）
+
+开发依赖：pytest, ruff, mypy
+
+---
+
+## 测试
+
+```bash
+pytest tests/ -q            # 1121 tests, 全通过
+python3 -m mypy src/        # 类型检查
+python3 -m ruff check src/  # Lint
+```
+
+测试覆盖：
+- 单元测试：workspace, session, graph, router, schema, driver, memory, trace, decompose, watcher, ...
+- 集成测试：approve flow, reject-retry, budget exhausted, timeout, cancel, rubber stamp, request_changes cap
+- 回归测试：原子写入, TOCTOU 竞态, 锁泄漏, spawn 竞态
+
+---
+
+## 设计原则
+
+1. **单状态源**：LangGraph checkpoint 是唯一真相
+2. **对抗性审查**：builder/reviewer 必须不同 agent，防止自我审批
+3. **纯文件协议**：IDE 只读 prompt、写 JSON，无需终端操作
+4. **原子写入**：关键文件使用 tempfile + os.replace，防崩溃损坏
+5. **并发安全**：文件锁（O_CREAT|O_EXCL）、线程锁、TOCTOU 防护
+6. **输入验证**：所有文件路径边界点验证 task_id/agent_id，防路径遍历
+7. **可审计**：handoff、trace、memory、conversation 全部落盘
+8. **优雅降级**：CLI agent 不可用时降级为手动模式
+
+---
+
+## License
 
 CC BY-NC-SA 4.0，详见 `LICENSE`。
 
 ---
 
-## Short English Note
+## English Summary
 
-AgentOrchestra is now documented and optimized for the **IDE-first session flow**:
-`ma session start -> pull -> IDE writes envelope JSON -> ma session push`.
-LangGraph is the only source of truth, and all artifacts are file-based/auditable.
+**AgentOrchestra** is an IDE-agnostic multi-agent orchestration framework (v0.6.0).
+It drives a LangGraph 4-node workflow (plan → build → review → decide) with:
+- Two modes: automated (`ma go`) and IDE-first (`ma session`)
+- Task decomposition with dependency-aware execution
+- CLI agent auto-spawning with graceful degradation
+- Rubber-stamp detection, retry budgets, timeout guards
+- Atomic file writes, TOCTOU race protection, input validation
+- 1121 tests, full mypy/ruff compliance
