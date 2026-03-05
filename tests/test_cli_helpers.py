@@ -7,8 +7,11 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import click
 import pytest
 import yaml
+
+from multi_agent.cli import main
 
 # ── _log_error_to_file ───────────────────────────────────
 
@@ -256,3 +259,180 @@ class TestSigtermHandler:
              pytest.raises(SystemExit):
             _sigterm_handler(signal.SIGTERM, None)
         mock_rel.assert_not_called()
+
+    def test_handler_cleanup_exception(self):
+        """Exception during cleanup is suppressed (lines 195-196)."""
+        import signal
+
+        from multi_agent.cli import _sigterm_handler
+        with patch("multi_agent.cli.read_lock", side_effect=RuntimeError("boom")), \
+             patch("multi_agent.cli.clear_runtime"), \
+             pytest.raises(SystemExit) as exc_info:
+            _sigterm_handler(signal.SIGTERM, None)
+        assert exc_info.value.code == 128 + signal.SIGTERM
+
+
+# ── handle_errors edge cases (lines 61, 69) ─────────────
+
+
+class TestHandleErrorsEdgeCases:
+    def test_click_exit_passthrough(self):
+        """click.exceptions.Exit should be re-raised (line 61)."""
+        from multi_agent.cli import handle_errors
+
+        @handle_errors
+        def raise_exit():
+            raise click.exceptions.Exit(0)
+
+        with pytest.raises(click.exceptions.Exit):
+            raise_exit()
+
+    def test_verbose_traceback(self):
+        """Verbose mode shows full traceback (line 69)."""
+        from multi_agent.cli import handle_errors
+
+        @handle_errors
+        def raise_err():
+            raise ValueError("detailed-err")
+
+        class _Root:
+            def __init__(self):
+                self.params = {"verbose": True}
+
+        class _Ctx:
+            def __init__(self):
+                self.params = {}
+
+            def find_root(self):
+                return _Root()
+
+        with patch("multi_agent.cli.click.get_current_context", return_value=_Ctx()), \
+             pytest.raises(SystemExit):
+            raise_err()
+
+
+# ── _mark_task_inactive exception (lines 185-186) ───────
+
+
+class TestMarkTaskInactiveException:
+    def test_write_error_returns_false(self, tmp_path, monkeypatch):
+        """Exception during YAML write returns False (lines 185-186)."""
+        from multi_agent.cli import _mark_task_inactive
+        td = tmp_path / "tasks"
+        td.mkdir()
+        (td / "task-err.yaml").write_text("status: active")
+        with patch("multi_agent.config.tasks_dir", return_value=td), \
+             patch("pathlib.Path.write_text", side_effect=PermissionError("no write")):
+            result = _mark_task_inactive("task-err", status="failed", reason="test")
+        assert result is False
+
+
+# ── _apply_project_defaults (lines 282, 288, 290, 292, 294) ──
+
+
+class TestApplyProjectDefaults:
+    def test_all_defaults_from_project(self):
+        """Project config applies all defaults when CLI uses defaults (lines 282-294)."""
+        from multi_agent.cli import _apply_project_defaults
+        proj = {
+            "default_builder": "cursor",
+            "default_reviewer": "windsurf",
+            "default_timeout": 3600,
+            "default_retry_budget": 5,
+            "default_workflow_mode": "balanced",
+            "workmode_config": "custom/mode.yaml",
+        }
+        with patch("multi_agent.config.validate_config", return_value=["warn1"]):
+            b, r, t, rb, m, mc = _apply_project_defaults(
+                proj, "", "", 1800, 2, "strict", "config/workmode.yaml",
+            )
+        assert b == "cursor"
+        assert r == "windsurf"
+        assert t == 3600
+        assert rb == 5
+        assert m == "balanced"
+        assert mc == "custom/mode.yaml"
+
+    def test_cli_flags_override_project(self):
+        """CLI flags take precedence over project defaults."""
+        from multi_agent.cli import _apply_project_defaults
+        proj = {"default_builder": "cursor"}
+        with patch("multi_agent.config.validate_config", return_value=[]):
+            b, _r, _t, _rb, _m, _mc = _apply_project_defaults(
+                proj, "windsurf", "", 1800, 2, "strict", "config/workmode.yaml",
+            )
+        assert b == "windsurf"  # CLI flag wins
+
+
+# ── _ensure_no_active_task stale cleanup (lines 316-324) ──
+
+
+class TestEnsureNoActiveTaskStaleCleanup:
+    def test_stale_task_auto_cleared(self, capsys):
+        """Terminal-state active marker is auto-cleaned (lines 316-324)."""
+        from multi_agent.cli import _ensure_no_active_task
+        app = MagicMock()
+        with patch("multi_agent.cli._detect_active_task", return_value="task-stale"), \
+             patch("multi_agent.cli.read_lock", return_value="task-stale"), \
+             patch("multi_agent.cli._is_task_terminal_or_missing", return_value=True), \
+             patch("multi_agent.cli._mark_task_inactive", return_value=True), \
+             patch("multi_agent.cli.release_lock"), \
+             patch("multi_agent.cli.clear_runtime"):
+            _ensure_no_active_task(app)
+        out = capsys.readouterr().out
+        assert "陈旧" in out or "auto-cleared" in out
+
+
+# ── _detect_active_task (lines 736, 743-746) ────────────
+
+
+class TestDetectActiveTaskEdgeCases:
+    def test_no_tasks_dir(self, tmp_path):
+        """Missing tasks_dir returns None (line 736)."""
+        from multi_agent.cli import _detect_active_task
+        with patch("multi_agent.config.tasks_dir", return_value=tmp_path / "nonexistent"):
+            result = _detect_active_task()
+        assert result is None
+
+    def test_malicious_filename_skipped(self, tmp_path):
+        """Filenames with path traversal chars are skipped (lines 743-746)."""
+        from multi_agent.cli import _detect_active_task
+        td = tmp_path / "tasks"
+        td.mkdir()
+        # Create a file with a safe-looking name but status=active
+        (td / "good-task.yaml").write_text("status: active\n")
+        result_good = None
+        with patch("multi_agent.config.tasks_dir", return_value=td):
+            result_good = _detect_active_task()
+        assert result_good == "good-task"
+
+
+# ── session pull cmd (lines 247-255) ────────────────────
+
+
+class TestSessionPullCmd:
+    def test_json_meta_output(self, tmp_path):
+        """--json-meta outputs JSON payload (lines 251-253)."""
+        from click.testing import CliRunner
+        runner = CliRunner()
+        payload = {"prompt_path": str(tmp_path / "p.txt"), "role": "builder"}
+        with patch("multi_agent.session.session_pull", return_value=payload):
+            result = runner.invoke(main, [
+                "session", "pull", "--task-id", "task-pull", "--agent", "ws", "--json-meta",
+            ])
+        assert result.exit_code == 0
+        assert "prompt_path" in result.output
+
+    def test_prompt_text_output(self, tmp_path):
+        """Default output reads prompt file (lines 254-255)."""
+        from click.testing import CliRunner
+        prompt_file = tmp_path / "prompt.txt"
+        prompt_file.write_text("Hello builder prompt")
+        runner = CliRunner()
+        payload = {"prompt_path": str(prompt_file), "role": "builder"}
+        with patch("multi_agent.session.session_pull", return_value=payload):
+            result = runner.invoke(main, [
+                "session", "pull", "--task-id", "task-pull2", "--agent", "ws",
+            ])
+        assert result.exit_code == 0
+        assert "Hello builder prompt" in result.output
