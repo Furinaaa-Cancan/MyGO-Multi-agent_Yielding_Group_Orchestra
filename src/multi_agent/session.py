@@ -20,6 +20,7 @@ from langgraph.types import Command
 from multi_agent._utils import (
     DEFAULT_RUBBER_STAMP_PHRASES,
     SAFE_TASK_ID_RE,
+    TERMINAL_FINAL_STATUSES,
     TERMINAL_STATES,
 )
 from multi_agent._utils import (
@@ -296,7 +297,7 @@ def _state_from_snapshot(snapshot: Any) -> tuple[str, str | None, str | None]:
     # the same logic via orchestrator helpers.
     vals = (snapshot.values if snapshot else {}) or {}
     final_status = str(vals.get("final_status", "")).lower().strip()
-    if final_status:
+    if final_status and final_status in TERMINAL_FINAL_STATUSES:
         mapping = {
             "approved": "DONE",
             "done": "DONE",
