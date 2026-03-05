@@ -14,6 +14,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
 
+from multi_agent._utils import validate_agent_id as _validate_agent_id
 from multi_agent.config import (
     history_dir,
     inbox_dir,
@@ -77,6 +78,7 @@ def ensure_workspace() -> Path:
 @retry_file_op()
 def write_inbox(agent_id: str, content: str) -> Path:
     """Write a prompt file to inbox/{agent_id}.md."""
+    _validate_agent_id(agent_id)
     ensure_workspace()
     path = inbox_dir() / f"{agent_id}.md"
     path.write_text(content, encoding="utf-8")
@@ -103,6 +105,7 @@ def read_outbox(agent_id: str, *, validate: bool = False) -> dict[str, Any] | No
     When validate=True, checks that the data has required fields for the role.
     Tries UTF-8 first, then UTF-8-BOM, then latin-1 as encoding fallbacks.
     """
+    _validate_agent_id(agent_id)
     path = outbox_dir() / f"{agent_id}.json"
     if not path.exists():
         return None
@@ -137,6 +140,7 @@ def write_outbox(agent_id: str, data: dict[str, Any]) -> Path:
     D2: Uses atomic write (temp file + os.replace) to prevent the watcher
     from reading partial JSON during write (TOCTOU race condition).
     """
+    _validate_agent_id(agent_id)
     ensure_workspace()
     path = outbox_dir() / f"{agent_id}.json"
     fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp", prefix=f".{agent_id}-")
@@ -154,6 +158,7 @@ def write_outbox(agent_id: str, data: dict[str, Any]) -> Path:
 
 def clear_outbox(agent_id: str) -> None:
     """Remove outbox file for an agent (before a new cycle)."""
+    _validate_agent_id(agent_id)
     path = outbox_dir() / f"{agent_id}.json"
     if path.exists():
         path.unlink()
@@ -161,6 +166,7 @@ def clear_outbox(agent_id: str) -> None:
 
 def clear_inbox(agent_id: str) -> None:
     """Remove inbox file for an agent."""
+    _validate_agent_id(agent_id)
     path = inbox_dir() / f"{agent_id}.md"
     if path.exists():
         path.unlink()

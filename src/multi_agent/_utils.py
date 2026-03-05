@@ -13,6 +13,7 @@ from typing import Any
 # ── Input Validation ──────────────────────────────────────
 
 SAFE_TASK_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
+SAFE_AGENT_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 
 TERMINAL_STATES = frozenset({"DONE", "FAILED", "ESCALATED", "CANCELLED"})
 
@@ -27,6 +28,19 @@ def validate_task_id(task_id: str) -> None:
         raise ValueError(
             f"invalid task_id: {task_id!r} — "
             f"must match [a-z0-9][a-z0-9-]{{2,63}}"
+        )
+
+
+def validate_agent_id(agent_id: str) -> None:
+    """Raise ValueError if agent_id is unsafe (path traversal, invalid chars).
+
+    Agent IDs are used in file paths (inbox/{agent_id}.md, outbox/{agent_id}.json)
+    so must be validated to prevent directory traversal attacks.
+    """
+    if not SAFE_AGENT_ID_RE.match(agent_id):
+        raise ValueError(
+            f"invalid agent_id: {agent_id!r} — "
+            f"must match [a-zA-Z0-9][a-zA-Z0-9._-]{{0,63}}"
         )
 
 
