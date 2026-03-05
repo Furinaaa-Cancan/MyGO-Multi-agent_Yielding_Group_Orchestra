@@ -101,20 +101,23 @@ def format_duration(seconds: float) -> str:
     if seconds < 0:
         seconds = 0.0
     total = int(seconds)
-    if total < 60:
-        return f"{total}s"
-    parts: list[str] = []
-    if total >= 86400:
-        days, total = divmod(total, 86400)
-        parts.append(f"{days}d")
-    if total >= 3600:
-        hours, total = divmod(total, 3600)
-        parts.append(f"{hours}h")
-    if total >= 60:
-        minutes, total = divmod(total, 60)
-        parts.append(f"{minutes}m")
-    parts.append(f"{total}s")
-    return " ".join(parts)
+    days, rem = divmod(total, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, secs = divmod(rem, 60)
+
+    # Day-level durations are always rendered with h/m/s fields to avoid
+    # ambiguity at day boundaries (e.g. "1d 0h 0m 0s").
+    if days > 0:
+        return f"{days}d {hours}h {minutes}m {secs}s"
+    if hours > 0:
+        parts = [f"{hours}h"]
+        if minutes > 0:
+            parts.append(f"{minutes}m")
+        parts.append(f"{secs}s")
+        return " ".join(parts)
+    if minutes > 0:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
 
 
 # ── Review Policy Constants ───────────────────────────────

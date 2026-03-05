@@ -9,11 +9,11 @@
 | Windsurf | 吉他手 (Builder) | 写代码、实现功能 |
 | Antigravity | 贝斯手 (Reviewer) | 独立审查、质量把关 |
 | Cursor | 候补乐手 | Builder 或 Reviewer 均可 |
-| Claude / Codex | 自动鼓机 | CLI 全自动执行 |
-| Codex | 指挥 (Orchestrator) | 编排、决策、重试 |
+| Claude / Aider | 自动鼓机 | CLI 全自动执行 |
+| Codex | 键盘手 (GUI Auto) | macOS 自动控制桌面应用 |
 
 基于 **LangGraph 单一状态源（SSOT）** 驱动 4 节点工作流，  
-支持全自动 CLI 和手动 IDE 两种运行模式。v0.6.0
+支持全自动 CLI、GUI 自动化和手动 IDE 三种运行模式。v0.6.0
 
 ---
 
@@ -104,20 +104,31 @@ agents:
   - id: windsurf
     driver: file                    # IDE 手动模式
     capabilities: [planning, implementation, testing, docs]
+  - id: codex
+    driver: gui                     # macOS GUI 自动化模式 
+    app_name: "Codex"
+    capabilities: [planning, implementation, testing, review, docs]
   - id: claude
     driver: cli                     # CLI 全自动模式
     command: "claude -p '...' --allowedTools Read,Edit,Bash,Write"
-    capabilities: [planning, implementation, testing, review, docs]
+    capabilities: [planning, implementation, testing, review, docs, security]
 
 role_strategy: manual
 defaults:
   builder: windsurf
-  reviewer: antigravity
+  reviewer: codex
 ```
 
-- **`driver: file`** — 写 TASK.md，用户在 IDE 中手动告诉 AI 执行
-- **`driver: cli`** — 自动 spawn CLI 进程完成任务
+三种驱动模式：
+
+| 驱动 | 工作方式 | 适用 |
+|------|---------|------|
+| `driver: file` | 写 TASK.md，用户手动告诉 IDE 执行 | Windsurf, Cursor, Kiro |
+| `driver: cli` | 自动 spawn 终端命令 | Claude CLI, Aider |
+| `driver: gui`  | macOS AppleScript 自动控制桌面应用 | Codex |
+
 - builder/reviewer **必须不同 agent**（对抗性审查）
+- GUI 模式需要 macOS + 辅助功能权限（系统设置 → 隐私与安全性 → 辅助功能）
 - 支持的 agent：windsurf, cursor, claude, codex, aider, antigravity, kiro
 
 ---
@@ -199,7 +210,7 @@ src/multi_agent/           # 核心包（25 个模块）
 ├── orchestrator.py        # 统一任务生命周期管理
 ├── schema.py              # Pydantic 数据模型
 ├── router.py              # Agent 路由 (manual/auto)
-├── driver.py              # Agent 驱动 (file/cli)
+├── driver.py              # Agent 驱动 (file/cli/gui)
 ├── workspace.py           # 工作空间文件管理 (原子写入)
 ├── config.py              # 路径解析、配置加载
 ├── contract.py            # 技能合约加载
@@ -427,7 +438,7 @@ python3 -m ruff check src/  # Lint
 5. **并发安全**：文件锁（O_CREAT|O_EXCL）、线程锁、TOCTOU 防护
 6. **输入验证**：所有文件路径边界点验证 task_id/agent_id，防路径遍历
 7. **可审计**：handoff、trace、memory、conversation 全部落盘
-8. **优雅降级**：CLI agent 不可用时降级为手动模式
+8. **优雅降级**：CLI/GUI agent 不可用时降级为手动模式
 
 ---
 
@@ -440,11 +451,12 @@ AGPL-3.0，详见 `LICENSE`。
 ## English Summary
 
 **MyGO — Multi-agent Yielding Group Orchestra** is your AI band for code delivery (v0.6.0).
-Each AI IDE is a band member — builder writes code, reviewer checks quality,
-orchestrator conducts the show. One command to start the performance:
-- Two modes: automated (`my go`) and IDE-first (`my session`)
+Each AI IDE is a band member — builder writes code, reviewer checks quality.
+One command to start the performance:
+- Three driver modes: manual (file), auto CLI, and **GUI automation** (macOS AppleScript)
+- GUI driver auto-controls desktop IDE apps like Codex — no manual switching needed
+- Two workflow modes: automated (`my go`) and IDE-first (`my session`)
 - Task decomposition with dependency-aware execution
-- CLI agent auto-spawning with graceful degradation
 - Rubber-stamp detection, retry budgets, timeout guards
 - Atomic file writes, TOCTOU race protection, input validation
 - 1121 tests, full mypy/ruff compliance
