@@ -84,24 +84,10 @@ def _show_waiting(app: Any, config: dict[str, Any]) -> None:
 
     role = status.waiting_role or "builder"
     agent = status.waiting_agent or "?"
-    step_label = "Build" if role == "builder" else "Review"
 
-    # Check if agent has CLI driver → auto-spawn (with graceful degradation)
-    from multi_agent.driver import can_use_cli, get_agent_driver, spawn_cli_agent
-    drv = get_agent_driver(agent)
-    if drv["driver"] == "cli" and drv["command"]:
-        if can_use_cli(drv["command"]):
-            timeout = status.values.get("timeout_sec", 600)
-            click.echo(f"🤖 [{step_label}] 自动调用 {agent} CLI…")
-            spawn_cli_agent(agent, role, drv["command"], timeout_sec=timeout)
-        else:
-            binary = drv["command"].split()[0]
-            click.echo(f"⚠️  {agent} 配置为 CLI 模式但 `{binary}` 未安装，降级为手动模式")
-            click.echo(f"📋 [{step_label}] 在 {agent} IDE 里对 AI 说:")
-            click.echo('   "帮我完成 @.multi-agent/TASK.md 里的任务"')
-    else:
-        click.echo(f"📋 [{step_label}] 在 {agent} IDE 里对 AI 说:")
-        click.echo('   "帮我完成 @.multi-agent/TASK.md 里的任务"')
+    from multi_agent.driver import dispatch_agent
+    result = dispatch_agent(agent, role, timeout_sec=status.values.get("timeout_sec", 600))
+    click.echo(result.message)
     click.echo()
 
 
@@ -143,18 +129,9 @@ def _show_next_agent(next_status: Any, ts: str) -> None:
         click.echo(f"[{ts}] 🔄 Reviewer 要求修改 ({retry_n}/{budget}):")
         if feedback:
             click.echo(f"             {feedback}")
-    from multi_agent.driver import can_use_cli, get_agent_driver, spawn_cli_agent
-    drv = get_agent_driver(next_agent)
-    if drv["driver"] == "cli" and drv["command"] and can_use_cli(drv["command"]):
-        t_sec = next_status.values.get("timeout_sec", 600)
-        click.echo(f"[{ts}] 🤖 自动调用 {next_agent} CLI…")
-        spawn_cli_agent(next_agent, next_role, drv["command"], timeout_sec=t_sec)
-    else:
-        if drv["driver"] == "cli" and drv["command"] and not can_use_cli(drv["command"]):
-            binary = drv["command"].split()[0]
-            click.echo(f"[{ts}] ⚠️  `{binary}` 未安装，降级手动模式")
-        click.echo(f"[{ts}] 📋 在 {next_agent} IDE 里对 AI 说:")
-        click.echo('             "帮我完成 @.multi-agent/TASK.md 里的任务"')
+    from multi_agent.driver import dispatch_agent
+    result = dispatch_agent(next_agent, next_role, timeout_sec=next_status.values.get("timeout_sec", 600))
+    click.echo(f"[{ts}] {result.message}")
 
 
 def _process_outbox(poller: Any, role: str, agent: str, status: Any, app: Any, task_id: str, ts: str, manage_lock: bool) -> str:

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import UTC
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -454,6 +454,65 @@ class TestAcquireSessionLock:
 
 
 # ── _extract_memory_candidates (line 899) ────────────────
+
+
+class TestStateFromSnapshotTerminalDetection:
+    """Regression: _state_from_snapshot must use TERMINAL_FINAL_STATUSES, not truthy check.
+
+    Previously any non-empty final_status was treated as terminal. An unexpected
+    value like 'running' would incorrectly return a terminal state.
+    """
+
+    def test_known_terminal_status_returns_terminal(self):
+        from multi_agent.session import _state_from_snapshot
+        snapshot = MagicMock()
+        snapshot.values = {"final_status": "approved"}
+        snapshot.next = []
+        snapshot.tasks = []
+        with patch("multi_agent.orchestrator.get_waiting_info", return_value=(None, None)):
+            state, role, agent = _state_from_snapshot(snapshot)
+        assert state == "DONE"
+        assert role is None
+
+    def test_unknown_final_status_not_treated_as_terminal(self):
+        from multi_agent.session import _state_from_snapshot
+        snapshot = MagicMock()
+        snapshot.values = {"final_status": "running"}  # not in TERMINAL_FINAL_STATUSES
+        snapshot.next = ["build_node"]
+        snapshot.tasks = []
+        with patch("multi_agent.orchestrator.get_waiting_info", return_value=(None, None)):
+            state, role, agent = _state_from_snapshot(snapshot)
+        # Should NOT be mapped as terminal — falls through to waiting_info
+        assert state == "ASSIGNED"  # no waiting info → ASSIGNED
+
+    def test_empty_final_status_not_terminal(self):
+        from multi_agent.session import _state_from_snapshot
+        snapshot = MagicMock()
+        snapshot.values = {"final_status": ""}
+        snapshot.next = ["build_node"]
+        snapshot.tasks = []
+        with patch("multi_agent.orchestrator.get_waiting_info", return_value=("builder", "windsurf")):
+            state, _, _ = _state_from_snapshot(snapshot)
+        assert state == "RUNNING"  # empty final_status → check waiting_info
+
+
+class TestBuildInitialStateOrchestratorId:
+    """Regression: _build_initial_state must include orchestrator_id in state."""
+
+    def test_orchestrator_id_included(self):
+        from multi_agent.session import SessionRoles, _build_initial_state
+        roles = SessionRoles(orchestrator="claude", builder="windsurf", reviewer="cursor")
+        task = {"task_id": "task-orch-test", "done_criteria": ["test"]}
+        state = _build_initial_state(task, "task-orch-test", "strict", {}, roles)
+        assert "orchestrator_id" in state
+        assert state["orchestrator_id"] == "claude"
+
+    def test_orchestrator_id_not_empty(self):
+        from multi_agent.session import SessionRoles, _build_initial_state
+        roles = SessionRoles(orchestrator="codex", builder="windsurf", reviewer="cursor")
+        task = {"task_id": "task-orch-2", "done_criteria": []}
+        state = _build_initial_state(task, "task-orch-2", "strict", None, roles)
+        assert state["orchestrator_id"] == "codex"
 
 
 class TestSubmitMemoryCandidates:

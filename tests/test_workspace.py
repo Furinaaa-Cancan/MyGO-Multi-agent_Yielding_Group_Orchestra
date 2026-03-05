@@ -560,6 +560,42 @@ class TestGetWorkspaceStatsOSError:
         assert stats["file_count"] >= 0
 
 
+class TestSaveTaskYamlAtomic:
+    """Regression: save_task_yaml must use atomic write (tempfile+replace).
+
+    Previously used direct path.open('w'), which could corrupt the file
+    if the process crashed mid-write.
+    """
+
+    def test_atomic_write_no_partial(self, tmp_workspace):
+        """Verify the YAML file is either fully written or absent."""
+        workspace.ensure_workspace()
+        data = {"task_id": "task-atomic", "status": "active", "detail": "x" * 500}
+        path = workspace.save_task_yaml("task-atomic", data)
+        import yaml
+        result = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert result["task_id"] == "task-atomic"
+        assert result["status"] == "active"
+
+    def test_no_tmp_files_left(self, tmp_workspace):
+        """After successful write, no .tmp files should remain."""
+        workspace.ensure_workspace()
+        workspace.save_task_yaml("task-clean", {"task_id": "task-clean", "status": "ok"})
+        tasks = tmp_workspace / "tasks"
+        tmp_files = list(tasks.glob("*.tmp"))
+        assert tmp_files == []
+
+    def test_overwrite_existing(self, tmp_workspace):
+        """Overwriting existing YAML should be atomic too."""
+        workspace.ensure_workspace()
+        workspace.save_task_yaml("task-over", {"task_id": "task-over", "status": "v1"})
+        workspace.save_task_yaml("task-over", {"task_id": "task-over", "status": "v2"})
+        import yaml
+        path = tmp_workspace / "tasks" / "task-over.yaml"
+        result = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert result["status"] == "v2"
+
+
 class TestCleanupOSError:
     """Cover lines 370, 378-379: cleanup skips dirs and handles OSError."""
 

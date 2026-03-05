@@ -313,3 +313,22 @@ class TestGenerateAggregateReport:
         agg = aggregate_results("parent", results)
         report = generate_aggregate_report(agg)
         assert "## 修改文件" not in report
+
+
+class TestBuildSubTaskStateOrchestratorId:
+    """Regression: build_sub_task_state must include orchestrator_id."""
+
+    def test_orchestrator_id_present(self):
+        from unittest.mock import patch
+        st = SubTask(id="auth", description="impl auth", done_criteria=["works"])
+        with patch("multi_agent.router.get_defaults", return_value={"orchestrator": "claude"}):
+            state = build_sub_task_state(st, parent_task_id="task-parent")
+        assert "orchestrator_id" in state
+        assert state["orchestrator_id"] == "claude"
+
+    def test_orchestrator_id_defaults_to_codex(self):
+        from unittest.mock import patch
+        st = SubTask(id="db", description="impl db", done_criteria=["works"])
+        with patch("multi_agent.router.get_defaults", return_value={}):
+            state = build_sub_task_state(st, parent_task_id="task-parent")
+        assert state["orchestrator_id"] == "codex"
