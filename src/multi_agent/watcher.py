@@ -80,7 +80,7 @@ class OutboxPoller:
             if size > MAX_OUTBOX_SIZE:
                 if role not in self._warned_oversized:
                     import warnings
-                    warnings.warn(f"Outbox file {path} exceeds {MAX_OUTBOX_SIZE} bytes, skipping.")
+                    warnings.warn(f"Outbox file {path} exceeds {MAX_OUTBOX_SIZE} bytes, skipping.", stacklevel=2)
                     self._warned_oversized.add(role)
                 continue
             else:

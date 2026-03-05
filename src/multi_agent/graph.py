@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import json
 import logging
@@ -149,10 +150,8 @@ class GraphStats:
         from multi_agent.config import workspace_dir as _ws
         p = path or (_ws() / "stats.json")
         p.parent.mkdir(parents=True, exist_ok=True)
-        try:
+        with contextlib.suppress(OSError):
             p.write_text(json.dumps(self.summary(), indent=2), encoding="utf-8")
-        except OSError:
-            pass
 
 
 graph_stats = GraphStats()
@@ -212,7 +211,7 @@ def trim_conversation(conversation: list[dict[str, Any]]) -> list[dict[str, Any]
         "key_feedback": feedback_snippets,
         "t": time.time(),
     }
-    return conversation[:keep_head] + [trimmed_marker] + conversation[-keep_tail:]
+    return [*conversation[:keep_head], trimmed_marker, *conversation[-keep_tail:]]
 
 
 def save_state_snapshot(task_id: str, node_name: str, state: dict[str, Any]) -> None:
@@ -375,10 +374,8 @@ def _graph_node(node_name: str) -> Callable[[_NodeFn], _NodeFn]:
                 tid = state.get("task_id", "")
                 log_timing(tid, node_name, _t0, _t1)
                 graph_stats.record(node_name, int((_t1 - _t0) * 1000), _ok)
-                try:
+                with contextlib.suppress(Exception):
                     save_state_snapshot(tid, node_name, dict(state))
-                except Exception:
-                    pass
 
         # Preserve the original docstring from inner_fn but keep
         # the wrapper name matching the expected LangGraph node name.
@@ -747,10 +744,8 @@ def build_node(state: WorkflowState) -> dict[str, Any]:
         }
 
     # Validate via Pydantic (non-fatal — we log warnings but proceed)
-    try:
+    with contextlib.suppress(Exception):
         BuilderOutput(**result)
-    except Exception:
-        pass  # Lenient: proceed even if extra fields exist
 
     # C3 + A4: Semantic validation + quality gate enforcement
     _enrich_builder_result(result, state)
@@ -958,7 +953,7 @@ def _decide_request_changes(
         _log.warning("request_changes cap reached (%d), escalating", rc_count)
         final_entry = {"role": "orchestrator", "action": "escalated",
                        "reason": f"request_changes cap ({rc_count})", "t": time.time()}
-        full_convo = state.get("conversation", []) + [final_entry]
+        full_convo = [*state.get("conversation", []), final_entry]
         archive_conversation(state["task_id"], full_convo)
         return {"error": "REQUEST_CHANGES_CAP", "final_status": "escalated",
                 "conversation": [final_entry]}
@@ -990,7 +985,7 @@ def _decide_reject_retry(
         final_entry = {"role": "orchestrator", "action": "escalated",
                        "reason": "budget exhausted",
                        "last_feedback": feedback_summary, "t": time.time()}
-        full_convo = state.get("conversation", []) + [final_entry]
+        full_convo = [*state.get("conversation", []), final_entry]
         write_dashboard(
             task_id=state["task_id"],
             done_criteria=state.get("done_criteria", []),
@@ -1250,10 +1245,8 @@ def reset_graph() -> None:
     graph_stats.reset()
     with _conn_lock:
         for conn in _conn_pool.values():
-            try:
+            with contextlib.suppress(Exception):
                 conn.close()
-            except Exception:
-                pass
         _conn_pool.clear()
 
 

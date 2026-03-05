@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import json
 import logging
@@ -67,7 +68,7 @@ def ensure_workspace() -> Path:
         ok, avail = check_disk_space()
         if not ok:
             import warnings
-            warnings.warn(f"磁盘空间不足: 仅剩 {avail} MB，建议至少 100 MB")
+            warnings.warn(f"磁盘空间不足: 仅剩 {avail} MB，建议至少 100 MB", stacklevel=2)
     except Exception:
         pass
     return ws
@@ -143,12 +144,10 @@ def write_outbox(agent_id: str, data: dict[str, Any]) -> Path:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
             f.write("\n")
-        os.replace(tmp, str(path))  # atomic on POSIX
+        Path(tmp).replace(path)  # atomic on POSIX
     except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+        with contextlib.suppress(OSError):
+            Path(tmp).unlink()
         raise
     return path
 
@@ -221,10 +220,8 @@ def acquire_lock(task_id: str) -> None:
             existing = read_lock()
             if existing is None and attempt == 0:
                 # Empty/corrupted lock — safe to reclaim.
-                try:
+                with contextlib.suppress(FileNotFoundError):
                     lock_path.unlink()
-                except FileNotFoundError:
-                    pass  # Another process already cleaned it up
                 continue
             raise RuntimeError(
                 f"Lock already held by task '{existing}'. "

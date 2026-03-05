@@ -67,7 +67,7 @@ def add_pending_candidates(task_id: str, items: list[Any], *, actor: str) -> dic
         if item:
             normalized.append(item)
 
-    existing = set(str(x).strip() for x in pending if isinstance(x, str))
+    existing = {str(x).strip() for x in pending if isinstance(x, str)}
     added = 0
     for item in normalized:
         if item in existing:

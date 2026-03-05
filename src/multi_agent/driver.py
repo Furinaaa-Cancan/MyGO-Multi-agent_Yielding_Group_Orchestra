@@ -8,6 +8,7 @@ instead of manually checking ``get_agent_driver()["driver"]``.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -270,12 +271,10 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
             f.write("\n")
-        os.replace(tmp, str(path))
+        Path(tmp).replace(path)
     except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+        with contextlib.suppress(OSError):
+            Path(tmp).unlink()
         raise
 
 

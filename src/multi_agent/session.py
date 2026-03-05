@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -820,10 +821,8 @@ def start_session(
 
         initial_state = _build_initial_state(task, task_id, mode, review_policy, roles)
 
-        try:
+        with contextlib.suppress(GraphInterrupt):
             app.invoke(initial_state, cfg)
-        except GraphInterrupt:
-            pass
 
         status = _finalize_session_start(task_id, task_path, roles, mode)
         return status
@@ -1001,10 +1000,8 @@ def session_push(task_id: str, agent: str, file_path: str) -> dict[str, Any]:
     result = dict(envelope["result"])
     _submit_memory_candidates(task_id, agent, envelope, result)
 
-    try:
+    with contextlib.suppress(GraphInterrupt):
         app.invoke(Command(resume=result), cfg)
-    except GraphInterrupt:
-        pass
 
     after = _build_task_status(task_id)
     _write_all_prompts(
@@ -1042,5 +1039,5 @@ def normalize_file_path_for_lock(path: str, *, cwd: str | None = None) -> str:
     p = Path(path).expanduser()
     if not p.is_absolute():
         p = base / p
-    real = os.path.realpath(os.path.abspath(str(p)))
+    real = os.path.realpath(os.path.abspath(str(p)))  # noqa: PTH100 — normcase has no pathlib equiv
     return os.path.normcase(real)
