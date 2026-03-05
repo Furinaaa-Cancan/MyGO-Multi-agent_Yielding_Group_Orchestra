@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.1] - 2025-06-16
+
+### Added
+- **GUI driver** (`driver: gui`) — macOS AppleScript automation for desktop IDE apps (Codex)
+- `send_gui_message()`, `spawn_gui_agent()`, `can_use_gui()` in driver.py
+- `app_name` field in `AgentProfile` schema for GUI driver config
+- `format_duration()` utility function in `_utils.py`
+- `scripts/gui_send.sh` standalone AppleScript wrapper
+
+### Changed
+- `dispatch_agent()` now handles `gui` driver type with graceful degradation
+- `agents.yaml` Codex entry updated from `cli` to `gui` driver
+- README updated with GUI driver documentation and 3-driver comparison table
+
 ## [0.6.0] - 2025-06-15
 
 ### Added

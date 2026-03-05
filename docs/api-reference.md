@@ -155,6 +155,18 @@ Spawn a CLI agent subprocess in a background thread.
 ### `can_use_cli(command_template) → bool`
 Check if the CLI binary exists on PATH.
 
+### `can_use_gui() → bool`
+Check if macOS GUI automation is available (`osascript` exists).
+
+### `send_gui_message(app_name, message) → bool`
+Send a message to a macOS desktop IDE app via AppleScript. Activates app, pastes message, presses Enter.
+
+### `spawn_gui_agent(agent_id, role, app_name) → Thread`
+Send task prompt to a desktop IDE app via GUI automation in a background thread.
+
+### `dispatch_agent(agent_id, role, *, timeout_sec=600) → DispatchResult`
+Unified driver dispatch. Handles `cli`, `gui`, and `file` drivers with graceful degradation.
+
 ### `classify_stderr(text) → str`
 Classify stderr severity: `"error"`, `"warning"`, or `"info"`.
 
