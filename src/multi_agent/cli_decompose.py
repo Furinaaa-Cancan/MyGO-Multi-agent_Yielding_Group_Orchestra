@@ -356,8 +356,17 @@ def _retry_sub_task(
         workflow_mode=workflow_mode, review_policy=review_policy,
     )
     sub_config = make_config_fn(sub_state["task_id"])
-    with contextlib.suppress(start_error_cls):
+    try:
         start_fn(app, sub_state["task_id"], sub_state)
+    except start_error_cls as e:
+        cause = getattr(e, "cause", e)
+        return {
+            "sub_id": st.id, "status": "failed",
+            "summary": f"Retry start failed: {cause}",
+            "changed_files": [], "retry_count": 0,
+            "duration_sec": round(time.time() - sub_start, 1),
+            "estimated_minutes": getattr(st, 'estimated_minutes', 0),
+        }
     show_waiting_fn(app, sub_config)
     watch_loop_fn(app, sub_config, sub_state["task_id"], manage_lock=False)
     return _collect_sub_result(app, sub_config, st, sub_start)

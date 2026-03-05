@@ -1004,6 +1004,98 @@ class TestPlanNode:
         assert result["final_status"] == "failed"
 
 
+class TestPlanNodeResetsTimestamps:
+    """Regression: plan_node must reset build_started_at/review_started_at on retry.
+
+    Without this reset, retry cycle 2+ would use stale timestamps from cycle 1,
+    causing false timeout failures (elapsed measured from old build/review start).
+    """
+
+    def _base_state(self, **overrides):
+        s = {
+            "task_id": "task-ts-reset", "skill_id": "code-implement",
+            "done_criteria": ["tests pass"], "timeout_sec": 1800,
+            "retry_budget": 2, "retry_count": 0, "conversation": [],
+        }
+        s.update(overrides)
+        return s
+
+    def _mock_contract(self):
+        c = MagicMock()
+        c.timeouts = MagicMock(run_sec=1800)
+        c.retry = MagicMock(max_attempts=2)
+        c.quality_gates = []
+        c.preconditions = []
+        return c
+
+    def test_plan_node_resets_build_started_at(self):
+        """plan_node output must contain build_started_at=None."""
+        with patch("multi_agent.graph.load_contract", return_value=self._mock_contract()), \
+             patch("multi_agent.graph.validate_preconditions", return_value=[]), \
+             patch("multi_agent.graph.load_agents", return_value=[]), \
+             patch("multi_agent.graph.resolve_builder", return_value="windsurf"), \
+             patch("multi_agent.graph.resolve_reviewer", return_value="cursor"), \
+             patch("multi_agent.graph.render_builder_prompt", return_value="p"), \
+             patch("multi_agent.graph.write_inbox"), \
+             patch("multi_agent.graph.clear_outbox"), \
+             patch("multi_agent.graph._write_task_md"), \
+             patch("multi_agent.graph.write_dashboard"):
+            result = plan_node(self._base_state(
+                build_started_at=1.0,  # stale from previous cycle
+                review_started_at=2.0,
+                retry_count=1,
+                builder_id="windsurf",
+                reviewer_id="cursor",
+            ))
+        assert result["build_started_at"] is None
+        assert result["review_started_at"] is None
+
+    def test_plan_node_resets_timestamps_on_first_run(self):
+        """Even on first run, plan_node should set these to None."""
+        with patch("multi_agent.graph.load_contract", return_value=self._mock_contract()), \
+             patch("multi_agent.graph.validate_preconditions", return_value=[]), \
+             patch("multi_agent.graph.load_agents", return_value=[]), \
+             patch("multi_agent.graph.resolve_builder", return_value="windsurf"), \
+             patch("multi_agent.graph.resolve_reviewer", return_value="cursor"), \
+             patch("multi_agent.graph.render_builder_prompt", return_value="p"), \
+             patch("multi_agent.graph.write_inbox"), \
+             patch("multi_agent.graph.clear_outbox"), \
+             patch("multi_agent.graph._write_task_md"), \
+             patch("multi_agent.graph.write_dashboard"):
+            result = plan_node(self._base_state())
+        assert "build_started_at" in result
+        assert result["build_started_at"] is None
+        assert "review_started_at" in result
+        assert result["review_started_at"] is None
+
+    @patch("multi_agent.graph.write_dashboard")
+    @patch("multi_agent.graph._write_task_md")
+    @patch("multi_agent.graph.interrupt")
+    def test_build_no_false_timeout_after_plan_reset(self, mock_interrupt, mock_task_md, mock_dash):
+        """After plan_node resets timestamps, build_node should not false-timeout."""
+        import time as _time
+        mock_interrupt.return_value = {
+            "status": "completed", "summary": "done",
+            "changed_files": [], "check_results": {},
+        }
+        state = {
+            "builder_id": "windsurf", "reviewer_id": "cursor",
+            "started_at": _time.time(),
+            "build_started_at": None,  # reset by plan_node
+            "review_started_at": None,
+            "timeout_sec": 1800,
+            "skill_id": "code-implement",
+            "task_id": "task-ts-reset-build",
+            "done_criteria": ["test"],
+            "conversation": [],
+            "input_payload": {"requirement": "test"},
+        }
+        result = build_node(state)
+        # Should NOT timeout — build_started_at is None, falls back to started_at (recent)
+        assert "builder_output" in result
+        assert "error" not in result
+
+
 class TestBuildNodeComprehensive:
     """Task 32: Comprehensive build_node tests."""
 
