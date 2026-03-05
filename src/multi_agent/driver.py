@@ -374,11 +374,24 @@ def spawn_gui_agent(
     """
     task_file = workspace_dir() / "TASK.md"
     outbox_file = outbox_dir() / f"{role}.json"
-    message = (
-        f"帮我完成 @.multi-agent/TASK.md 里的任务，"
-        f"完成后将 JSON 输出保存到 @.multi-agent/outbox/{role}.json "
-        f"(绝对路径: {outbox_file})"
-    )
+
+    # Read TASK.md content so Codex doesn't need file path access
+    task_content = ""
+    try:
+        task_content = task_file.read_text(encoding="utf-8").strip()
+    except Exception:
+        logger.warning("Cannot read %s, sending path-based message", task_file)
+
+    if task_content:
+        message = (
+            f"请完成以下任务，完成后将 JSON 输出保存到 {outbox_file}\n\n"
+            f"{task_content}"
+        )
+    else:
+        message = (
+            f"帮我完成 {task_file} 里的任务，"
+            f"完成后将 JSON 输出保存到 {outbox_file}"
+        )
 
     def _run() -> None:
         try:

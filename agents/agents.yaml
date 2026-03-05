@@ -6,10 +6,13 @@
 # driver: how to invoke the agent
 #   "file"  — write TASK.md, user manually tells IDE (default)
 #   "cli"   — spawn CLI tool automatically (fully automated)
+#   "gui"   — macOS AppleScript auto-control desktop IDE app
 #
 # command: CLI command template (only for driver: cli)
 #   Use {task_file} as placeholder for TASK.md path
 #   Use {outbox_file} as placeholder for outbox JSON path
+#
+# app_name: macOS app name (only for driver: gui)
 #
 # To add a new IDE/tool, just add it here. No code changes needed.
 
