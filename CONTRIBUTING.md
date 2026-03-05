@@ -5,8 +5,8 @@ Thank you for your interest in contributing!
 ## Development Setup
 
 ```bash
-git clone https://github.com/Furinaaa-Cancan/MyGO.git
-cd MyGO
+git clone https://github.com/Furinaaa-Cancan/MyGO-Multi-agent_Yielding_Group_Orchestra.git
+cd MyGO-Multi-agent_Yielding_Group_Orchestra
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```
