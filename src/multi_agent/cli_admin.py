@@ -80,7 +80,7 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
     @handle_errors
     @click.option("--force", is_flag=True, default=False, help="Overwrite existing files")
     def init(force: bool) -> None:
-        """初始化 AgentOrchestra 项目."""
+        """初始化 MyGO 项目."""
         from pathlib import Path
 
         import yaml
@@ -408,7 +408,7 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
         from pathlib import Path
 
         from multi_agent import __version__
-        click.echo(f"AgentOrchestra v{__version__}")
+        click.echo(f"MyGO v{__version__}")
         click.echo(f"Python {sys.version}")
         click.echo(f"Install: {Path(__file__).parent}")
 

@@ -199,7 +199,7 @@ class TestFindRootDiagnostics:
                 _find_root()
             msgs = [str(warning.message) for warning in w]
             assert any("Scanned" in m for m in msgs)
-            assert any("ma init" in m for m in msgs)
+            assert any("mygo init" in m for m in msgs)
         finally:
             root_dir.cache_clear()
 

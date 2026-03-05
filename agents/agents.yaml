@@ -1,4 +1,4 @@
-# AgentOrchestra — Agent Registry
+# MyGO — Agent Registry
 # 
 # Map your IDE tools to roles. You can use ANY IDE here.
 # The system only cares about roles (builder, reviewer), not IDE names.

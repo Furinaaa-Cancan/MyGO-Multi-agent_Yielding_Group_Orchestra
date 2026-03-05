@@ -66,7 +66,7 @@ class TestVersionCommand:
     def test_version_output(self, runner):
         result = runner.invoke(main, ["version"])
         assert result.exit_code == 0
-        assert "AgentOrchestra" in result.output
+        assert "MyGO" in result.output
         assert "Python" in result.output
 
 

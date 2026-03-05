@@ -465,7 +465,7 @@ def _run_single_task(app: Any, task_id: str, requirement: str, skill: str, build
         cause = e.cause
         if isinstance(cause, FileNotFoundError):
             click.echo(f"❌ {cause}", err=True)
-            click.echo("   确认你在 AgentOrchestra 项目根目录运行, 且 skills/ 和 agents/ 存在。", err=True)
+            click.echo("   确认你在 MyGO 项目根目录运行, 且 skills/ 和 agents/ 存在。", err=True)
             click.echo("   或设置 MA_ROOT 环境变量指向项目根目录。", err=True)
         elif isinstance(cause, ValueError):
             click.echo(f"❌ {cause}", err=True)

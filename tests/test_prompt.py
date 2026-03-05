@@ -377,7 +377,7 @@ class TestPromptVersionTracking:
         task = _make_task()
         contract = load_contract("code-implement", base=SKILLS_DIR)
         result = render_builder_prompt(task, contract, agent_id="windsurf")
-        assert "<!-- AgentOrchestra v" in result
+        assert "<!-- MyGO v" in result
         assert "prompt: builder" in result
 
     def test_reviewer_prompt_has_version_comment(self):
@@ -388,7 +388,7 @@ class TestPromptVersionTracking:
             task, contract, agent_id="cursor",
             builder_output=builder_output, builder_id="windsurf",
         )
-        assert "<!-- AgentOrchestra v" in result
+        assert "<!-- MyGO v" in result
         assert "prompt: reviewer" in result
 
     def test_get_prompt_metadata_format(self):
@@ -396,7 +396,7 @@ class TestPromptVersionTracking:
         meta = get_prompt_metadata("builder")
         assert meta.startswith("<!--")
         assert meta.endswith("-->")
-        assert "AgentOrchestra" in meta
+        assert "MyGO" in meta
         assert "builder" in meta
         assert "rendered:" in meta
 

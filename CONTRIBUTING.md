@@ -1,12 +1,12 @@
-# Contributing to AgentOrchestra
+# Contributing to MyGO
 
 Thank you for your interest in contributing!
 
 ## Development Setup
 
 ```bash
-git clone https://github.com/Furinaaa-Cancan/AgentOrchestra.git
-cd AgentOrchestra
+git clone https://github.com/Furinaaa-Cancan/MyGO.git
+cd MyGO
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```

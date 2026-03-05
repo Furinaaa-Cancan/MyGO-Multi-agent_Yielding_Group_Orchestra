@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AgentOrchestra 一夜任务队列运行器
+MyGO 一夜任务队列运行器
 从 docs/task-queue-100.md 提取提示词并依次执行。
 
 用法:
@@ -61,7 +61,7 @@ def run_task(num: int, title: str, prompt: str, builder: str, reviewer: str) -> 
 
 
 def main():
-    parser = argparse.ArgumentParser(description="AgentOrchestra 一夜任务队列")
+    parser = argparse.ArgumentParser(description="MyGO 一夜任务队列")
     parser.add_argument("--start", type=int, default=1, help="从第 N 条开始")
     parser.add_argument("--end", type=int, default=100, help="到第 N 条结束")
     parser.add_argument("--only", type=str, help="只运行指定编号 (逗号分隔)")

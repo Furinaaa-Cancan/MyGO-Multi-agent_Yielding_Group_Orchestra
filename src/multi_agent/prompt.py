@@ -139,7 +139,7 @@ def get_prompt_metadata(role: str) -> str:
 
     from multi_agent import __version__
     ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return f"<!-- AgentOrchestra v{__version__} | prompt: {role} | rendered: {ts} -->"
+    return f"<!-- MyGO v{__version__} | prompt: {role} | rendered: {ts} -->"
 
 
 def _truncate_if_needed(text: str) -> str:
