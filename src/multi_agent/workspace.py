@@ -174,13 +174,20 @@ def clear_inbox(agent_id: str) -> None:
 
 @retry_file_op()
 def save_task_yaml(task_id: str, data: dict[str, Any]) -> Path:
-    """Save task state to tasks/{task_id}.yaml."""
+    """Save task state to tasks/{task_id}.yaml (atomic write)."""
     import yaml
 
     ensure_workspace()
     path = tasks_dir() / f"{task_id}.yaml"
-    with path.open("w", encoding="utf-8") as f:
-        yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp", prefix=f".{task_id}-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+        Path(tmp).replace(path)  # atomic on POSIX
+    except BaseException:
+        with contextlib.suppress(OSError):
+            Path(tmp).unlink()
+        raise
     return path
 
 
