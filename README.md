@@ -20,15 +20,15 @@ pip install -e ".[dev]"
 ### 初始化项目
 
 ```bash
-ma init          # 创建 skills/ + agents/ + .multi-agent/
-ma agents        # 检查 agent 健康状态
-ma list-skills   # 查看可用技能
+my init          # 创建 skills/ + agents/ + .multi-agent/
+my agents        # 检查 agent 健康状态
+my list-skills   # 查看可用技能
 ```
 
 ### 一条命令跑起来
 
 ```bash
-ma go "实现用户登录功能"
+my go "实现用户登录功能"
 ```
 
 系统自动完成：锁定任务 → 生成 prompt → 自动/手动调用 builder → 等待输出 → 交给 reviewer → 决策 → 完成/重试。
@@ -41,45 +41,45 @@ ma go "实现用户登录功能"
 
 ```bash
 # 单任务：一条命令完成 build → review → decide
-ma go "实现 REST API 用户注册接口"
+my go "实现 REST API 用户注册接口"
 
 # 复杂任务：自动分解为子任务并依次执行
-ma go "实现完整用户认证模块" --decompose
+my go "实现完整用户认证模块" --decompose
 
 # 自定义角色
-ma go "修复登录 bug" --builder windsurf --reviewer cursor --mode strict
+my go "修复登录 bug" --builder windsurf --reviewer cursor --mode strict
 ```
 
 关键命令：
 
 | 命令 | 作用 |
 |---|---|
-| `ma go "<需求>"` | 启动任务（自动 watch） |
-| `ma done` | 提交当前角色的输出 |
-| `ma watch` | 恢复中断的自动检测 |
-| `ma status` | 查看当前任务状态 |
-| `ma cancel` | 取消当前任务 |
+| `my go "<需求>"` | 启动任务（自动 watch） |
+| `my done` | 提交当前角色的输出 |
+| `my watch` | 恢复中断的自动检测 |
+| `my status` | 查看当前任务状态 |
+| `my cancel` | 取消当前任务 |
 
 ### 模式 B：IDE-first Session 流程
 
 适合需要精细控制每一步的场景：
 
 ```bash
-ma session start --task tasks/examples/task-code-implement.json --mode strict
-ma session pull --task-id <id> --agent windsurf     # 生成 builder prompt
+my session start --task tasks/examples/task-code-implement.json --mode strict
+my session pull --task-id <id> --agent windsurf     # 生成 builder prompt
 # → IDE 中完成工作，输出 JSON 到 .multi-agent/outbox/builder.json
-ma session push --task-id <id> --agent windsurf --file .multi-agent/outbox/builder.json
-ma session pull --task-id <id> --agent antigravity   # 生成 reviewer prompt
+my session push --task-id <id> --agent windsurf --file .multi-agent/outbox/builder.json
+my session pull --task-id <id> --agent antigravity   # 生成 reviewer prompt
 # → reviewer 完成审查
-ma session push --task-id <id> --agent antigravity --file .multi-agent/outbox/reviewer.json
+my session push --task-id <id> --agent antigravity --file .multi-agent/outbox/reviewer.json
 ```
 
 | 命令 | 作用 |
 |---|---|
-| `ma session start --task <json> --mode strict` | 初始化会话 |
-| `ma session pull --task-id <id> --agent <agent>` | 生成 prompt |
-| `ma session push --task-id <id> --agent <agent> --file <json>` | 提交结果 |
-| `ma session status --task-id <id>` | 查看状态 |
+| `my session start --task <json> --mode strict` | 初始化会话 |
+| `my session pull --task-id <id> --agent <agent>` | 生成 prompt |
+| `my session push --task-id <id> --agent <agent> --file <json>` | 提交结果 |
+| `my session status --task-id <id>` | 查看状态 |
 
 ---
 
@@ -126,9 +126,9 @@ defaults:
 复杂需求可自动分解为子任务，按依赖关系拓扑排序后顺序执行：
 
 ```bash
-ma go "实现完整认证模块" --decompose
-ma go "重构支付系统" --decompose --auto-confirm    # 跳过确认
-ma go "..." --decompose-file result.json           # 从文件加载分解结果
+my go "实现完整认证模块" --decompose
+my go "重构支付系统" --decompose --auto-confirm    # 跳过确认
+my go "..." --decompose-file result.json           # 从文件加载分解结果
 ```
 
 每个子任务独立经历完整的 build → review → decide 循环，支持中断恢复（checkpoint）。
@@ -154,7 +154,7 @@ plan → build → review → decide
 - **重试预算**：默认 2 次，超出后 escalate
 - **request_changes 上限**：连续 3 次 request_changes 后 escalate（防 DDI 衰减）
 - **超时保护**：单步超时 + 全局 2h 上限（OWASP LLM10 DoW 防护）
-- **取消检测**：每次 interrupt 返回后检查 `ma cancel` 状态
+- **取消检测**：每次 interrupt 返回后检查 `my cancel` 状态
 
 ---
 
@@ -177,7 +177,7 @@ DRAFT → QUEUED → ASSIGNED → RUNNING → VERIFYING → APPROVED → MERGED 
 
 ```text
 src/multi_agent/           # 核心包（25 个模块）
-├── cli.py                 # CLI 入口 (ma go/done/watch/cancel/status)
+├── cli.py                 # CLI 入口 (my go/done/watch/cancel/status)
 ├── cli_admin.py           # 管理命令 (history/init/doctor/agents/...)
 ├── cli_decompose.py       # 任务分解执行
 ├── cli_watch.py           # 自动轮询 + agent 调度
@@ -230,37 +230,37 @@ skills/                    # 技能定义 (contract.yaml)
 
 | 命令 | 说明 |
 |---|---|
-| `ma go "<需求>"` | 启动任务并自动 watch |
-| `ma done` | 提交当前角色输出 |
-| `ma watch` | 恢复自动检测循环 |
-| `ma status` | 查看任务状态 |
-| `ma cancel` | 取消当前任务 |
+| `my go "<需求>"` | 启动任务并自动 watch |
+| `my done` | 提交当前角色输出 |
+| `my watch` | 恢复自动检测循环 |
+| `my status` | 查看任务状态 |
+| `my cancel` | 取消当前任务 |
 
 ### Session 命令
 
 | 命令 | 说明 |
 |---|---|
-| `ma session start` | 初始化会话 |
-| `ma session pull` | 生成 agent prompt |
-| `ma session push` | 提交 agent 输出 |
-| `ma session status` | 查看会话状态 |
+| `my session start` | 初始化会话 |
+| `my session pull` | 生成 agent prompt |
+| `my session push` | 提交 agent 输出 |
+| `my session status` | 查看会话状态 |
 
 ### 管理与诊断
 
 | 命令 | 说明 |
 |---|---|
-| `ma init` | 初始化项目 |
-| `ma history` | 查看历史任务 |
-| `ma trace --task-id <id>` | 事件轨迹 (tree/mermaid) |
-| `ma doctor` | 工作空间健康检查 |
-| `ma agents` | Agent 状态 |
-| `ma list-skills` | 可用技能 |
-| `ma render "<需求>"` | 预览 prompt |
-| `ma schema` | 导出 JSON Schema |
-| `ma export <task_id>` | 导出任务结果 |
-| `ma replay <task_id>` | 重放任务历史 |
-| `ma cleanup` | 清理旧文件 |
-| `ma version` | 版本信息 |
+| `my init` | 初始化项目 |
+| `my history` | 查看历史任务 |
+| `my trace --task-id <id>` | 事件轨迹 (tree/mermaid) |
+| `my doctor` | 工作空间健康检查 |
+| `my agents` | Agent 状态 |
+| `my list-skills` | 可用技能 |
+| `my render "<需求>"` | 预览 prompt |
+| `my schema` | 导出 JSON Schema |
+| `my export <task_id>` | 导出任务结果 |
+| `my replay <task_id>` | 重放任务历史 |
+| `my cleanup` | 清理旧文件 |
+| `my version` | 版本信息 |
 
 ---
 
@@ -348,15 +348,15 @@ defaults:
 ### Q1: `task 'xxx' is already active`
 
 ```bash
-ma session start --task <task.json> --mode strict --reset
+my session start --task <task.json> --mode strict --reset
 # 或
-ma cancel && ma go "..."
+my cancel && my go "..."
 ```
 
 ### Q2: `current owner is 'A', not 'B'`
 
 ```bash
-ma status   # 确认 current_agent
+my status   # 确认 current_agent
 ```
 
 由对应 agent 提交即可。
@@ -364,12 +364,12 @@ ma status   # 确认 current_agent
 ### Q3: builder/reviewer 是同一个 agent
 
 `agents.yaml` 的 `defaults.builder` 和 `defaults.reviewer` 必须不同。  
-也可在命令行指定：`ma go "..." --builder windsurf --reviewer cursor`
+也可在命令行指定：`my go "..." --builder windsurf --reviewer cursor`
 
 ### Q4: lock 相关错误
 
 ```bash
-ma doctor --fix   # 自动修复常见状态不一致
+my doctor --fix   # 自动修复常见状态不一致
 ```
 
 ### Q5: strict 模式下 approve 被拦截
@@ -430,7 +430,7 @@ CC BY-NC-SA 4.0，详见 `LICENSE`。
 
 **AgentOrchestra** is an IDE-agnostic multi-agent orchestration framework (v0.6.0).
 It drives a LangGraph 4-node workflow (plan → build → review → decide) with:
-- Two modes: automated (`ma go`) and IDE-first (`ma session`)
+- Two modes: automated (`my go`) and IDE-first (`my session`)
 - Task decomposition with dependency-aware execution
 - CLI agent auto-spawning with graceful degradation
 - Rubber-stamp detection, retry budgets, timeout guards

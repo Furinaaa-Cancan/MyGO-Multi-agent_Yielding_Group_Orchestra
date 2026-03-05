@@ -1,7 +1,7 @@
 """Decomposed task execution — extracted from cli.py (A2b refactor).
 
 Contains _run_decomposed(): the sequential sub-task build-review pipeline
-invoked by `ma go --decompose`.  All CLI helpers (_make_config, _show_waiting,
+invoked by `my go --decompose`.  All CLI helpers (_make_config, _show_waiting,
 _run_watch_loop, _run_single_task) are imported lazily from cli.py to break
 the circular-import chain.
 """
@@ -222,7 +222,7 @@ class _DecomposeExecContext:
 
         self.show_waiting(self.app, sub_config)
         if self.no_watch:
-            click.echo(f"📌 Sub-task {st.id}: 等待手动 ma done")
+            click.echo(f"📌 Sub-task {st.id}: 等待手动 my done")
             click.echo("⚠️  --no-watch 模式下 --decompose 只执行第一步分解。")
             click.echo("   后续请逐个手动执行各子任务。")
             self.save_yaml(self.parent_task_id, {

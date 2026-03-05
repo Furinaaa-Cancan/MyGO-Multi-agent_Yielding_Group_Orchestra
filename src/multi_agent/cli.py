@@ -1,4 +1,4 @@
-"""CLI entry point — ma go / ma done / ma status / ma cancel / ma watch."""
+"""CLI entry point — my go / my done / my status / my cancel / my watch."""
 
 from __future__ import annotations
 
@@ -201,7 +201,7 @@ def _sigterm_handler(signum: int, frame: Any) -> None:
 @click.group()
 @click.option("--verbose", is_flag=True, default=False, help="Show full traceback on errors")
 def main(verbose: bool) -> None:
-    """ma — Multi-Agent 协作 CLI. 一条命令协调多个 IDE AI."""
+    """my — Multi-Agent 协作 CLI. 一条命令协调多个 IDE AI."""
     signal.signal(signal.SIGTERM, _sigterm_handler)
 
 
@@ -307,9 +307,9 @@ def _ensure_no_active_task(app: Any) -> None:
         else:
             click.echo(f"❌ 任务 '{locked}' 正在进行中。", err=True)
             click.echo("   先完成或取消当前任务:", err=True)
-            click.echo("   • ma cancel   — 取消当前任务", err=True)
-            click.echo("   • ma done     — 手动提交结果", err=True)
-            click.echo("   • ma status   — 查看任务状态", err=True)
+            click.echo("   • my cancel   — 取消当前任务", err=True)
+            click.echo("   • my done     — 手动提交结果", err=True)
+            click.echo("   • my status   — 查看任务状态", err=True)
             sys.exit(1)
     if active_task:
         if _is_task_terminal_or_missing(app, active_task):
@@ -326,9 +326,9 @@ def _ensure_no_active_task(app: Any) -> None:
             with contextlib.suppress(RuntimeError):
                 acquire_lock(active_task)
             click.echo(f"❌ 检测到活跃任务标记 '{active_task}'，请先恢复或取消该任务。", err=True)
-            click.echo(f"   • ma watch --task-id {active_task}   — 恢复自动推进", err=True)
-            click.echo(f"   • ma cancel --task-id {active_task}  — 取消并清理", err=True)
-            click.echo("   • ma doctor --fix                    — 自动修复常见状态不一致", err=True)
+            click.echo(f"   • my watch --task-id {active_task}   — 恢复自动推进", err=True)
+            click.echo(f"   • my cancel --task-id {active_task}  — 取消并清理", err=True)
+            click.echo("   • my doctor --fix                    — 自动修复常见状态不一致", err=True)
             sys.exit(1)
 
 
@@ -355,15 +355,15 @@ def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer
     When the IDE AI saves its result, the orchestrator auto-advances.
 
     Usage:
-      1. Run: ma go "your requirement"
+      1. Run: my go "your requirement"
       2. Open .multi-agent/TASK.md in your IDE
       3. Watch the terminal — it handles the rest
 
     Examples:
-      ma go "实现 POST /users endpoint"
-      ma go "Add auth middleware" --builder windsurf --reviewer cursor
-      ma go "Fix login bug" --no-watch
-      ma go "实现完整用户认证模块" --decompose
+      my go "实现 POST /users endpoint"
+      my go "Add auth middleware" --builder windsurf --reviewer cursor
+      my go "Fix login bug" --no-watch
+      my go "实现完整用户认证模块" --decompose
     """
     from multi_agent.config import load_project_config
     from multi_agent.graph import compile_graph
@@ -483,7 +483,7 @@ def _run_single_task(app: Any, task_id: str, requirement: str, skill: str, build
     _show_waiting(app, config)
 
     if no_watch:
-        click.echo("\n📌 Run `ma done` after the IDE finishes, or `ma watch` to auto-detect.")
+        click.echo("\n📌 Run `my done` after the IDE finishes, or `my watch` to auto-detect.")
         return
 
     # Auto-watch mode (default) — poll outbox and auto-submit
@@ -705,7 +705,7 @@ def watch(task_id: str | None, interval: float) -> None:
     """自动检测 IDE 输出并推进任务.
 
     恢复之前中断的自动检测.
-    适用于 `ma go --no-watch` 启动的任务.
+    适用于 `my go --no-watch` 启动的任务.
     """
     from multi_agent.graph import compile_graph
 
