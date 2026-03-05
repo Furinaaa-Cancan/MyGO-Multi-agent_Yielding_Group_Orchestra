@@ -16,8 +16,7 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from multi_agent.session import session_pull, session_push, session_status, start_session
-
+from multi_agent.session import session_push, session_status, start_session
 
 DEFAULT_CONFIG = str(ROOT_DIR / "config" / "workmode.yaml")
 

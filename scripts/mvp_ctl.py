@@ -85,7 +85,7 @@ DIGEST_RE = re.compile(r"^sha256:[a-f0-9]{64}$")
 
 
 def now_utc() -> str:
-    return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return dt.datetime.now(dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def load_json(path: pathlib.Path) -> dict[str, Any]:

@@ -444,6 +444,7 @@ class TestGoCommandLockRelease:
     def test_lock_released_on_unexpected_error(self, tmp_path, monkeypatch):
         """If _run_single_task raises an unexpected error, lock must be released."""
         from click.testing import CliRunner
+
         from multi_agent import workspace
 
         monkeypatch.setattr("multi_agent.config.workspace_dir", lambda: tmp_path)

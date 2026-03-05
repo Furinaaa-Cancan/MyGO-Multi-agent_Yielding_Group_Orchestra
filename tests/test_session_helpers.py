@@ -470,7 +470,7 @@ class TestStateFromSnapshotTerminalDetection:
         snapshot.next = []
         snapshot.tasks = []
         with patch("multi_agent.orchestrator.get_waiting_info", return_value=(None, None)):
-            state, role, agent = _state_from_snapshot(snapshot)
+            state, role, _agent = _state_from_snapshot(snapshot)
         assert state == "DONE"
         assert role is None
 
@@ -481,7 +481,7 @@ class TestStateFromSnapshotTerminalDetection:
         snapshot.next = ["build_node"]
         snapshot.tasks = []
         with patch("multi_agent.orchestrator.get_waiting_info", return_value=(None, None)):
-            state, role, agent = _state_from_snapshot(snapshot)
+            state, _role, _agent = _state_from_snapshot(snapshot)
         # Should NOT be mapped as terminal — falls through to waiting_info
         assert state == "ASSIGNED"  # no waiting info → ASSIGNED
 

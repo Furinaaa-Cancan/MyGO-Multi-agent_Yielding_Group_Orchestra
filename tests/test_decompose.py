@@ -510,6 +510,7 @@ class TestReadDecomposeResultEdgeCases:
 
     def test_oserror_returns_none(self, tmp_path, monkeypatch):
         from unittest.mock import patch
+
         from multi_agent import config
         monkeypatch.setattr(config, "workspace_dir", lambda: tmp_path)
         monkeypatch.setattr(config, "outbox_dir", lambda: tmp_path / "outbox")
@@ -574,6 +575,7 @@ class TestCollectProjectContextEdgeCases:
 
     def test_readme_read_error(self, tmp_path, monkeypatch):
         from unittest.mock import patch
+
         from multi_agent import config
         monkeypatch.setattr(config, "root_dir", lambda: tmp_path)
         # Create README but make it unreadable

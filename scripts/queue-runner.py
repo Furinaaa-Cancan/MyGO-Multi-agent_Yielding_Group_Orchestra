@@ -10,13 +10,13 @@ MyGO 一夜任务队列运行器
     python scripts/queue-runner.py --dry-run    # 只打印不执行
     python scripts/queue-runner.py --list       # 列出所有任务标题
 """
+import argparse
 import re
 import subprocess
 import sys
 import time
-import argparse
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 
 def extract_tasks(md_path: Path) -> list[tuple[int, str, str]]:
@@ -122,7 +122,7 @@ def main():
     mins, secs = divmod(rem, 60)
 
     print(f"\n{'='*60}")
-    print(f"📊 执行完成")
+    print("📊 执行完成")
     print(f"  ✅ 通过: {len(results['passed'])}")
     print(f"  ❌ 失败: {len(results['failed'])}")
     if results["failed"]:
