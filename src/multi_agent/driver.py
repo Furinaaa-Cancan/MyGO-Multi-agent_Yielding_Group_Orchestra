@@ -26,7 +26,7 @@ import threading
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
-from multi_agent.config import outbox_dir, workspace_dir
+from multi_agent.config import outbox_dir, subtask_outbox_dir, subtask_task_file, workspace_dir
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +147,7 @@ def spawn_cli_agent(
     command_template: str,
     project_dir: str | None = None,
     timeout_sec: int = 600,
+    subtask_id: str | None = None,
 ) -> threading.Thread:
     """Spawn a CLI agent in a background thread.
 
@@ -156,6 +157,10 @@ def spawn_cli_agent(
     Returns the thread (for testing). Caller does NOT need to join it.
     If same agent+role is already running, returns the existing thread.
 
+    When *subtask_id* is provided, the agent uses an isolated workspace
+    under ``.multi-agent/subtasks/<subtask_id>/`` so multiple CLI agents
+    can run in parallel without file conflicts.
+
     Security Note:
         Uses shell=False with shlex.split() for command execution, eliminating
         shell injection risk. The command_template comes from agents.yaml.
@@ -163,10 +168,14 @@ def spawn_cli_agent(
     """
     # Task 10: concurrency protection — single lock scope to eliminate
     # check-then-act race between duplicate detection and thread registration.
-    lock_key = f"{agent_id}:{role}"
+    lock_key = f"{agent_id}:{role}" if not subtask_id else f"{agent_id}:{role}:{subtask_id}"
 
-    task_file = str(workspace_dir() / "TASK.md")
-    outbox_file = str(outbox_dir() / f"{role}.json")
+    if subtask_id:
+        task_file = str(subtask_task_file(subtask_id))
+        outbox_file = str(subtask_outbox_dir(subtask_id) / f"{role}.json")
+    else:
+        task_file = str(workspace_dir() / "TASK.md")
+        outbox_file = str(outbox_dir() / f"{role}.json")
 
     # D1+C3: Build command list with shell=False to eliminate injection risk.
     # Paths are inserted literally (no quoting needed without shell).
@@ -372,26 +381,12 @@ def spawn_gui_agent(
     The watcher will detect the outbox file written by the IDE.
     Returns the thread (non-blocking).
     """
-    task_file = workspace_dir() / "TASK.md"
-    outbox_file = outbox_dir() / f"{role}.json"
-
-    # Read TASK.md content so Codex doesn't need file path access
-    task_content = ""
-    try:
-        task_content = task_file.read_text(encoding="utf-8").strip()
-    except Exception:
-        logger.warning("Cannot read %s, sending path-based message", task_file)
-
-    if task_content:
-        message = (
-            f"请完成以下任务，完成后将 JSON 输出保存到 {outbox_file}\n\n"
-            f"{task_content}"
-        )
-    else:
-        message = (
-            f"帮我完成 {task_file} 里的任务，"
-            f"完成后将 JSON 输出保存到 {outbox_file}"
-        )
+    # Keep message SHORT — IDE chat input can't handle large paste.
+    # Use @-relative file reference; works because my go runs from the target project.
+    message = (
+        f"帮我完成 @.multi-agent/TASK.md 里的任务，"
+        f"完成后将 JSON 输出保存到 @.multi-agent/outbox/{role}.json"
+    )
 
     def _run() -> None:
         try:
@@ -425,12 +420,16 @@ def dispatch_agent(
     role: str,
     *,
     timeout_sec: int = 600,
+    subtask_id: str | None = None,
 ) -> DispatchResult:
     """Resolve driver for *agent_id* and either auto-execute or return
     manual-mode instructions.
 
     This is the **single call-site** that replaces the 4x duplicated
     if/else driver-check pattern previously in cli.py.
+
+    When *subtask_id* is provided, CLI agents use an isolated workspace
+    under ``.multi-agent/subtasks/<subtask_id>/`` for parallel execution.
 
     Returns a ``DispatchResult`` so the caller only needs to display
     ``result.message`` — no driver-type branching required.
@@ -440,7 +439,7 @@ def dispatch_agent(
 
     if drv["driver"] == "cli" and drv["command"]:
         if can_use_cli(drv["command"]):
-            thread = spawn_cli_agent(agent_id, role, drv["command"], timeout_sec=timeout_sec)
+            thread = spawn_cli_agent(agent_id, role, drv["command"], timeout_sec=timeout_sec, subtask_id=subtask_id)
             return DispatchResult(
                 mode="auto",
                 thread=thread,

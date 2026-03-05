@@ -592,8 +592,8 @@ class TestRunDecomposed:
         self, mock_ckpt, mock_save, mock_finalize, mock_load_ckpt,
         mock_display, mock_validate, mock_obtain,
     ):
-        """run_one returns 'return' → early exit (lines 511-512)."""
-        tasks = [_sub("a"), _sub("b")]
+        """run_one returns 'return' → early exit."""
+        tasks = [_sub("a"), _sub("b", deps=["a"])]
         mock_obtain.return_value = _decompose_result(tasks)
         mock_validate.return_value = tasks
         with patch.object(_DecomposeExecContext, "run_one", return_value="return"):
@@ -611,8 +611,8 @@ class TestRunDecomposed:
         self, mock_ckpt, mock_save, mock_finalize, mock_load_ckpt,
         mock_display, mock_validate, mock_obtain,
     ):
-        """run_one returns 'break' → skip remaining but still finalize (lines 513-514)."""
-        tasks = [_sub("a"), _sub("b")]
+        """run_one returns 'break' → skip remaining but still finalize."""
+        tasks = [_sub("a"), _sub("b", deps=["a"])]
         mock_obtain.return_value = _decompose_result(tasks)
         mock_validate.return_value = tasks
         with patch.object(_DecomposeExecContext, "run_one", return_value="break"):

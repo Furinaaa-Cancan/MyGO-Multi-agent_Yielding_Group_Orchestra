@@ -77,6 +77,21 @@ def outbox_dir() -> Path:
     return workspace_dir() / "outbox"
 
 
+def subtask_workspace(subtask_id: str) -> Path:
+    """Return isolated workspace dir for a parallel sub-task."""
+    return workspace_dir() / "subtasks" / subtask_id
+
+
+def subtask_task_file(subtask_id: str) -> Path:
+    """Return TASK.md path for a parallel sub-task."""
+    return subtask_workspace(subtask_id) / "TASK.md"
+
+
+def subtask_outbox_dir(subtask_id: str) -> Path:
+    """Return outbox dir for a parallel sub-task."""
+    return subtask_workspace(subtask_id) / "outbox"
+
+
 def tasks_dir() -> Path:
     return workspace_dir() / "tasks"
 

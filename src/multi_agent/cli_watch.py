@@ -66,7 +66,7 @@ def _normalize_resume_output(role: str, data: dict[str, Any], state_values: dict
     return out
 
 
-def _show_waiting(app: Any, config: dict[str, Any]) -> None:
+def _show_waiting(app: Any, config: dict[str, Any], *, subtask_id: str | None = None) -> None:
     """Show current waiting state — auto-spawn CLI agents or show manual instructions."""
     from multi_agent.orchestrator import get_task_status
 
@@ -86,7 +86,7 @@ def _show_waiting(app: Any, config: dict[str, Any]) -> None:
     agent = status.waiting_agent or "?"
 
     from multi_agent.driver import dispatch_agent
-    result = dispatch_agent(agent, role, timeout_sec=status.values.get("timeout_sec", 600))
+    result = dispatch_agent(agent, role, timeout_sec=status.values.get("timeout_sec", 600), subtask_id=subtask_id)
     click.echo(result.message)
     click.echo()
 
@@ -169,12 +169,21 @@ def _process_outbox(poller: Any, role: str, agent: str, status: Any, app: Any, t
     return "continue"
 
 
-def _run_watch_loop(app: Any, config: dict[str, Any], task_id: str, interval: float = 2.0, manage_lock: bool = True) -> None:
-    """Shared watch loop — polls outbox/ and auto-submits output."""
+def _run_watch_loop(app: Any, config: dict[str, Any], task_id: str, interval: float = 2.0, manage_lock: bool = True, *, subtask_id: str | None = None) -> None:
+    """Shared watch loop — polls outbox/ and auto-submits output.
+
+    When *subtask_id* is provided, polls the subtask-specific outbox directory
+    instead of the global outbox/ for parallel execution support.
+    """
     from multi_agent.orchestrator import get_task_status
     from multi_agent.watcher import OutboxPoller
 
-    poller = OutboxPoller(poll_interval=interval)
+    watch_dir = None
+    if subtask_id:
+        from multi_agent.config import subtask_outbox_dir
+        watch_dir = subtask_outbox_dir(subtask_id)
+        watch_dir.mkdir(parents=True, exist_ok=True)
+    poller = OutboxPoller(poll_interval=interval, watch_dir=watch_dir)
     start_time = time.time()
 
     click.echo("👁️  等待 IDE 完成任务… (Ctrl-C 停止)")

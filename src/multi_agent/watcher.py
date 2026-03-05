@@ -20,10 +20,12 @@ class OutboxPoller:
     """
 
     def __init__(self, poll_interval: float = 2.0, *,
-                 min_interval: float = 0.5, max_interval: float = 5.0):
+                 min_interval: float = 0.5, max_interval: float = 5.0,
+                 watch_dir: Path | None = None):
         self.poll_interval = poll_interval
         self.min_interval = min_interval
         self.max_interval = max_interval
+        self._watch_dir = watch_dir
         self._current_interval = poll_interval
         self._idle_count = 0
         self._known: dict[str, float] = {}
@@ -35,7 +37,7 @@ class OutboxPoller:
 
         Role-based: detects builder.json and reviewer.json.
         """
-        d = outbox_dir()
+        d = self._watch_dir or outbox_dir()
         if not d.exists():
             return {}
         return {

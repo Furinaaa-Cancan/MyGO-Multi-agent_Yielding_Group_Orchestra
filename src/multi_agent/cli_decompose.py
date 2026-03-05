@@ -1,16 +1,21 @@
 """Decomposed task execution — extracted from cli.py (A2b refactor).
 
-Contains _run_decomposed(): the sequential sub-task build-review pipeline
-invoked by `my go --decompose`.  All CLI helpers (_make_config, _show_waiting,
-_run_watch_loop, _run_single_task) are imported lazily from cli.py to break
-the circular-import chain.
+Contains _run_decomposed(): the sub-task build-review pipeline
+invoked by `my go --decompose`.  Supports both sequential and parallel
+execution of independent sub-tasks via topo_sort_grouped().
+
+All CLI helpers (_make_config, _show_waiting, _run_watch_loop, _run_single_task)
+are imported lazily from cli.py to break the circular-import chain.
 """
 
 from __future__ import annotations
 
 import contextlib
+import shutil
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -249,6 +254,168 @@ class _DecomposeExecContext:
             st, sub_start, prior_results, completed_ids, failed_ids,
         )
 
+    def _setup_subtask_workspace(self, st: Any, subtask_id: str) -> None:
+        """Copy global TASK.md to subtask workspace for isolated parallel execution."""
+        from multi_agent.config import subtask_outbox_dir, subtask_task_file, workspace_dir
+
+        # Ensure subtask dirs exist
+        subtask_outbox_dir(subtask_id).mkdir(parents=True, exist_ok=True)
+
+        # Copy TASK.md from global workspace to subtask workspace
+        global_task = workspace_dir() / "TASK.md"
+        sub_task = subtask_task_file(subtask_id)
+        if global_task.exists():
+            shutil.copy2(str(global_task), str(sub_task))
+
+    def _run_one_parallel(
+        self, i: int, total: int, st: Any, subtask_id: str,
+        sub_config: dict[str, Any], sub_task_id: str, sub_start: float,
+    ) -> dict[str, Any]:
+        """Execute one sub-task's agent dispatch + watch loop (thread-safe).
+
+        Called from run_group_parallel() in a worker thread.
+        Returns the sub-task result dict.
+        """
+        # Dispatch agent with subtask isolation
+        self.show_waiting(self.app, sub_config, subtask_id=subtask_id)
+
+        if self.no_watch:
+            return {
+                "sub_id": st.id, "status": "pending",
+                "summary": "no-watch mode", "changed_files": [],
+                "retry_count": 0, "duration_sec": 0,
+                "estimated_minutes": getattr(st, 'estimated_minutes', 0),
+            }
+
+        # Watch subtask-specific outbox
+        self.watch_loop(self.app, sub_config, sub_task_id, manage_lock=False, subtask_id=subtask_id)
+        return _collect_sub_result(self.app, sub_config, st, sub_start)
+
+    def _prepare_group(
+        self, group: list[Any],
+        prior_results: list[dict[str, Any]],
+        completed_ids: set[str], failed_ids: set[str],
+    ) -> list[tuple[Any, str, dict[str, Any], str, float]]:
+        """Phase A of parallel execution: sequentially start each subtask and copy TASK.md."""
+        prepared: list[tuple[Any, str, dict[str, Any], str, float]] = []
+        for st in group:
+            if st.id in completed_ids:
+                click.echo(f"  ⏩ {st.id} 已完成 (checkpoint)")
+                continue
+            skipped_deps = [d for d in st.deps if d in failed_ids]
+            if skipped_deps:
+                click.echo(f"  ⏭️ {st.id} 跳过 (依赖 {', '.join(skipped_deps)} 失败)")
+                prior_results.append({
+                    "sub_id": st.id, "status": "skipped",
+                    "summary": f"Skipped: dependency {', '.join(skipped_deps)} failed",
+                    "changed_files": [], "retry_count": 0, "duration_sec": 0,
+                    "estimated_minutes": getattr(st, 'estimated_minutes', 0),
+                })
+                failed_ids.add(st.id)
+                continue
+
+            sub_start = time.time()
+            self.clear_rt()
+            sub_state = self.build_state(
+                sub_task=st, parent_task_id=self.parent_task_id,
+                builder=self.builder, reviewer=self.reviewer,
+                timeout=self.timeout, retry_budget=self.retry_budget,
+                prior_results=prior_results,
+                workflow_mode=self.workflow_mode, review_policy=self.review_policy,
+            )
+            sub_task_id = sub_state["task_id"]
+            sub_config = self.make_config(sub_task_id)
+            subtask_id = st.id
+
+            try:
+                self.start_task(self.app, sub_task_id, sub_state)
+            except self.start_error as e:
+                cause = getattr(e, "cause", e)
+                click.echo(f"  ❌ {st.id} 启动失败: {cause}", err=True)
+                prior_results.append({
+                    "sub_id": st.id, "status": "failed",
+                    "summary": str(e), "changed_files": [], "retry_count": 0,
+                    "duration_sec": round(time.time() - sub_start, 1),
+                    "estimated_minutes": getattr(st, 'estimated_minutes', 0),
+                })
+                failed_ids.add(st.id)
+                continue
+
+            self._setup_subtask_workspace(st, subtask_id)
+            click.echo(f"  📦 {st.id}: 已准备")
+            prepared.append((st, subtask_id, sub_config, sub_task_id, sub_start))
+        return prepared
+
+    def run_group_parallel(
+        self, group: list[Any], start_idx: int, total: int,
+        prior_results: list[dict[str, Any]],
+        completed_ids: set[str], failed_ids: set[str],
+    ) -> None:
+        """Run a group of independent sub-tasks in parallel.
+
+        1. Sequentially: start each task's graph (writes TASK.md) → copy to subtask workspace
+        2. In parallel: dispatch agents + watch subtask outboxes
+        3. Collect all results
+        """
+        done_count = len([r for r in prior_results if r["status"] in ("approved", "completed", "skipped")])
+        pct = int(done_count / total * 100)
+        group_ids = ", ".join(st.id for st in group)
+        click.echo(f"\n{'='*60}")
+        click.echo(f"  🔀 并行执行 ({len(group)} 个子任务): {group_ids} ({pct}%)")
+        click.echo(f"{'='*60}")
+
+        prepared = self._prepare_group(group, prior_results, completed_ids, failed_ids)
+        if not prepared:
+            return
+
+        # Phase B: Dispatch agents and watch in parallel
+        click.echo(f"\n  🚀 并行启动 {len(prepared)} 个 Agent…")
+        results_lock = threading.Lock()
+
+        def _worker(st: Any, subtask_id: str, sub_config: dict[str, Any],
+                     sub_task_id: str, sub_start: float) -> tuple[Any, dict[str, Any]]:
+            result = self._run_one_parallel(
+                start_idx, total, st, subtask_id, sub_config, sub_task_id, sub_start,
+            )
+            return st, result
+
+        with ThreadPoolExecutor(max_workers=len(prepared)) as pool:
+            futures = {
+                pool.submit(_worker, st, sid, cfg, tid, t0): st.id
+                for st, sid, cfg, tid, t0 in prepared
+            }
+            for future in as_completed(futures):
+                st_id = futures[future]
+                try:
+                    st, result = future.result()
+                    sub_status = result["status"]
+                    with results_lock:
+                        prior_results.append(result)
+                        if sub_status in ("approved", "completed"):
+                            completed_ids.add(st.id)
+                            click.echo(f"  ✅ {st.id} 完成")
+                        else:
+                            failed_ids.add(st.id)
+                            click.echo(f"  ❌ {st.id} 失败 ({sub_status})")
+                except Exception as exc:
+                    click.echo(f"  ❌ {st_id} 异常: {exc}", err=True)
+                    with results_lock:
+                        failed_ids.add(st_id)
+                        prior_results.append({
+                            "sub_id": st_id, "status": "failed",
+                            "summary": str(exc), "changed_files": [],
+                            "retry_count": 0, "duration_sec": 0,
+                        })
+
+        # Save checkpoint after group completes
+        self.save_ckpt(self.parent_task_id, prior_results, list(completed_ids))
+
+        # Cleanup subtask workspaces
+        from multi_agent.config import subtask_workspace
+        for _st, subtask_id, _, _, _ in prepared:
+            with contextlib.suppress(OSError):
+                shutil.rmtree(str(subtask_workspace(subtask_id)), ignore_errors=True)
+
     def _handle_failure(
         self, st: Any, sub_start: float,
         prior_results: list[dict[str, Any]],
@@ -453,13 +620,14 @@ def _run_decomposed(
     decompose_file: str | None = None,
     no_cache: bool = False,
 ) -> None:
-    """Decompose → sequential sub-task build-review cycles → aggregate."""
+    """Decompose → grouped parallel/sequential sub-task build-review cycles → aggregate."""
     from multi_agent.cli import (  # type: ignore[attr-defined]
         _make_config,
         _run_single_task,
         _run_watch_loop,
         _show_waiting,
     )
+    from multi_agent.decompose import topo_sort_grouped
     from multi_agent.meta_graph import aggregate_results, build_sub_task_state
     from multi_agent.orchestrator import TaskStartError, start_task
     from multi_agent.workspace import clear_runtime, release_lock, save_task_yaml
@@ -513,14 +681,39 @@ def _run_decomposed(
         save_yaml=save_task_yaml, save_ckpt=save_checkpoint,
         clear_rt=clear_runtime,
     )
-    for i, st in enumerate(sorted_tasks, 1):
-        action = _exec_ctx.run_one(
-            i, total, st, prior_results, completed_ids, failed_ids, sorted_tasks,
-        )
-        if action == "return":
-            return
-        if action == "break":
+
+    # Phase 3b: Execute sub-tasks using parallel groups
+    # Groups from topo_sort_grouped: tasks in the same group have no
+    # inter-dependencies and can run in parallel.
+    try:
+        groups = topo_sort_grouped(decompose_result.sub_tasks)
+    except ValueError:
+        # Fallback to sequential if grouping fails (circular deps handled earlier)
+        groups = [[st] for st in sorted_tasks]
+
+    task_idx = 1
+    abort = False
+    for _group_idx, group in enumerate(groups, 1):
+        if abort:
             break
+
+        if len(group) == 1:
+            # Single task in group — run sequentially (original path)
+            st = group[0]
+            action = _exec_ctx.run_one(
+                task_idx, total, st, prior_results, completed_ids, failed_ids, sorted_tasks,
+            )
+            task_idx += 1
+            if action == "return":
+                return
+            if action == "break":
+                abort = True
+        else:
+            # Multiple independent tasks — run in parallel
+            _exec_ctx.run_group_parallel(
+                group, task_idx, total, prior_results, completed_ids, failed_ids,
+            )
+            task_idx += len(group)
 
     # Phase 4: Aggregate & report
     _finalize_decompose(
