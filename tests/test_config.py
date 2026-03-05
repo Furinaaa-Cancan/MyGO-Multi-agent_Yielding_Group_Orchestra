@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from multi_agent.config import load_project_config, root_dir, _find_root
+from multi_agent.config import load_project_config, root_dir, _find_root, agents_profile_path
 
 
 class TestLoadProjectConfig:
@@ -202,6 +202,189 @@ class TestFindRootDiagnostics:
             assert any("Scanned" in m for m in msgs)
             assert any("ma init" in m for m in msgs)
         finally:
+            root_dir.cache_clear()
+
+
+class TestMaRootWarning:
+    """Cover lines 24-25: MA_ROOT exists but missing skills/agents dirs."""
+
+    def test_missing_skills_agents_warns(self, tmp_path, monkeypatch):
+        # Create dir without skills/ or agents/ subdirs
+        monkeypatch.setenv("MA_ROOT", str(tmp_path))
+        root_dir.cache_clear()
+        try:
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                _find_root()
+            assert any("skills" in str(warning.message) and "agents" in str(warning.message) for warning in w)
+        finally:
+            monkeypatch.delenv("MA_ROOT", raising=False)
+            root_dir.cache_clear()
+
+
+class TestAgentsProfilePath:
+    def test_returns_expected_path(self, tmp_path, monkeypatch):
+        (tmp_path / "skills").mkdir()
+        (tmp_path / "agents").mkdir()
+        monkeypatch.setenv("MA_ROOT", str(tmp_path))
+        root_dir.cache_clear()
+        try:
+            result = agents_profile_path()
+            assert result == tmp_path.resolve() / "agents" / "profiles.json"
+        finally:
+            monkeypatch.delenv("MA_ROOT", raising=False)
+            root_dir.cache_clear()
+
+
+class TestProjectSettings:
+    """Cover ProjectSettings (MergedConfig) class — lines 194-245."""
+
+    def test_defaults_applied(self, tmp_path, monkeypatch):
+        from multi_agent.config import ProjectSettings
+        (tmp_path / "skills").mkdir()
+        (tmp_path / "agents").mkdir()
+        monkeypatch.setenv("MA_ROOT", str(tmp_path))
+        root_dir.cache_clear()
+        try:
+            ps = ProjectSettings()
+            assert ps.get("retry_budget") == 2
+            assert ps.get("timeout_sec") == 1800
+            assert ps.get("workflow_mode") == "strict"
+        finally:
+            monkeypatch.delenv("MA_ROOT", raising=False)
+            root_dir.cache_clear()
+
+    def test_overrides_take_precedence(self, tmp_path, monkeypatch):
+        from multi_agent.config import ProjectSettings
+        (tmp_path / "skills").mkdir()
+        (tmp_path / "agents").mkdir()
+        monkeypatch.setenv("MA_ROOT", str(tmp_path))
+        root_dir.cache_clear()
+        try:
+            ps = ProjectSettings(overrides={"retry_budget": 5, "builder": "cursor"})
+            assert ps.get("retry_budget") == 5
+            assert ps.get("builder") == "cursor"
+        finally:
+            monkeypatch.delenv("MA_ROOT", raising=False)
+            root_dir.cache_clear()
+
+    def test_ma_yaml_applied(self, tmp_path, monkeypatch):
+        from multi_agent.config import ProjectSettings
+        (tmp_path / "skills").mkdir()
+        (tmp_path / "agents").mkdir()
+        (tmp_path / ".ma.yaml").write_text(
+            yaml.dump({"default_builder": "windsurf", "retry_budget": 3}),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("MA_ROOT", str(tmp_path))
+        root_dir.cache_clear()
+        try:
+            ps = ProjectSettings()
+            assert ps.get("default_builder") == "windsurf"
+            assert ps.get("retry_budget") == 3
+        finally:
+            monkeypatch.delenv("MA_ROOT", raising=False)
+            root_dir.cache_clear()
+
+    def test_workmode_yaml_applied(self, tmp_path, monkeypatch):
+        from multi_agent.config import ProjectSettings
+        (tmp_path / "skills").mkdir()
+        (tmp_path / "agents").mkdir()
+        cfg_dir = tmp_path / "config"
+        cfg_dir.mkdir()
+        (cfg_dir / "workmode.yaml").write_text(yaml.dump({
+            "modes": {
+                "strict": {
+                    "roles": {"builder": "ws", "reviewer": "cursor"},
+                    "review_policy": {"require_evidence": True},
+                }
+            }
+        }), encoding="utf-8")
+        monkeypatch.setenv("MA_ROOT", str(tmp_path))
+        root_dir.cache_clear()
+        try:
+            ps = ProjectSettings(mode="strict")
+            assert ps.get("builder") == "ws"
+            assert ps.get("reviewer") == "cursor"
+            assert ps.get("review_policy") == {"require_evidence": True}
+        finally:
+            monkeypatch.delenv("MA_ROOT", raising=False)
+            root_dir.cache_clear()
+
+    def test_getitem_and_contains(self, tmp_path, monkeypatch):
+        from multi_agent.config import ProjectSettings
+        (tmp_path / "skills").mkdir()
+        (tmp_path / "agents").mkdir()
+        monkeypatch.setenv("MA_ROOT", str(tmp_path))
+        root_dir.cache_clear()
+        try:
+            ps = ProjectSettings()
+            assert ps["retry_budget"] == 2
+            assert "retry_budget" in ps
+            assert "nonexistent_key" not in ps
+        finally:
+            monkeypatch.delenv("MA_ROOT", raising=False)
+            root_dir.cache_clear()
+
+    def test_as_dict(self, tmp_path, monkeypatch):
+        from multi_agent.config import ProjectSettings
+        (tmp_path / "skills").mkdir()
+        (tmp_path / "agents").mkdir()
+        monkeypatch.setenv("MA_ROOT", str(tmp_path))
+        root_dir.cache_clear()
+        try:
+            ps = ProjectSettings()
+            d = ps.as_dict()
+            assert isinstance(d, dict)
+            assert "retry_budget" in d
+        finally:
+            monkeypatch.delenv("MA_ROOT", raising=False)
+            root_dir.cache_clear()
+
+    def test_workmode_yaml_missing_graceful(self, tmp_path, monkeypatch):
+        from multi_agent.config import ProjectSettings
+        (tmp_path / "skills").mkdir()
+        (tmp_path / "agents").mkdir()
+        # no config/workmode.yaml
+        monkeypatch.setenv("MA_ROOT", str(tmp_path))
+        root_dir.cache_clear()
+        try:
+            ps = ProjectSettings(mode="strict")
+            # Should not fail, just skip workmode
+            assert ps.get("workflow_mode") == "strict"
+        finally:
+            monkeypatch.delenv("MA_ROOT", raising=False)
+            root_dir.cache_clear()
+
+    def test_workmode_yaml_invalid_mode_cfg(self, tmp_path, monkeypatch):
+        from multi_agent.config import ProjectSettings
+        (tmp_path / "skills").mkdir()
+        (tmp_path / "agents").mkdir()
+        cfg_dir = tmp_path / "config"
+        cfg_dir.mkdir()
+        (cfg_dir / "workmode.yaml").write_text(yaml.dump({
+            "modes": {"strict": "not_a_dict"}
+        }), encoding="utf-8")
+        monkeypatch.setenv("MA_ROOT", str(tmp_path))
+        root_dir.cache_clear()
+        try:
+            ps = ProjectSettings(mode="strict")
+            assert ps.get("retry_budget") == 2  # defaults still applied
+        finally:
+            monkeypatch.delenv("MA_ROOT", raising=False)
+            root_dir.cache_clear()
+
+    def test_overrides_empty_values_skipped(self, tmp_path, monkeypatch):
+        from multi_agent.config import ProjectSettings
+        (tmp_path / "skills").mkdir()
+        (tmp_path / "agents").mkdir()
+        monkeypatch.setenv("MA_ROOT", str(tmp_path))
+        root_dir.cache_clear()
+        try:
+            ps = ProjectSettings(overrides={"builder": "", "reviewer": None})
+            assert ps.get("builder") == ""  # default is ""
+        finally:
+            monkeypatch.delenv("MA_ROOT", raising=False)
             root_dir.cache_clear()
 
 
