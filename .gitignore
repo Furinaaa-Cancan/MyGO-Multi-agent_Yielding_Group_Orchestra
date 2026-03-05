@@ -6,6 +6,7 @@ runtime/handoffs/
 ._*
 .venv/
 __pycache__/
+.coverage
 *.egg-info/
 
 # Multi-agent workspace runtime
