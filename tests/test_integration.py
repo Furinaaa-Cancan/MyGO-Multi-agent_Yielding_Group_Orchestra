@@ -210,3 +210,138 @@ class TestDecomposeIntegration:
         result = build_sub_task_state(st, parent_task_id="task-auth")
         assert result["parent_task_id"] == "task-auth"
         assert "login" in result["task_id"]
+
+
+class TestCancelFlow:
+    """Build-time cancellation → cancelled final status."""
+
+    def test_cancel_during_build(self):
+        from multi_agent.graph import build_node
+
+        with patch("multi_agent.graph._write_task_md"), \
+             patch("multi_agent.graph.write_dashboard"), \
+             patch("multi_agent.graph.save_state_snapshot"), \
+             patch("multi_agent.graph.write_inbox"), \
+             patch("multi_agent.graph._is_cancelled", return_value=True), \
+             patch("multi_agent.graph.interrupt", return_value={"status": "completed", "summary": "ok"}):
+            state = {
+                "task_id": "task-cancel",
+                "skill_id": "code-implement",
+                "builder_id": "ws", "reviewer_id": "cursor",
+                "done_criteria": ["works"], "timeout_sec": 600,
+                "started_at": 0, "build_started_at": None,
+                "conversation": [], "retry_budget": 2, "retry_count": 0,
+            }
+            result = build_node(state)
+        assert result["final_status"] == "cancelled"
+
+    def test_cancel_during_review(self):
+        from multi_agent.graph import review_node
+
+        with patch("multi_agent.graph.write_dashboard"), \
+             patch("multi_agent.graph._is_cancelled", return_value=True), \
+             patch("multi_agent.graph.interrupt", return_value={"decision": "approve"}):
+            state = {
+                "task_id": "task-cancel-rev",
+                "reviewer_id": "cursor", "builder_id": "ws",
+                "conversation": [], "timeout_sec": 600,
+                "started_at": 0,
+            }
+            result = review_node(state)
+        assert result["final_status"] == "cancelled"
+
+
+class TestRequestChangesCap:
+    """request_changes cap (3) → escalated."""
+
+    def test_rc_cap_escalates(self):
+        from multi_agent.graph import decide_node
+
+        # Conversation already has 3 request_changes actions
+        prior_convo = [
+            {"role": "orchestrator", "action": "request_changes", "t": 1.0},
+            {"role": "orchestrator", "action": "request_changes", "t": 2.0},
+            {"role": "orchestrator", "action": "request_changes", "t": 3.0},
+        ]
+        state = {
+            "task_id": "task-rc-cap",
+            "reviewer_output": {"decision": "request_changes", "feedback": "still wrong"},
+            "retry_count": 1, "retry_budget": 5,
+            "conversation": prior_convo, "done_criteria": ["works"],
+            "builder_id": "ws", "reviewer_id": "cursor",
+        }
+        with patch("multi_agent.graph.write_dashboard"), \
+             patch("multi_agent.graph.archive_conversation"):
+            result = decide_node(state)
+        assert result["final_status"] == "escalated"
+        assert result["error"] == "REQUEST_CHANGES_CAP"
+
+
+class TestRubberStampBlocking:
+    """Strict mode blocks rubber-stamp approval."""
+
+    def test_strict_blocks_rubber_stamp(self):
+        from multi_agent.graph import decide_node
+
+        state = {
+            "task_id": "task-rubber",
+            "reviewer_output": {
+                "decision": "approve", "feedback": "",
+                "summary": "ok", "reasoning": "",
+            },
+            "retry_count": 0, "retry_budget": 2,
+            "conversation": [], "done_criteria": ["works"],
+            "builder_id": "ws", "reviewer_id": "cursor",
+            "workflow_mode": "strict",
+        }
+        with patch("multi_agent.graph.write_dashboard"), \
+             patch("multi_agent.graph.archive_conversation"):
+            result = decide_node(state)
+        # Strict mode should NOT approve a rubber-stamp — should retry
+        assert result.get("final_status") != "approved"
+
+    def test_nonstrict_allows_rubber_stamp(self):
+        from multi_agent.graph import decide_node
+
+        state = {
+            "task_id": "task-rubber-ok",
+            "reviewer_output": {
+                "decision": "approve", "feedback": "",
+                "summary": "ok", "reasoning": "",
+            },
+            "retry_count": 0, "retry_budget": 2,
+            "conversation": [], "done_criteria": ["works"],
+            "builder_id": "ws", "reviewer_id": "cursor",
+            "workflow_mode": "normal",
+        }
+        with patch("multi_agent.graph.write_dashboard"), \
+             patch("multi_agent.graph.archive_conversation"):
+            result = decide_node(state)
+        # Non-strict mode allows approval even with rubber stamp
+        assert result["final_status"] == "approved"
+
+
+class TestReviewTimeout:
+    """Review timeout → reject with timeout feedback."""
+
+    def test_review_timeout_returns_reject(self):
+        import time
+
+        from multi_agent.graph import review_node
+
+        state = {
+            "task_id": "task-rev-timeout",
+            "reviewer_id": "cursor", "builder_id": "ws",
+            "done_criteria": ["works"], "timeout_sec": 10,
+            "started_at": time.time() - 100,
+            "review_started_at": time.time() - 100,
+            "conversation": [], "retry_budget": 2, "retry_count": 0,
+        }
+        with patch("multi_agent.graph.write_dashboard"), \
+             patch("multi_agent.graph._is_cancelled", return_value=False), \
+             patch("multi_agent.graph.interrupt", return_value={"decision": "approve", "summary": "ok"}):
+            result = review_node(state)
+        # Timeout produces a reject with timeout feedback
+        reviewer_out = result.get("reviewer_output", {})
+        assert reviewer_out.get("decision") == "reject"
+        assert "timeout" in reviewer_out.get("feedback", "").lower()
