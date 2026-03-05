@@ -690,6 +690,95 @@ def _write_all_prompts(task_id: str, roles: SessionRoles) -> dict[str, str]:
     return output
 
 
+def _acquire_session_lock(
+    task_id: str, existing: Any, existing_state: str, reset: bool,
+) -> bool:
+    """Validate lock ownership and acquire if needed. Returns True if acquired here."""
+    locked = read_lock()
+    if locked and locked != task_id:
+        raise ValueError(f"another task is active: {locked}")
+    if existing and existing.next and existing_state not in TERMINAL_STATES and not reset:
+        raise ValueError(f"task '{task_id}' is already active")
+    if not locked:
+        acquire_lock(task_id)
+        return True
+    return False
+
+
+def _build_initial_state(
+    task: dict[str, Any], task_id: str, mode: str,
+    review_policy: dict[str, Any] | None, roles: Any,
+) -> dict[str, Any]:
+    """Construct the initial LangGraph state dict for a new session."""
+    return {
+        "task_id": task_id,
+        "requirement": _task_requirement(task),
+        "skill_id": str(task.get("skill_id", "code-implement")),
+        "done_criteria": task.get("done_criteria", []),
+        "workflow_mode": mode,
+        "review_policy": review_policy,
+        "timeout_sec": int(task.get("timeout_sec", 1800)),
+        "retry_budget": int(task.get("retry_budget", 2)),
+        "retry_count": 0,
+        "input_payload": task.get("input_payload", {}),
+        "builder_explicit": roles.builder,
+        "reviewer_explicit": roles.reviewer,
+        "conversation": [],
+    }
+
+
+def _finalize_session_start(
+    task_id: str, task_path: Path, roles: Any, mode: str,
+) -> dict[str, Any]:
+    """Build status, write prompts, persist YAML, trace, and check terminal."""
+    status = _build_task_status(task_id, roles)
+    prompts = _write_all_prompts(task_id, roles)
+    status["prompt_paths"] = prompts
+    status["active_prompt"] = prompts.get(status.get("current_agent") or "", "")
+    status["mode"] = mode
+
+    is_terminal = status["state"] in TERMINAL_STATES
+    persisted_status = status["state"].lower() if is_terminal else "active"
+    save_task_yaml(
+        task_id,
+        {
+            "task_id": task_id,
+            "status": persisted_status,
+            "mode": "session",
+            "builder": roles.builder,
+            "reviewer": roles.reviewer,
+            "orchestrator": roles.orchestrator,
+            "source_task_file": str(task_path.resolve()),
+            "final_status": status.get("final_status"),
+            "updated_at": _now_utc(),
+        },
+    )
+
+    append_trace_event(
+        task_id=task_id,
+        event_type="session_start",
+        actor=roles.orchestrator,
+        role="orchestrator",
+        state=status["state"],
+        details={
+            "mode": mode,
+            "roles": roles.as_dict(),
+            "active_prompt": status["active_prompt"],
+        },
+        lane_id="main",
+    )
+
+    if is_terminal:
+        if read_lock() == task_id:
+            release_lock()
+        raise RuntimeError(
+            "session "
+            f"'{task_id}' entered terminal state during start: {status['state']}"
+            f" (final_status={status.get('final_status') or status['state'].lower()})"
+        )
+    return status
+
+
 def start_session(
     task_file: str,
     *,
@@ -715,19 +804,7 @@ def start_session(
     existing = app.get_state(cfg)
     existing_state, _, _ = _state_from_snapshot(existing)
 
-    # Never clear runtime/checkpoints before confirming the global lock owner.
-    # This prevents one task from deleting another task's shared files.
-    locked = read_lock()
-    if locked and locked != task_id:
-        raise ValueError(f"another task is active: {locked}")
-
-    if existing and existing.next and existing_state not in TERMINAL_STATES and not reset:
-        raise ValueError(f"task '{task_id}' is already active")
-
-    acquired_here = False
-    if not locked:
-        acquire_lock(task_id)
-        acquired_here = True
+    acquired_here = _acquire_session_lock(task_id, existing, existing_state, reset)
 
     try:
         if roles.builder == roles.reviewer:
@@ -741,72 +818,14 @@ def start_session(
             _clear_task_artifacts(task_id)
             clear_runtime()
 
-        initial_state = {
-            "task_id": task_id,
-            "requirement": _task_requirement(task),
-            "skill_id": str(task.get("skill_id", "code-implement")),
-            "done_criteria": task.get("done_criteria", []),
-            "workflow_mode": mode,
-            "review_policy": review_policy,
-            "timeout_sec": int(task.get("timeout_sec", 1800)),
-            "retry_budget": int(task.get("retry_budget", 2)),
-            "retry_count": 0,
-            "input_payload": task.get("input_payload", {}),
-            "builder_explicit": roles.builder,
-            "reviewer_explicit": roles.reviewer,
-            "conversation": [],
-        }
+        initial_state = _build_initial_state(task, task_id, mode, review_policy, roles)
 
         try:
             app.invoke(initial_state, cfg)
         except GraphInterrupt:
             pass
 
-        status = _build_task_status(task_id, roles)
-        prompts = _write_all_prompts(task_id, roles)
-        status["prompt_paths"] = prompts
-        status["active_prompt"] = prompts.get(status.get("current_agent") or "", "")
-        status["mode"] = mode
-
-        is_terminal = status["state"] in TERMINAL_STATES
-        persisted_status = status["state"].lower() if is_terminal else "active"
-        save_task_yaml(
-            task_id,
-            {
-                "task_id": task_id,
-                "status": persisted_status,
-                "mode": "session",
-                "builder": roles.builder,
-                "reviewer": roles.reviewer,
-                "orchestrator": roles.orchestrator,
-                "source_task_file": str(task_path.resolve()),
-                "final_status": status.get("final_status"),
-                "updated_at": _now_utc(),
-            },
-        )
-
-        append_trace_event(
-            task_id=task_id,
-            event_type="session_start",
-            actor=roles.orchestrator,
-            role="orchestrator",
-            state=status["state"],
-            details={
-                "mode": mode,
-                "roles": roles.as_dict(),
-                "active_prompt": status["active_prompt"],
-            },
-            lane_id="main",
-        )
-
-        if is_terminal:
-            if read_lock() == task_id:
-                release_lock()
-            raise RuntimeError(
-                "session "
-                f"'{task_id}' entered terminal state during start: {status['state']}"
-                f" (final_status={status.get('final_status') or status['state'].lower()})"
-            )
+        status = _finalize_session_start(task_id, task_path, roles, mode)
         return status
     except Exception as exc:
         if (
@@ -870,51 +889,10 @@ def session_pull(task_id: str, agent: str, *, out: str | None = None) -> dict[st
     }
 
 
-def session_push(task_id: str, agent: str, file_path: str) -> dict[str, Any]:
-    _validate_task_id(task_id)
-    app = _compile_graph_app()
-    cfg = _config(task_id)
-    snapshot = app.get_state(cfg)
-    state, current_role, current_agent = _state_from_snapshot(snapshot)
-    vals = getattr(snapshot, "values", {}) if snapshot else {}
-    workflow_mode = str(vals.get("workflow_mode", "")).lower().strip() or "normal"
-    review_policy = vals.get("review_policy")
-    if not isinstance(review_policy, dict):
-        review_policy = {}
-    if state in TERMINAL_STATES:
-        raise ValueError(f"task is already terminal: {state}")
-    if current_agent != agent:
-        raise ValueError(f"current owner is '{current_agent}', not '{agent}'")
-    if current_role not in {"builder", "reviewer"}:
-        raise ValueError(f"unsupported current role for push: {current_role}")
-
-    raw = Path(file_path).read_text(encoding="utf-8")
-    raw_obj = _parse_json_payload(raw)
-    envelope = _normalize_envelope(
-        raw_obj,
-        task_id=task_id,
-        agent=agent,
-        current_role=current_role,
-        current_state=state,
-        workflow_mode=workflow_mode,
-        review_policy=review_policy,
-    )
-    handoff = _save_handoff(task_id, agent, envelope)
-
-    append_trace_event(
-        task_id=task_id,
-        event_type="handoff_submit",
-        actor=agent,
-        role=current_role,
-        state=state,
-        details={
-            "handoff_file": str(handoff),
-            "recommended_event": envelope.get("recommended_event", ""),
-        },
-        lane_id=str(envelope.get("lane_id", "main")),
-    )
-
-    result = dict(envelope["result"])
+def _submit_memory_candidates(
+    task_id: str, agent: str, envelope: dict[str, Any], result: dict[str, Any],
+) -> None:
+    """Extract and submit memory candidates from envelope/result."""
     candidates = envelope.get("memory_candidates")
     if not isinstance(candidates, list) or not candidates:
         nested = result.get("memory_candidates")
@@ -923,21 +901,11 @@ def session_push(task_id: str, agent: str, file_path: str) -> dict[str, Any]:
     if isinstance(candidates, list) and candidates:
         add_pending_candidates(task_id, candidates, actor=agent)
 
-    try:
-        app.invoke(Command(resume=result), cfg)
-    except GraphInterrupt:
-        pass
 
-    after = _build_task_status(task_id)
-    _write_all_prompts(
-        task_id,
-        SessionRoles(
-            orchestrator=after["roles"]["orchestrator"],
-            builder=after["roles"]["builder"],
-            reviewer=after["roles"]["reviewer"],
-        ),
-    )
-
+def _post_push_hooks(
+    task_id: str, current_role: str, result: dict[str, Any], after: dict[str, Any],
+) -> None:
+    """Handle memory promotion, terminal cleanup, and state trace after push."""
     decision = str(result.get("decision", "")).lower().strip() if current_role == "reviewer" else ""
     if current_role == "reviewer" and decision == "approve":
         final_status = str(after.get("final_status", "")).lower().strip()
@@ -984,6 +952,71 @@ def session_push(task_id: str, agent: str, file_path: str) -> dict[str, Any]:
         },
         lane_id="main",
     )
+
+
+def session_push(task_id: str, agent: str, file_path: str) -> dict[str, Any]:
+    _validate_task_id(task_id)
+    app = _compile_graph_app()
+    cfg = _config(task_id)
+    snapshot = app.get_state(cfg)
+    state, current_role, current_agent = _state_from_snapshot(snapshot)
+    vals = getattr(snapshot, "values", {}) if snapshot else {}
+    workflow_mode = str(vals.get("workflow_mode", "")).lower().strip() or "normal"
+    review_policy = vals.get("review_policy")
+    if not isinstance(review_policy, dict):
+        review_policy = {}
+    if state in TERMINAL_STATES:
+        raise ValueError(f"task is already terminal: {state}")
+    if current_agent != agent:
+        raise ValueError(f"current owner is '{current_agent}', not '{agent}'")
+    if current_role not in {"builder", "reviewer"}:
+        raise ValueError(f"unsupported current role for push: {current_role}")
+
+    raw = Path(file_path).read_text(encoding="utf-8")
+    raw_obj = _parse_json_payload(raw)
+    envelope = _normalize_envelope(
+        raw_obj,
+        task_id=task_id,
+        agent=agent,
+        current_role=current_role,
+        current_state=state,
+        workflow_mode=workflow_mode,
+        review_policy=review_policy,
+    )
+    handoff = _save_handoff(task_id, agent, envelope)
+
+    append_trace_event(
+        task_id=task_id,
+        event_type="handoff_submit",
+        actor=agent,
+        role=current_role,
+        state=state,
+        details={
+            "handoff_file": str(handoff),
+            "recommended_event": envelope.get("recommended_event", ""),
+        },
+        lane_id=str(envelope.get("lane_id", "main")),
+    )
+
+    result = dict(envelope["result"])
+    _submit_memory_candidates(task_id, agent, envelope, result)
+
+    try:
+        app.invoke(Command(resume=result), cfg)
+    except GraphInterrupt:
+        pass
+
+    after = _build_task_status(task_id)
+    _write_all_prompts(
+        task_id,
+        SessionRoles(
+            orchestrator=after["roles"]["orchestrator"],
+            builder=after["roles"]["builder"],
+            reviewer=after["roles"]["reviewer"],
+        ),
+    )
+
+    _post_push_hooks(task_id, current_role, result, after)
 
     return {
         "task_id": task_id,

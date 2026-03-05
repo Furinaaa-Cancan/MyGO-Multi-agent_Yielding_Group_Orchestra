@@ -283,17 +283,25 @@ def check_workspace_health() -> list[str]:
                 issues.append(f"Orphan lock: task '{lock_content}' has no YAML file")
 
     # Check oversized files
-    if ws.exists():
-        for f in ws.rglob("*"):
-            if f.is_file():
-                try:
-                    size_mb = f.stat().st_size / (1024 * 1024)
-                    if size_mb > MAX_FILE_SIZE_MB:
-                        issues.append(f"Oversized file ({size_mb:.1f}MB): {f.relative_to(ws)}")
-                except OSError:
-                    pass
+    issues.extend(_find_oversized_files(ws))
 
     return issues
+
+
+def _find_oversized_files(ws: Path) -> list[str]:
+    """Scan workspace for files exceeding MAX_FILE_SIZE_MB."""
+    found: list[str] = []
+    if not ws.exists():
+        return found
+    for f in ws.rglob("*"):
+        if f.is_file():
+            try:
+                size_mb = f.stat().st_size / (1024 * 1024)
+                if size_mb > MAX_FILE_SIZE_MB:
+                    found.append(f"Oversized file ({size_mb:.1f}MB): {f.relative_to(ws)}")
+            except OSError:
+                pass
+    return found
 
 
 def get_workspace_stats() -> dict[str, Any]:
