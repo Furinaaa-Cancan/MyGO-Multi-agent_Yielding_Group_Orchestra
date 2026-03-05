@@ -9,8 +9,11 @@ import os
 import shutil
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
+
+_F = TypeVar("_F", bound=Callable[..., Any])
 
 from multi_agent.config import (
     history_dir,
@@ -26,16 +29,16 @@ FILE_OP_RETRIES = 3
 FILE_OP_DELAY = 0.1
 
 
-def retry_file_op(retries: int = FILE_OP_RETRIES, delay: float = FILE_OP_DELAY):  # type: ignore[misc]
+def retry_file_op(retries: int = FILE_OP_RETRIES, delay: float = FILE_OP_DELAY) -> Callable[[_F], _F]:
     """Retry decorator for file operations that may fail due to transient OS errors.
 
     Uses exponential backoff with jitter to avoid thundering-herd on shared
     filesystems (literature: production AI error handling best practice).
     """
     import random
-    def decorator(fn):
+    def decorator(fn: _F) -> _F:
         @functools.wraps(fn)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             last_err = None
             for attempt in range(retries):
                 try:
@@ -50,7 +53,7 @@ def retry_file_op(retries: int = FILE_OP_RETRIES, delay: float = FILE_OP_DELAY):
                         backoff = delay * (2 ** attempt) + random.uniform(0, delay)
                         time.sleep(backoff)
             raise last_err  # type: ignore[misc]
-        return wrapper
+        return wrapper  # type: ignore[return-value]  # functools.wraps preserves signature
     return decorator
 
 

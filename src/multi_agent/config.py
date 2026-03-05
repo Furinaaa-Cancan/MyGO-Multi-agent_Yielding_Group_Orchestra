@@ -113,9 +113,10 @@ def _validate_numeric_field(
     val = data[key]
     if not isinstance(val, types):
         return f"{key} {type_msg}"
-    if max_val is not None and min_val is not None and not (min_val <= val <= max_val):
+    num: float = float(val)  # type: ignore[arg-type]  # isinstance-guarded above
+    if max_val is not None and min_val is not None and not (min_val <= num <= max_val):
         return range_msg or f"{key}={val} out of range ({int(min_val)}-{int(max_val)})"
-    if min_val is not None and max_val is None and val < min_val:
+    if min_val is not None and max_val is None and num < min_val:
         return range_msg or f"{key} must be >= {min_val}, got {val}"
     return None
 

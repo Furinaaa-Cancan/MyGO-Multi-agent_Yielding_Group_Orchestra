@@ -8,7 +8,7 @@ import logging
 import re
 import sqlite3
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from operator import add
 from typing import Annotated, Any
 
@@ -46,7 +46,7 @@ MAX_TASK_DURATION_SEC = 7200  # 2h total task guard (OWASP LLM10:2025 DoW preven
 class GraphStats:
     """Collect graph execution statistics per node."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._stats: dict[str, dict[str, Any]] = {}
         self._retry_outcomes: list[dict[str, Any]] = []
 
@@ -144,7 +144,7 @@ class GraphStats:
         self._stats.clear()
         self._retry_outcomes.clear()
 
-    def save(self, path=None) -> None:
+    def save(self, path: Any = None) -> None:
         """Save stats to .multi-agent/stats.json."""
         from multi_agent.config import workspace_dir as _ws
         p = path or (_ws() / "stats.json")
@@ -305,7 +305,7 @@ class EventHooks:
 graph_hooks = EventHooks()
 
 
-def register_hook(event: str, callback) -> None:
+def register_hook(event: str, callback: Callable[..., Any]) -> None:
     """Register a callback for a graph event (public API).
 
     Supported events: plan_start, build_submit, review_submit,
@@ -336,7 +336,10 @@ def register_hook(event: str, callback) -> None:
 # ── Node Decorator ────────────────────────────────────────
 
 
-def _graph_node(node_name: str):
+_NodeFn = Callable[["WorkflowState"], dict[str, Any]]
+
+
+def _graph_node(node_name: str) -> Callable[[_NodeFn], _NodeFn]:
     """Decorator that wraps a node's inner function with standardised
     timing, stats collection, snapshot saving, and error handling.
 
@@ -344,7 +347,7 @@ def _graph_node(node_name: str):
     across plan_node, build_node, review_node, and decide_node.
     """
 
-    def decorator(inner_fn):
+    def decorator(inner_fn: _NodeFn) -> _NodeFn:
         @functools.wraps(inner_fn)
         def wrapper(state: WorkflowState) -> dict[str, Any]:
             _t0 = time.time()
@@ -1183,10 +1186,10 @@ def build_graph() -> StateGraph:  # type: ignore[type-arg]
     """Build the 4-node LangGraph workflow (uncompiled)."""
     g = StateGraph(WorkflowState)
 
-    g.add_node("plan", plan_node)
-    g.add_node("build", build_node)
-    g.add_node("review", review_node)
-    g.add_node("decide", decide_node)
+    g.add_node("plan", plan_node)  # type: ignore[call-overload]  # LangGraph stub limitation
+    g.add_node("build", build_node)  # type: ignore[call-overload]
+    g.add_node("review", review_node)  # type: ignore[call-overload]
+    g.add_node("decide", decide_node)  # type: ignore[call-overload]
 
     g.add_edge(START, "plan")
     g.add_edge("plan", "build")
@@ -1254,7 +1257,7 @@ def reset_graph() -> None:
         _conn_pool.clear()
 
 
-def compile_graph(*, db_path: str | None = None):
+def compile_graph(*, db_path: str | None = None) -> Any:
     """Compile graph with SQLite checkpointer (connection-pooled, cached).
 
     G3: Protected by _conn_lock to prevent concurrent threads from
@@ -1290,7 +1293,7 @@ def compile_graph(*, db_path: str | None = None):
 # decorated function.  functools.wraps preserves __wrapped__ pointing to the
 # original inner function.  Expose _*_node_inner names so existing tests that
 # call the inner logic directly (bypassing timing/stats) keep working.
-_plan_node_inner = plan_node.__wrapped__     # type: ignore[attr-defined]
-_build_node_inner = build_node.__wrapped__   # type: ignore[attr-defined]
-_review_node_inner = review_node.__wrapped__ # type: ignore[attr-defined]
-_decide_node_inner = decide_node.__wrapped__ # type: ignore[attr-defined]
+_plan_node_inner = plan_node.__wrapped__     # type: ignore[attr-defined]  # functools.wraps
+_build_node_inner = build_node.__wrapped__   # type: ignore[attr-defined]  # functools.wraps
+_review_node_inner = review_node.__wrapped__ # type: ignore[attr-defined]  # functools.wraps
+_decide_node_inner = decide_node.__wrapped__ # type: ignore[attr-defined]  # functools.wraps
