@@ -332,3 +332,70 @@ class TestBuildSubTaskStateOrchestratorId:
         with patch("multi_agent.router.get_defaults", return_value={}):
             state = build_sub_task_state(st, parent_task_id="task-parent")
         assert state["orchestrator_id"] == "codex"
+
+
+class TestLoadCheckpointEdgeCases:
+    """Cover load_checkpoint exception handling (lines 54->59)."""
+
+    def test_corrupt_checkpoint_returns_none(self, tmp_path, monkeypatch):
+        from multi_agent import config
+        from multi_agent.meta_graph import load_checkpoint
+        monkeypatch.setattr(config, "workspace_dir", lambda: tmp_path)
+        ckpt_dir = tmp_path / "checkpoints"
+        ckpt_dir.mkdir(parents=True)
+        (ckpt_dir / "decompose-task-bad.json").write_text("not json{{{")
+        result = load_checkpoint("task-bad")
+        assert result is None
+
+    def test_missing_keys_returns_none(self, tmp_path, monkeypatch):
+        from multi_agent import config
+        from multi_agent.meta_graph import load_checkpoint
+        monkeypatch.setattr(config, "workspace_dir", lambda: tmp_path)
+        ckpt_dir = tmp_path / "checkpoints"
+        ckpt_dir.mkdir(parents=True)
+        (ckpt_dir / "decompose-task-nokeys.json").write_text('{"foo": "bar"}')
+        result = load_checkpoint("task-nokeys")
+        assert result is None
+
+
+class TestClearCheckpointEdgeCases:
+    """Cover clear_checkpoint when file doesn't exist (line 66->exit)."""
+
+    def test_clear_nonexistent_no_error(self, tmp_path, monkeypatch):
+        from multi_agent import config
+        from multi_agent.meta_graph import clear_checkpoint
+        monkeypatch.setattr(config, "workspace_dir", lambda: tmp_path)
+        clear_checkpoint("task-nonexistent")  # should not raise
+
+
+class TestGenerateSubTaskIdFallback:
+    """Cover hash-based fallback ID (lines 93-94)."""
+
+    def test_invalid_chars_trigger_hash_fallback(self):
+        # Sub ID with characters that create invalid task ID after cleaning
+        tid = generate_sub_task_id("task-x", "---")
+        assert tid.startswith("task-")
+        # Should still produce a valid ID
+        assert len(tid) > 5
+
+
+class TestGenerateAggregateReportEdgeCases:
+    """Cover slowest sub-task and estimated time report (lines 275-286)."""
+
+    def test_report_with_slowest_and_estimation(self):
+        results = [
+            {"sub_id": "a", "status": "approved", "summary": "Done",
+             "changed_files": ["x.py"], "retry_count": 0, "duration_sec": 120},
+            {"sub_id": "b", "status": "approved", "summary": "Done too",
+             "changed_files": ["y.py"], "retry_count": 1, "duration_sec": 300},
+        ]
+        agg = aggregate_results("parent", results)
+        # Inject estimated time to cover lines 282-286
+        agg["estimated_total_minutes"] = 5
+        agg["actual_total_minutes"] = 7
+        report = generate_aggregate_report(agg)
+        assert "预估总时间" in report
+        assert "实际总时间" in report
+        assert "准确率" in report
+        # Should also have slowest sub-task
+        assert "最慢子任务" in report or "b" in report

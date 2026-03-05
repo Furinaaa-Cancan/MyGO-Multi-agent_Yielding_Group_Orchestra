@@ -239,6 +239,32 @@ class TestRunSingleQueueTask:
 # ── _print_summary ────────────────────────────────────
 
 
+class TestQueueRunCLIEdgeCases:
+    """Cover CLI guard clauses: no tasks, filtered empty (lines 69-70, 84-85)."""
+
+    def test_empty_queue_file(self, runner, tmp_path):
+        md = tmp_path / "empty.md"
+        md.write_text("# No tasks here\n\nJust text.\n")
+        result = runner.invoke(main, ["queue", "run", str(md), "--dry-run"])
+        assert "未找到任务" in result.output
+
+    def test_filtered_to_empty(self, runner, queue_md):
+        result = runner.invoke(main, ["queue", "run", str(queue_md), "--only", "99", "--dry-run"])
+        assert "过滤后无任务" in result.output
+
+
+class TestRunQueuePause:
+    """Cover pause between tasks (line 210)."""
+
+    def test_pause_between_tasks(self):
+        mock_result = type("R", (), {"returncode": 0})()
+        with patch("subprocess.run", return_value=mock_result), \
+             patch("time.sleep") as mock_sleep:
+            run_queue([(1, "T1", "p1"), (2, "T2", "p2")], "ws", "ag", 60, pause=1)
+        # Should pause once (between task 1 and 2, not after the last)
+        mock_sleep.assert_called_once_with(1)
+
+
 class TestPrintSummary:
     def test_prints_passed_and_failed(self, capsys):
         _print_summary({"passed": [1, 2], "failed": [3], "elapsed": "0h 0m 5s"})
