@@ -412,6 +412,15 @@ class _DecomposeExecContext:
         # Save checkpoint after group completes
         self.save_ckpt(self.parent_task_id, prior_results, list(completed_ids))
 
+        # Close visible terminals before cleaning up workspaces
+        if self.visible:
+            from multi_agent.driver import close_visible_terminal
+            for _st, subtask_id, _, _, _ in prepared:
+                with contextlib.suppress(Exception):
+                    close_visible_terminal(subtask_id=subtask_id)
+            import time as _time
+            _time.sleep(1)  # give wrapper scripts time to see .done and exit
+
         # Cleanup subtask workspaces
         from multi_agent.config import subtask_workspace
         for _st, subtask_id, _, _, _ in prepared:

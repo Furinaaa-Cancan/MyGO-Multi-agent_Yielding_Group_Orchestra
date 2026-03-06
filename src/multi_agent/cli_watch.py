@@ -234,4 +234,7 @@ def _run_watch_loop(app: Any, config: dict[str, Any], task_id: str, interval: fl
 
             time.sleep(interval)
     except KeyboardInterrupt:
+        if visible and subtask_id:
+            from multi_agent.driver import close_visible_terminal
+            close_visible_terminal(subtask_id=subtask_id)
         click.echo("\n⏹️  Watch stopped. Task still active — resume with: my watch")
