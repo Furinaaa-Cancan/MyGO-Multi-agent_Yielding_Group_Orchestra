@@ -92,6 +92,47 @@ def subtask_outbox_dir(subtask_id: str) -> Path:
     return subtask_workspace(subtask_id) / "outbox"
 
 
+# ── Agent Persona Names (MyGO!!!!! band members) ─────────
+
+_DEFAULT_AGENT_NAMES: list[str] = [
+    "燈 (Tomori)",      # Vo.
+    "愛音 (Anon)",      # Gt.
+    "そよ (Soyo)",      # Ba.
+    "楽奈 (Raana)",     # Gt.
+    "立希花 (Taki)",    # Dr.
+]
+
+_custom_names: list[str] | None = None
+
+
+def set_agent_names(names: list[str]) -> None:
+    """Override agent persona names (user customization)."""
+    global _custom_names
+    _custom_names = list(names)
+
+
+def get_agent_name(index: int) -> str:
+    """Get persona name for the *index*-th parallel agent (0-based, wraps)."""
+    names = _custom_names or _DEFAULT_AGENT_NAMES
+    return names[index % len(names)]
+
+
+def get_all_agent_names() -> list[str]:
+    """Return current agent persona name list."""
+    return list(_custom_names or _DEFAULT_AGENT_NAMES)
+
+
+def load_agent_names_from_config() -> None:
+    """Load custom agent names from .ma.yaml if present."""
+    try:
+        proj = load_project_config()
+        custom = proj.get("agent_names")
+        if isinstance(custom, list) and all(isinstance(n, str) for n in custom):
+            set_agent_names(custom)
+    except Exception:
+        pass
+
+
 def tasks_dir() -> Path:
     return workspace_dir() / "tasks"
 

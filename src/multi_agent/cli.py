@@ -371,6 +371,10 @@ def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer
 
     ensure_workspace()
 
+    # Load custom agent persona names from .ma.yaml (if any)
+    from multi_agent.config import load_agent_names_from_config
+    load_agent_names_from_config()
+
     if task_id:
         _validate_task_id(task_id)
     _validate_skill_id(skill)

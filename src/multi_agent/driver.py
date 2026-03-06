@@ -251,6 +251,11 @@ def spawn_cli_agent(
     return t
 
 
+# Global counter for assigning persona names to parallel agents
+_terminal_counter: int = 0
+_terminal_counter_lock = threading.Lock()
+
+
 def spawn_cli_in_terminal(
     agent_id: str,
     role: str,
@@ -259,12 +264,25 @@ def spawn_cli_in_terminal(
     timeout_sec: int = 600,
     subtask_id: str | None = None,
     title: str | None = None,
+    persona_index: int | None = None,
 ) -> None:
     """Open a new Terminal.app window running the CLI agent visibly.
 
     The user can watch Codex/Claude working in real-time. A wrapper script
     handles output capture and writes the result to the outbox file.
+    Terminal windows are named after MyGO!!!!! band members by default.
     """
+    from multi_agent.config import get_agent_name
+
+    # Assign persona name
+    if persona_index is not None:
+        persona = get_agent_name(persona_index)
+    else:
+        global _terminal_counter
+        with _terminal_counter_lock:
+            persona = get_agent_name(_terminal_counter)
+            _terminal_counter += 1
+
     if subtask_id:
         task_file = str(subtask_task_file(subtask_id))
         outbox_file = str(subtask_outbox_dir(subtask_id) / f"{role}.json")
@@ -274,9 +292,9 @@ def spawn_cli_in_terminal(
 
     cmd_str = command_template.format(task_file=task_file, outbox_file=outbox_file)
     cwd = project_dir or str(Path.cwd())
-    label = title or f"{agent_id}/{role}"
+    label = title or f"{persona} · {agent_id}/{role}"
     if subtask_id:
-        label = f"{subtask_id} · {label}"
+        label = f"{persona} · {subtask_id}"
 
     # Write a wrapper script that runs the command visibly and captures output
     fd, wrapper_path = tempfile.mkstemp(

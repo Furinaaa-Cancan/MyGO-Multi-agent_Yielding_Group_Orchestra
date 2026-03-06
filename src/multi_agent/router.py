@@ -139,10 +139,14 @@ def resolve_reviewer(
     """
     if explicit:
         if explicit == builder_id:
-            raise ValueError(
-                f"Reviewer cannot be the same as builder ({builder_id}). "
-                f"Cross-model adversarial review requires different IDEs."
-            )
+            from multi_agent.driver import get_agent_driver
+            drv = get_agent_driver(explicit)
+            if drv["driver"] == "file":
+                raise ValueError(
+                    f"Reviewer cannot be the same as builder ({builder_id}) in file mode. "
+                    f"Cross-model adversarial review requires different IDEs."
+                )
+            _log.info("Same agent '%s' for builder and reviewer (cli/gui mode)", builder_id)
         known_ids = {a.id for a in agents}
         if known_ids and explicit not in known_ids:
             _log.warning(
