@@ -458,3 +458,37 @@ class TestDispatchAgent:
         assert r.mode == "auto"
         assert r.thread is None
         assert r.message == "test"
+
+    def test_manual_mode_with_subtask_id(self):
+        with patch("multi_agent.driver.get_agent_driver", return_value={"driver": "file", "command": ""}):
+            result = driver.dispatch_agent("ws", "builder", subtask_id="sub-1")
+        assert result.mode == "manual"
+        assert "subtasks/sub-1/TASK.md" in result.message
+
+    def test_degraded_mode_with_subtask_id(self):
+        with patch("multi_agent.driver.get_agent_driver", return_value={"driver": "cli", "command": "missing-bin run"}), \
+             patch("multi_agent.driver.can_use_cli", return_value=False):
+            result = driver.dispatch_agent("ws", "builder", subtask_id="sub-2")
+        assert result.mode == "degraded"
+        assert "subtasks/sub-2/TASK.md" in result.message
+
+    def test_auto_mode_passes_subtask_id(self):
+        with patch("multi_agent.driver.get_agent_driver", return_value={"driver": "cli", "command": "echo test"}), \
+             patch("multi_agent.driver.can_use_cli", return_value=True), \
+             patch("multi_agent.driver.spawn_cli_agent", return_value=MagicMock()) as mock_spawn:
+            driver.dispatch_agent("ws", "builder", subtask_id="sub-3")
+        assert mock_spawn.call_args[1].get("subtask_id") == "sub-3"
+
+    def test_gui_mode_passes_subtask_id(self):
+        with patch("multi_agent.driver.get_agent_driver", return_value={"driver": "gui", "command": "", "app_name": "Codex"}), \
+             patch("multi_agent.driver.can_use_gui", return_value=True), \
+             patch("multi_agent.driver.spawn_gui_agent", return_value=MagicMock()) as mock_spawn:
+            driver.dispatch_agent("codex", "reviewer", subtask_id="sub-4")
+        assert mock_spawn.call_args[1].get("subtask_id") == "sub-4"
+
+    def test_gui_degraded_with_subtask_id(self):
+        with patch("multi_agent.driver.get_agent_driver", return_value={"driver": "gui", "command": "", "app_name": "Codex"}), \
+             patch("multi_agent.driver.can_use_gui", return_value=False):
+            result = driver.dispatch_agent("codex", "reviewer", subtask_id="sub-5")
+        assert result.mode == "degraded"
+        assert "subtasks/sub-5/TASK.md" in result.message

@@ -374,6 +374,8 @@ def spawn_gui_agent(
     agent_id: str,
     role: str,
     app_name: str,
+    *,
+    subtask_id: str | None = None,
 ) -> threading.Thread:
     """Send task prompt to a desktop IDE app via GUI automation.
 
@@ -383,9 +385,15 @@ def spawn_gui_agent(
     """
     # Keep message SHORT — IDE chat input can't handle large paste.
     # Use @-relative file reference; works because my go runs from the target project.
+    if subtask_id:
+        task_rel = f".multi-agent/subtasks/{subtask_id}/TASK.md"
+        outbox_rel = f".multi-agent/subtasks/{subtask_id}/outbox/{role}.json"
+    else:
+        task_rel = ".multi-agent/TASK.md"
+        outbox_rel = f".multi-agent/outbox/{role}.json"
     message = (
-        f"帮我完成 @.multi-agent/TASK.md 里的任务，"
-        f"完成后将 JSON 输出保存到 @.multi-agent/outbox/{role}.json"
+        f"帮我完成 @{task_rel} 里的任务，"
+        f"完成后将 JSON 输出保存到 @{outbox_rel}"
     )
 
     def _run() -> None:
@@ -436,6 +444,7 @@ def dispatch_agent(
     """
     drv = get_agent_driver(agent_id)
     step_label = "Build" if role == "builder" else "Review"
+    task_path = subtask_task_file(subtask_id) if subtask_id else workspace_dir() / "TASK.md"
 
     if drv["driver"] == "cli" and drv["command"]:
         if can_use_cli(drv["command"]):
@@ -453,14 +462,14 @@ def dispatch_agent(
             message=(
                 f"⚠️  {agent_id} 配置为 CLI 模式但 `{binary}` 未安装，降级为手动模式\n"
                 f"📋 [{step_label}] 在 {agent_id} IDE 里对 AI 说:\n"
-                f'   "请完成 {workspace_dir() / "TASK.md"} 里的任务"'
+                f'   "请完成 {task_path} 里的任务"'
             ),
         )
 
     if drv["driver"] == "gui" and drv.get("app_name"):
         app_name = drv["app_name"]
         if can_use_gui():
-            thread = spawn_gui_agent(agent_id, role, app_name)
+            thread = spawn_gui_agent(agent_id, role, app_name, subtask_id=subtask_id)
             return DispatchResult(
                 mode="auto",
                 thread=thread,
@@ -473,12 +482,11 @@ def dispatch_agent(
             message=(
                 f"⚠️  {agent_id} 配置为 GUI 模式但 osascript 不可用，降级为手动模式\n"
                 f"📋 [{step_label}] 在 {agent_id} IDE 里对 AI 说:\n"
-                f'   "请完成 {workspace_dir() / "TASK.md"} 里的任务"'
+                f'   "请完成 {task_path} 里的任务"'
             ),
         )
 
     # File-based (manual) driver
-    task_path = workspace_dir() / "TASK.md"
     return DispatchResult(
         mode="manual",
         thread=None,
