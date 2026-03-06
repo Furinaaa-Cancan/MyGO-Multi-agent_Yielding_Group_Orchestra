@@ -227,7 +227,7 @@ class _DecomposeExecContext:
             failed_ids.add(st.id)
             return None
 
-        self.show_waiting(self.app, sub_config)
+        self.show_waiting(self.app, sub_config, visible=self.visible)
         if self.no_watch:
             click.echo(f"📌 Sub-task {st.id}: 等待手动 my done")
             click.echo("⚠️  --no-watch 模式下 --decompose 只执行第一步分解。")
@@ -238,17 +238,17 @@ class _DecomposeExecContext:
             })
             return "return"
 
-        self.watch_loop(self.app, sub_config, sub_task_id, manage_lock=False)
+        self.watch_loop(self.app, sub_config, sub_task_id, manage_lock=False, visible=self.visible)
 
         result = _collect_sub_result(self.app, sub_config, st, sub_start)
         sub_status = result["status"]
         prior_results.append(result)
-        completed_ids.add(st.id)
-        self.save_ckpt(self.parent_task_id, prior_results, list(completed_ids))
 
-        done_count2 = len([r for r in prior_results if r["status"] in ("approved", "completed", "skipped")])
-        pct2 = int(done_count2 / total * 100)
         if sub_status in ("approved", "completed"):
+            completed_ids.add(st.id)
+            self.save_ckpt(self.parent_task_id, prior_results, list(completed_ids))
+            done_count2 = len([r for r in prior_results if r["status"] in ("approved", "completed", "skipped")])
+            pct2 = int(done_count2 / total * 100)
             click.echo(f"[{i}/{total}] ✅ {st.id} 完成 ({pct2}%)")
             return None
 

@@ -322,10 +322,10 @@ def dispatch_visible(
     try:
         with os.fdopen(fd_trig, "w", encoding="utf-8") as f_trig:
             f_trig.write(f"{outbox_file}\n{cmd_str}")
-        os.replace(tmp_trig, str(trigger))
+        Path(tmp_trig).replace(trigger)
     except BaseException:
         with contextlib.suppress(OSError):
-            os.unlink(tmp_trig)
+            Path(tmp_trig).unlink()
         raise
 
     # If terminal already open for this key, just return — wrapper will see trigger
