@@ -866,22 +866,21 @@ def decide_node(state: WorkflowState) -> dict[str, Any]:
 def _is_cancelled(task_id: str) -> bool:
     """Check if a task has been cancelled by reading its YAML status.
 
-    NOTE: This performs a non-locked file read. A concurrent write (e.g. from
-    ``my cancel``) could yield a partial/corrupt read. The broad ``except``
-    below treats any parse failure as "not cancelled", which is the safe
-    default — the next poll cycle will re-check.
+    Opens the file directly (no exists() guard) to eliminate the TOCTOU race
+    where the file could be deleted between check and open.  A concurrent
+    write (e.g. from ``my cancel``) could yield a partial/corrupt read; any
+    parse failure is treated as "not cancelled" — the next poll cycle will
+    re-check.
     """
     import yaml
 
     from multi_agent.config import tasks_dir
     path = tasks_dir() / f"{task_id}.yaml"
-    if not path.exists():
-        return False
     try:
         with path.open("r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         return data.get("status") == "cancelled"
-    except Exception:
+    except (FileNotFoundError, OSError, yaml.YAMLError):
         return False
 
 
@@ -934,6 +933,16 @@ def build_graph() -> StateGraph:  # type: ignore[type-arg]
 # holding this lock during cold-start path compilation.
 _conn_pool: dict[str, sqlite3.Connection] = {}
 _conn_lock = __import__("threading").RLock()
+_atexit_registered = False
+
+
+def _close_all_connections() -> None:
+    """Close all pooled SQLite connections at interpreter exit."""
+    with _conn_lock:
+        for conn in _conn_pool.values():
+            with contextlib.suppress(Exception):
+                conn.close()
+        _conn_pool.clear()
 
 
 def _get_connection(path: str) -> sqlite3.Connection:
@@ -947,9 +956,13 @@ def _get_connection(path: str) -> sqlite3.Connection:
     connection to avoid "database is locked" under heavy concurrency.
     """
     import atexit
-    import sqlite3
+
+    global _atexit_registered
 
     with _conn_lock:
+        if not _atexit_registered:
+            atexit.register(_close_all_connections)
+            _atexit_registered = True
         if path in _conn_pool:
             conn = _conn_pool[path]
             # Verify connection is still usable
@@ -965,7 +978,6 @@ def _get_connection(path: str) -> sqlite3.Connection:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA cache_size=-8000")  # 8 MB page cache
         _conn_pool[path] = conn
-        atexit.register(conn.close)
         return conn
 
 

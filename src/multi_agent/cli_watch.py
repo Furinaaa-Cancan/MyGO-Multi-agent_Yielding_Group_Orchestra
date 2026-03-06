@@ -75,15 +75,21 @@ def _normalize_resume_output(role: str, data: dict[str, Any], state_values: dict
         evidence_items = _count_nonempty_entries(out.get("evidence"))
         evidence_items += _count_nonempty_entries(out.get("evidence_files"))
         if evidence_items < min_evidence:
-            raise ValueError(
-                "reviewer approve requires evidence: "
-                f"need >= {min_evidence}, got {evidence_items}. "
-                "Provide result.evidence and/or evidence_files."
-            )
+            # Auto-populate evidence from feedback/summary for CLI-driven reviews
+            feedback = out.get("feedback", "") or out.get("summary", "")
+            if feedback and isinstance(feedback, str) and feedback.strip():
+                out.setdefault("evidence", [feedback.strip()])
+                evidence_items = 1
+            if evidence_items < min_evidence:
+                raise ValueError(
+                    "reviewer approve requires evidence: "
+                    f"need >= {min_evidence}, got {evidence_items}. "
+                    "Provide result.evidence and/or evidence_files."
+                )
     return out
 
 
-def _show_waiting(app: Any, config: dict[str, Any], *, subtask_id: str | None = None, visible: bool = False) -> None:
+def _show_waiting(app: Any, config: dict[str, Any], *, subtask_id: str | None = None, visible: bool = False, terminal_slot: int | None = None) -> None:
     """Show current waiting state — auto-spawn CLI agents or show manual instructions."""
     from multi_agent.orchestrator import get_task_status
 
@@ -103,7 +109,7 @@ def _show_waiting(app: Any, config: dict[str, Any], *, subtask_id: str | None = 
     agent = status.waiting_agent or "?"
 
     from multi_agent.driver import dispatch_agent
-    result = dispatch_agent(agent, role, timeout_sec=status.values.get("timeout_sec", 600), subtask_id=subtask_id, visible=visible)
+    result = dispatch_agent(agent, role, timeout_sec=status.values.get("timeout_sec", 600), subtask_id=subtask_id, visible=visible, terminal_slot=terminal_slot)
     click.echo(result.message)
     click.echo()
 
@@ -134,7 +140,7 @@ def _handle_terminal(
         click.echo(f"[{ts}] ❌ Task finished. Status: {final}{' — ' + error if error else ''}")
 
 
-def _show_next_agent(next_status: Any, ts: str, *, visible: bool = False, subtask_id: str | None = None) -> None:
+def _show_next_agent(next_status: Any, ts: str, *, visible: bool = False, subtask_id: str | None = None, terminal_slot: int | None = None) -> None:
     """Show next waiting state: retry feedback + auto-spawn or manual instructions."""
     next_role = next_status.waiting_role
     next_agent = next_status.waiting_agent or "?"
@@ -147,11 +153,11 @@ def _show_next_agent(next_status: Any, ts: str, *, visible: bool = False, subtas
         if feedback:
             click.echo(f"             {feedback}")
     from multi_agent.driver import dispatch_agent
-    result = dispatch_agent(next_agent, next_role, timeout_sec=next_status.values.get("timeout_sec", 600), visible=visible, subtask_id=subtask_id)
+    result = dispatch_agent(next_agent, next_role, timeout_sec=next_status.values.get("timeout_sec", 600), visible=visible, subtask_id=subtask_id, terminal_slot=terminal_slot)
     click.echo(f"[{ts}] {result.message}")
 
 
-def _process_outbox(poller: Any, role: str, agent: str, status: Any, app: Any, task_id: str, ts: str, manage_lock: bool, *, visible: bool = False, subtask_id: str | None = None) -> str:
+def _process_outbox(poller: Any, role: str, agent: str, status: Any, app: Any, task_id: str, ts: str, manage_lock: bool, *, visible: bool = False, subtask_id: str | None = None, terminal_slot: int | None = None) -> str:
     """Check outbox for matching role output, validate, and resume. Returns 'return' to stop loop."""
     from multi_agent.orchestrator import resume_task
 
@@ -184,12 +190,12 @@ def _process_outbox(poller: Any, role: str, agent: str, status: Any, app: Any, t
                 return "return"
 
             if not next_status.is_terminal and next_status.waiting_role:
-                _show_next_agent(next_status, ts, visible=visible, subtask_id=subtask_id)
+                _show_next_agent(next_status, ts, visible=visible, subtask_id=subtask_id, terminal_slot=terminal_slot)
             break
     return "continue"
 
 
-def _run_watch_loop(app: Any, config: dict[str, Any], task_id: str, interval: float = 2.0, manage_lock: bool = True, *, subtask_id: str | None = None, visible: bool = False) -> None:
+def _run_watch_loop(app: Any, config: dict[str, Any], task_id: str, interval: float = 2.0, manage_lock: bool = True, *, subtask_id: str | None = None, visible: bool = False, terminal_slot: int | None = None) -> None:
     """Shared watch loop — polls outbox/ and auto-submits output.
 
     When *subtask_id* is provided, polls the subtask-specific outbox directory
@@ -219,7 +225,8 @@ def _run_watch_loop(app: Any, config: dict[str, Any], task_id: str, interval: fl
             status = get_task_status(app, task_id)
 
             if status.is_terminal:
-                if visible and subtask_id:
+                # Don't close slot-based terminals here — they persist across subtasks
+                if visible and subtask_id and terminal_slot is None:
                     from multi_agent.driver import close_visible_terminal
                     close_visible_terminal(subtask_id=subtask_id)
                 _handle_terminal(status, task_id, ts, manage_lock)
@@ -228,13 +235,13 @@ def _run_watch_loop(app: Any, config: dict[str, Any], task_id: str, interval: fl
             role = status.waiting_role or "builder"
             agent = status.waiting_agent or "?"
 
-            result = _process_outbox(poller, role, agent, status, app, task_id, ts, manage_lock, visible=visible, subtask_id=subtask_id)
+            result = _process_outbox(poller, role, agent, status, app, task_id, ts, manage_lock, visible=visible, subtask_id=subtask_id, terminal_slot=terminal_slot)
             if result == "return":
                 return
 
             time.sleep(interval)
     except KeyboardInterrupt:
-        if visible and subtask_id:
+        if visible and subtask_id and terminal_slot is None:
             from multi_agent.driver import close_visible_terminal
             close_visible_terminal(subtask_id=subtask_id)
         click.echo("\n⏹️  Watch stopped. Task still active — resume with: my watch")

@@ -272,6 +272,7 @@ class _DecomposeExecContext:
     def _run_one_parallel(
         self, i: int, total: int, st: Any, subtask_id: str,
         sub_config: dict[str, Any], sub_task_id: str, sub_start: float,
+        terminal_slot: int | None = None,
     ) -> dict[str, Any]:
         """Execute one sub-task's agent dispatch + watch loop (thread-safe).
 
@@ -279,7 +280,7 @@ class _DecomposeExecContext:
         Returns the sub-task result dict.
         """
         # Dispatch agent with subtask isolation
-        self.show_waiting(self.app, sub_config, subtask_id=subtask_id, visible=self.visible)
+        self.show_waiting(self.app, sub_config, subtask_id=subtask_id, visible=self.visible, terminal_slot=terminal_slot)
 
         if self.no_watch:
             return {
@@ -290,7 +291,7 @@ class _DecomposeExecContext:
             }
 
         # Watch subtask-specific outbox
-        self.watch_loop(self.app, sub_config, sub_task_id, manage_lock=False, subtask_id=subtask_id, visible=self.visible)
+        self.watch_loop(self.app, sub_config, sub_task_id, manage_lock=False, subtask_id=subtask_id, visible=self.visible, terminal_slot=terminal_slot)
         return _collect_sub_result(self.app, sub_config, st, sub_start)
 
     def _prepare_group(
@@ -375,16 +376,17 @@ class _DecomposeExecContext:
         results_lock = threading.Lock()
 
         def _worker(st: Any, subtask_id: str, sub_config: dict[str, Any],
-                     sub_task_id: str, sub_start: float) -> tuple[Any, dict[str, Any]]:
+                     sub_task_id: str, sub_start: float, slot: int | None = None) -> tuple[Any, dict[str, Any]]:
             result = self._run_one_parallel(
                 start_idx, total, st, subtask_id, sub_config, sub_task_id, sub_start,
+                terminal_slot=slot,
             )
             return st, result
 
         with ThreadPoolExecutor(max_workers=len(prepared)) as pool:
             futures = {
-                pool.submit(_worker, st, sid, cfg, tid, t0): st.id
-                for st, sid, cfg, tid, t0 in prepared
+                pool.submit(_worker, st, sid, cfg, tid, t0, slot_idx): st.id
+                for slot_idx, (st, sid, cfg, tid, t0) in enumerate(prepared)
             }
             for future in as_completed(futures):
                 st_id = futures[future]
@@ -412,14 +414,8 @@ class _DecomposeExecContext:
         # Save checkpoint after group completes
         self.save_ckpt(self.parent_task_id, prior_results, list(completed_ids))
 
-        # Close visible terminals before cleaning up workspaces
-        if self.visible:
-            from multi_agent.driver import close_visible_terminal
-            for _st, subtask_id, _, _, _ in prepared:
-                with contextlib.suppress(Exception):
-                    close_visible_terminal(subtask_id=subtask_id)
-            import time as _time
-            _time.sleep(1)  # give wrapper scripts time to see .done and exit
+        # Don't close slot-based terminals between groups — they persist for reuse.
+        # Only clean up subtask workspaces.
 
         # Cleanup subtask workspaces
         from multi_agent.config import subtask_workspace
@@ -727,6 +723,13 @@ def _run_decomposed(
                 group, task_idx, total, prior_results, completed_ids, failed_ids,
             )
             task_idx += len(group)
+
+    # Close all persistent terminal windows at the end of the decompose run
+    if visible:
+        from multi_agent.driver import close_all_visible_terminals
+        close_all_visible_terminals()
+        import time as _time
+        _time.sleep(1)  # give wrapper scripts time to see .done and exit
 
     # Phase 4: Aggregate & report
     _finalize_decompose(

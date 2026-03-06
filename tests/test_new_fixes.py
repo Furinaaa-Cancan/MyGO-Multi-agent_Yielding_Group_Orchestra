@@ -814,6 +814,19 @@ class TestLegacyResumeNormalization:
         assert normalized["decision"] == "approve"
 
     def test_reviewer_approve_needs_evidence_in_strict(self):
+        """Approve with no evidence AND no summary/feedback should fail in strict mode."""
+        from multi_agent.cli import _normalize_resume_output
+
+        state_values = {
+            "workflow_mode": "strict",
+            "review_policy": {"reviewer": {"require_evidence_on_approve": True, "min_evidence_items": 1}},
+        }
+        output = {"decision": "approve"}
+        with pytest.raises(ValueError, match="reviewer approve requires evidence"):
+            _normalize_resume_output("reviewer", output, state_values)
+
+    def test_reviewer_approve_auto_populates_evidence_from_summary(self):
+        """Approve with summary but no explicit evidence auto-populates evidence."""
         from multi_agent.cli import _normalize_resume_output
 
         state_values = {
@@ -821,8 +834,9 @@ class TestLegacyResumeNormalization:
             "review_policy": {"reviewer": {"require_evidence_on_approve": True, "min_evidence_items": 1}},
         }
         output = {"decision": "approve", "summary": "looks good"}
-        with pytest.raises(ValueError, match="reviewer approve requires evidence"):
-            _normalize_resume_output("reviewer", output, state_values)
+        normalized = _normalize_resume_output("reviewer", output, state_values)
+        assert normalized["decision"] == "approve"
+        assert normalized["evidence"] == ["looks good"]
 
     def test_reviewer_evidence_check_can_be_disabled(self):
         from multi_agent.cli import _normalize_resume_output

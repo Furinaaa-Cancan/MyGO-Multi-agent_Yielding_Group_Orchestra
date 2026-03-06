@@ -95,11 +95,11 @@ def subtask_outbox_dir(subtask_id: str) -> Path:
 # ── Agent Persona Names (MyGO!!!!! band members) ─────────
 
 _DEFAULT_AGENT_NAMES: list[str] = [
-    "燈 (Tomori)",      # Vo.
-    "愛音 (Anon)",      # Gt.
-    "そよ (Soyo)",      # Ba.
-    "楽奈 (Raana)",     # Gt.
-    "立希花 (Taki)",    # Dr.
+    "高松燈",      # Vo.  たかまつ ともり
+    "千早愛音",    # Gt.  ちはや あのん
+    "長崎そよ",    # Ba.  ながさき そよ
+    "要楽奈",      # Gt.  かなめ らあな
+    "椎名立希花",  # Dr.  しいな たき
 ]
 
 _custom_names: list[str] | None = None

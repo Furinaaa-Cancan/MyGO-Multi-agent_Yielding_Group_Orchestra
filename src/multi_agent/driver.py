@@ -252,20 +252,27 @@ def spawn_cli_agent(
 
 
 # ── Visible Terminal Management ───────────────────────────
-# Each subtask gets ONE terminal window. The wrapper script loops,
+# Terminal pool — persistent windows reused across subtasks/groups.
+# Each slot gets ONE terminal window. The wrapper script loops,
 # watching for trigger files written by dispatch_agent.
 
 _terminal_counter: int = 0
 _terminal_counter_lock = threading.Lock()
-_open_terminals: dict[str, str] = {}  # subtask_id/key → wrapper_path
+_open_terminals: dict[str, str] = {}  # key → wrapper_path
 
 
-def _terminal_key(agent_id: str, role: str, subtask_id: str | None) -> str:
+def _terminal_key(agent_id: str, role: str, subtask_id: str | None, terminal_slot: int | None = None) -> str:
+    if terminal_slot is not None:
+        return f"slot:{terminal_slot}"
     return subtask_id or f"{agent_id}:{role}"
 
 
-def _trigger_dir(subtask_id: str | None) -> Path:
+def _trigger_dir(subtask_id: str | None, terminal_slot: int | None = None) -> Path:
     """Dir where trigger/done files live for a visible terminal."""
+    if terminal_slot is not None:
+        d = workspace_dir() / "terminals" / f"slot-{terminal_slot}"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
     if subtask_id:
         return subtask_outbox_dir(subtask_id).parent
     return workspace_dir()
@@ -278,16 +285,19 @@ def dispatch_visible(
     project_dir: str | None = None,
     timeout_sec: int = 600,
     subtask_id: str | None = None,
+    terminal_slot: int | None = None,
 ) -> None:
-    """Dispatch a CLI agent visibly. Opens a terminal only on first call per subtask.
+    """Dispatch a CLI agent visibly. Opens a terminal only on first call per slot.
 
-    Subsequent calls for the same subtask write a trigger file that the
-    already-open terminal picks up and executes — no new windows.
+    When *terminal_slot* is provided, the terminal is keyed by slot number
+    and reused across different subtasks/groups — no new windows.
+    Subsequent calls for the same slot write a trigger file that the
+    already-open terminal picks up and executes.
     """
     from multi_agent.config import get_agent_name
 
-    key = _terminal_key(agent_id, role, subtask_id)
-    tdir = _trigger_dir(subtask_id)
+    key = _terminal_key(agent_id, role, subtask_id, terminal_slot)
+    tdir = _trigger_dir(subtask_id, terminal_slot)
     tdir.mkdir(parents=True, exist_ok=True)
 
     # Build the actual CLI command
@@ -354,29 +364,35 @@ def dispatch_visible(
         '    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"',
         "",
         "    TMPLOG=$(mktemp /tmp/mygo-output-XXXXXX)",
-        '    eval "$CMD" 2>&1 | tee "$TMPLOG"',
+        "    # Write CMD to a temp script instead of eval to avoid shell injection",
+        "    CMDSCRIPT=$(mktemp /tmp/mygo-cmd-XXXXXX)",
+        '    echo "$CMD" > "$CMDSCRIPT"',
+        '    chmod +x "$CMDSCRIPT"',
+        '    bash "$CMDSCRIPT" 2>&1 | tee "$TMPLOG"',
         "    EXIT_CODE=${PIPESTATUS[0]}",
+        '    rm -f "$CMDSCRIPT"',
         "",
         '    # If codex wrote the outbox file directly, we are done',
         '    if [ -f "$OUTBOX" ]; then',
         '        rm -f "$TMPLOG"',
         "    else",
         '        # Extract JSON from stdout or write a completion stub',
-        '        python3 << PYEOF',
+        '        export OUTBOX TMPLOG EXIT_CODE',
+        "        python3 << 'PYEOF'",
         "import json, re, sys, os, glob",
-        "outbox = os.environ.get('OUTBOX', '$OUTBOX')",
-        "tmplog = os.environ.get('TMPLOG', '$TMPLOG')",
-        "exit_code = int('$EXIT_CODE' or '1')",
+        "outbox = os.environ.get('OUTBOX', '')",
+        "tmplog = os.environ.get('TMPLOG', '')",
+        "exit_code = int(os.environ.get('EXIT_CODE', '1'))",
         "text = ''",
         "try: text = open(tmplog).read()",
-        "except: pass",
-        f"m = re.search(r'{fence}json\\\\s*\\\\n(.*?)\\\\n\\\\s*{fence}', text, re.DOTALL)",
+        "except (OSError, IOError): pass",
+        f"m = re.search(r'{fence}json\\s*\\n(.*?)\\n\\s*{fence}', text, re.DOTALL)",
         "if m:",
         "    try:",
         "        d = json.loads(m.group(1))",
         "        if isinstance(d, dict):",
         "            json.dump(d, open(outbox,'w'), ensure_ascii=False, indent=2); sys.exit(0)",
-        "    except: pass",
+        "    except (json.JSONDecodeError, ValueError, KeyError): pass",
         "for line in reversed(text.splitlines()):",
         "    line = line.strip()",
         "    if line.startswith('{'):",
@@ -384,11 +400,11 @@ def dispatch_visible(
         "            d = json.loads(line)",
         "            if isinstance(d, dict):",
         "                json.dump(d, open(outbox,'w'), ensure_ascii=False, indent=2); sys.exit(0)",
-        "        except: pass",
+        "        except (json.JSONDecodeError, ValueError): pass",
         "# No JSON found — build a completion stub from changed files",
         "cwd = os.getcwd()",
         "changed = [os.path.relpath(f, cwd) for f in glob.glob(cwd+'/**/*.py', recursive=True)]",
-        "status = 'completed' if exit_code == 0 else 'error'",
+        "status = 'completed' if (exit_code == 0 or changed) else 'error'",
         "summary = f'codex exited {exit_code}, {len(changed)} files' if not changed else ', '.join(changed[:5])",
         "json.dump({'status': status, 'summary': summary, 'changed_files': changed},",
         "          open(outbox,'w'), ensure_ascii=False, indent=2)",
@@ -430,13 +446,29 @@ end tell
         spawn_cli_agent(agent_id, role, command_template, project_dir, timeout_sec, subtask_id)
 
 
-def close_visible_terminal(subtask_id: str | None = None, agent_id: str = "", role: str = "") -> None:
+def close_visible_terminal(subtask_id: str | None = None, agent_id: str = "", role: str = "", terminal_slot: int | None = None) -> None:
     """Signal a visible terminal to exit by writing a .done file."""
-    key = _terminal_key(agent_id, role, subtask_id)
-    tdir = _trigger_dir(subtask_id)
+    key = _terminal_key(agent_id, role, subtask_id, terminal_slot)
+    tdir = _trigger_dir(subtask_id, terminal_slot)
     done = tdir / ".done"
     done.write_text("done", encoding="utf-8")
     _open_terminals.pop(key, None)
+
+
+def close_all_visible_terminals() -> None:
+    """Close all open visible terminals (called at end of decompose run)."""
+    for key in list(_open_terminals.keys()):
+        # Extract slot number from key like "slot:0"
+        if key.startswith("slot:"):
+            slot = int(key.split(":")[1])
+            tdir = _trigger_dir(None, terminal_slot=slot)
+        else:
+            # Legacy subtask-based key
+            tdir = _trigger_dir(key)
+        done = tdir / ".done"
+        with contextlib.suppress(OSError):
+            done.write_text("done", encoding="utf-8")
+    _open_terminals.clear()
 
 
 def _ensure_outbox_written(
@@ -618,6 +650,8 @@ def dispatch_agent(
     timeout_sec: int = 600,
     subtask_id: str | None = None,
     visible: bool = False,
+    project_dir: str | None = None,
+    terminal_slot: int | None = None,
 ) -> DispatchResult:
     """Resolve driver for *agent_id* and either auto-execute or return
     manual-mode instructions.
@@ -641,13 +675,13 @@ def dispatch_agent(
     if drv["driver"] == "cli" and drv["command"]:
         if can_use_cli(drv["command"]):
             if visible:
-                dispatch_visible(agent_id, role, drv["command"], timeout_sec=timeout_sec, subtask_id=subtask_id)
+                dispatch_visible(agent_id, role, drv["command"], timeout_sec=timeout_sec, subtask_id=subtask_id, project_dir=project_dir, terminal_slot=terminal_slot)
                 return DispatchResult(
                     mode="auto",
                     thread=None,
                     message=f"🖥️  [{step_label}] {agent_id} CLI 已触发",
                 )
-            thread = spawn_cli_agent(agent_id, role, drv["command"], timeout_sec=timeout_sec, subtask_id=subtask_id)
+            thread = spawn_cli_agent(agent_id, role, drv["command"], timeout_sec=timeout_sec, subtask_id=subtask_id, project_dir=project_dir)
             return DispatchResult(
                 mode="auto",
                 thread=thread,

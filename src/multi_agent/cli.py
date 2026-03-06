@@ -105,15 +105,14 @@ _SAFE_SKILL_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
 def _validate_task_id(task_id: str) -> str:
     """Validate task_id to prevent path traversal attacks.
 
-    Rejects IDs containing '/', '..', '~', or other unsafe characters.
-    Raises click.BadParameter if invalid.
+    Delegates to ``_utils.validate_task_id`` and re-raises as
+    ``click.BadParameter`` for CLI context.
     """
-    if not _SAFE_TASK_ID_RE.match(task_id):
-        raise click.BadParameter(
-            f"Invalid task_id: {task_id!r}. "
-            f"Must match [a-z0-9][a-z0-9-]{{2,63}}.",
-            param_hint="--task-id",
-        )
+    from multi_agent._utils import validate_task_id as _validate_core
+    try:
+        _validate_core(task_id)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="--task-id") from exc
     return task_id
 
 

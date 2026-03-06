@@ -114,10 +114,11 @@ class TestDoneCommand:
             assert "task-custom" in result.output
 
     def test_reviewer_approve_requires_evidence_in_strict(self, tmp_path):
+        """Approve with no evidence AND no summary/feedback should fail in strict mode."""
         runner = CliRunner()
         good_file = tmp_path / "review.json"
         good_file.write_text(
-            json.dumps({"decision": "approve", "summary": "Reviewed and approved."}),
+            json.dumps({"decision": "approve"}),
             encoding="utf-8",
         )
         app = MagicMock()
@@ -132,6 +133,30 @@ class TestDoneCommand:
             result = runner.invoke(main, ["done", "--file", str(good_file)])
         assert result.exit_code != 0
         assert "reviewer approve requires evidence" in result.output
+
+    def test_reviewer_approve_auto_populates_evidence_from_summary(self, tmp_path):
+        """Approve with summary but no explicit evidence auto-populates evidence."""
+        runner = CliRunner()
+        good_file = tmp_path / "review.json"
+        good_file.write_text(
+            json.dumps({"decision": "approve", "summary": "Reviewed and approved."}),
+            encoding="utf-8",
+        )
+        app = MagicMock()
+        snap = _mock_snapshot(role="reviewer", agent="antigravity")
+        snap.values = {
+            "workflow_mode": "strict",
+            "review_policy": {"reviewer": {"require_evidence_on_approve": True, "min_evidence_items": 1}},
+        }
+        app.get_state.return_value = snap
+        from langgraph.errors import GraphInterrupt
+        app.invoke.side_effect = GraphInterrupt()
+        with patch("multi_agent.graph.compile_graph", return_value=app), \
+             patch("multi_agent.cli._detect_active_task", return_value="task-1"), \
+             patch("multi_agent.cli._show_waiting"):
+            result = runner.invoke(main, ["done", "--file", str(good_file)])
+        assert result.exit_code == 0
+        assert "Submitting reviewer output" in result.output
 
     def test_reviewer_pass_alias_maps_to_approve(self, tmp_path):
         runner = CliRunner()

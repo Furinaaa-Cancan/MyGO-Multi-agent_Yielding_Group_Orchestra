@@ -2,18 +2,18 @@
 
 **你的 AI 乐队，一条命令开演。**
 
-每个 AI IDE 是一位乐手，各司其职，合在一起演奏出完整的代码交付：
+每个 AI IDE 是一位乐手，各司其職，合在一起演奏出完整的代码交付：
 
-| 乐手 | 角色 | 干什么 |
-|------|------|--------|
-| Windsurf | 吉他手 (Builder) | 写代码、实现功能 |
-| Antigravity | 贝斯手 (Reviewer) | 独立审查、质量把关 |
-| Cursor | 候补乐手 | Builder 或 Reviewer 均可 |
-| Claude / Aider | 自动鼓机 | CLI 全自动执行 |
-| Codex | 键盘手 (GUI Auto) | macOS 自动控制桌面应用 |
+| 乐手 | パート | 干什么 |
+|------|--------|--------|
+| Windsurf | 高松燈 · Vo. (Builder) | 写代码、实现功能 |
+| Codex CLI | 千早愛音 · Gt. (Builder/Reviewer) | CLI 全自动并行执行 |
+| Cursor | 長崎そよ · Ba. (候补) | Builder 或 Reviewer 均可 |
+| Claude / Aider | 要楽奈 · Gt. (Auto) | CLI 全自动执行 |
+| Antigravity | 椎名立希花 · Dr. (Reviewer) | 独立审查、质量把关 |
 
 基于 **LangGraph 单一状态源（SSOT）** 驱动 4 节点工作流，  
-支持全自动 CLI、GUI 自动化和手动 IDE 三种运行模式。v0.6.0
+支持全自动 CLI、GUI 自动化和手动 IDE 三种运行模式。v0.7.0
 
 ---
 
@@ -105,8 +105,8 @@ agents:
     driver: file                    # IDE 手动模式
     capabilities: [planning, implementation, testing, docs]
   - id: codex
-    driver: gui                     # macOS GUI 自动化模式 
-    app_name: "Codex"
+    driver: cli                     # CLI 全自动模式
+    command: "codex exec '...' --full-auto --skip-git-repo-check"
     capabilities: [planning, implementation, testing, review, docs]
   - id: claude
     driver: cli                     # CLI 全自动模式
@@ -124,10 +124,10 @@ defaults:
 | 驱动 | 工作方式 | 适用 |
 |------|---------|------|
 | `driver: file` | 写 TASK.md，用户手动告诉 IDE 执行 | Windsurf, Cursor, Kiro |
-| `driver: cli` | 自动 spawn 终端命令 | Claude CLI, Aider |
-| `driver: gui`  | macOS AppleScript 自动控制桌面应用 | Codex |
+| `driver: cli` | 自动 spawn 终端命令 | Codex, Claude CLI, Aider |
+| `driver: gui`  | macOS AppleScript 自动控制桌面应用 | 桌面 IDE 应用 |
 
-- builder/reviewer **必须不同 agent**（对抗性审查）
+- builder/reviewer **可以是同一 agent**（CLI/GUI 模式下自动使用不同实例）
 - GUI 模式需要 macOS + 辅助功能权限（系统设置 → 隐私与安全性 → 辅助功能）
 - 支持的 agent：windsurf, cursor, claude, codex, aider, antigravity, kiro
 
@@ -141,6 +141,7 @@ defaults:
 |---|---|
 | `code-implement` | 实现代码功能（默认） |
 | `test-and-review` | 测试与代码审查 |
+| `ui-design` | UI/UX 设计 |
 | `task-decompose` | 任务分解 |
 
 ### 任务分解
@@ -163,7 +164,9 @@ my go "..." --decompose-file result.json           # 从文件加载分解结果
 组 3 (可并行): sub-5, sub-6          ← 2 个并行
 ```
 
-**可视化终端 `--visible` (v0.7.0)**：每个 CLI agent 在独立 Terminal.app 窗口运行，实时可见输出。终端窗口以 MyGO!!!!! 乐队成员命名（燈/愛音/そよ/楽奈/立希花）。
+**可视化终端 `--visible` (v0.7.0)**：每个 CLI agent 在独立 Terminal.app 窗口运行，实时可见输出。终端窗口以 MyGO!!!!! 乐队成员命名（高松燈 / 千早愛音 / 長崎そよ / 要楽奈 / 椎名立希花）。
+
+**终端池复用 (v0.7.1)**：跨组复用终端窗口——组 1 的 4 个终端在组 2 自动复用，不再反复开新窗口。每个 slot 对应一个持久终端，wrapper 脚本循环等待新触发。
 
 ```bash
 # 3 个 Codex 并行 + 每个开独立终端窗口
@@ -253,8 +256,9 @@ agents/agents.yaml         # Agent 注册表
 config/workmode.yaml       # 工作模式配置
 skills/                    # 技能定义 (contract.yaml)
 ├── code-implement/
-├── task-decompose/
-└── test-and-review/
+├── test-and-review/
+├── ui-design/
+└── task-decompose/
 
 .multi-agent/              # 运行时工作空间
 ├── TASK.md                # 当前任务描述
@@ -441,7 +445,7 @@ reviewer 输出被判定为 rubber-stamp（缺少具体 reasoning/evidence）。
 ## 测试
 
 ```bash
-pytest tests/ -q            # 1121 tests, 全通过
+pytest tests/ -q            # 1136 tests, 全通过
 python3 -m mypy src/        # 类型检查
 python3 -m ruff check src/  # Lint
 ```
@@ -474,13 +478,15 @@ AGPL-3.0，详见 `LICENSE`。
 
 ## English Summary
 
-**MyGO — Multi-agent Yielding Group Orchestra** is your AI band for code delivery (v0.6.0).
+**MyGO — Multi-agent Yielding Group Orchestra** is your AI band for code delivery (v0.7.1).
 Each AI IDE is a band member — builder writes code, reviewer checks quality.
 One command to start the performance:
-- Three driver modes: manual (file), auto CLI, and **GUI automation** (macOS AppleScript)
-- GUI driver auto-controls desktop IDE apps like Codex — no manual switching needed
+- Three driver modes: manual (file), auto CLI, and GUI automation (macOS AppleScript)
+- **Parallel execution**: independent sub-tasks run concurrently via ThreadPoolExecutor
+- **Slot-based terminal pool**: persistent Terminal.app windows reused across groups
+- **Evidence auto-fill**: reviewer summaries auto-populate as evidence for streamlined CLI reviews
 - Two workflow modes: automated (`my go`) and IDE-first (`my session`)
-- Task decomposition with dependency-aware execution
+- Task decomposition with dependency-aware topological execution
 - Rubber-stamp detection, retry budgets, timeout guards
 - Atomic file writes, TOCTOU race protection, input validation
-- 1121 tests, full mypy/ruff compliance
+- 1136 tests, full mypy/ruff compliance
