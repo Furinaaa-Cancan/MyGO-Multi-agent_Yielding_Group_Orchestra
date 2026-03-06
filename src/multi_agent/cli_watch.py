@@ -66,7 +66,7 @@ def _normalize_resume_output(role: str, data: dict[str, Any], state_values: dict
     return out
 
 
-def _show_waiting(app: Any, config: dict[str, Any], *, subtask_id: str | None = None) -> None:
+def _show_waiting(app: Any, config: dict[str, Any], *, subtask_id: str | None = None, visible: bool = False) -> None:
     """Show current waiting state — auto-spawn CLI agents or show manual instructions."""
     from multi_agent.orchestrator import get_task_status
 
@@ -86,7 +86,7 @@ def _show_waiting(app: Any, config: dict[str, Any], *, subtask_id: str | None = 
     agent = status.waiting_agent or "?"
 
     from multi_agent.driver import dispatch_agent
-    result = dispatch_agent(agent, role, timeout_sec=status.values.get("timeout_sec", 600), subtask_id=subtask_id)
+    result = dispatch_agent(agent, role, timeout_sec=status.values.get("timeout_sec", 600), subtask_id=subtask_id, visible=visible)
     click.echo(result.message)
     click.echo()
 
@@ -117,7 +117,7 @@ def _handle_terminal(
         click.echo(f"[{ts}] ❌ Task finished. Status: {final}{' — ' + error if error else ''}")
 
 
-def _show_next_agent(next_status: Any, ts: str) -> None:
+def _show_next_agent(next_status: Any, ts: str, *, visible: bool = False) -> None:
     """Show next waiting state: retry feedback + auto-spawn or manual instructions."""
     next_role = next_status.waiting_role
     next_agent = next_status.waiting_agent or "?"
@@ -130,11 +130,11 @@ def _show_next_agent(next_status: Any, ts: str) -> None:
         if feedback:
             click.echo(f"             {feedback}")
     from multi_agent.driver import dispatch_agent
-    result = dispatch_agent(next_agent, next_role, timeout_sec=next_status.values.get("timeout_sec", 600))
+    result = dispatch_agent(next_agent, next_role, timeout_sec=next_status.values.get("timeout_sec", 600), visible=visible)
     click.echo(f"[{ts}] {result.message}")
 
 
-def _process_outbox(poller: Any, role: str, agent: str, status: Any, app: Any, task_id: str, ts: str, manage_lock: bool) -> str:
+def _process_outbox(poller: Any, role: str, agent: str, status: Any, app: Any, task_id: str, ts: str, manage_lock: bool, *, visible: bool = False) -> str:
     """Check outbox for matching role output, validate, and resume. Returns 'return' to stop loop."""
     from multi_agent.orchestrator import resume_task
 
@@ -164,16 +164,17 @@ def _process_outbox(poller: Any, role: str, agent: str, status: Any, app: Any, t
                 return "return"
 
             if not next_status.is_terminal and next_status.waiting_role:
-                _show_next_agent(next_status, ts)
+                _show_next_agent(next_status, ts, visible=visible)
             break
     return "continue"
 
 
-def _run_watch_loop(app: Any, config: dict[str, Any], task_id: str, interval: float = 2.0, manage_lock: bool = True, *, subtask_id: str | None = None) -> None:
+def _run_watch_loop(app: Any, config: dict[str, Any], task_id: str, interval: float = 2.0, manage_lock: bool = True, *, subtask_id: str | None = None, visible: bool = False) -> None:
     """Shared watch loop — polls outbox/ and auto-submits output.
 
     When *subtask_id* is provided, polls the subtask-specific outbox directory
     instead of the global outbox/ for parallel execution support.
+    When *visible* is True, CLI agents open in new Terminal.app windows.
     """
     from multi_agent.orchestrator import get_task_status
     from multi_agent.watcher import OutboxPoller
@@ -204,7 +205,7 @@ def _run_watch_loop(app: Any, config: dict[str, Any], task_id: str, interval: fl
             role = status.waiting_role or "builder"
             agent = status.waiting_agent or "?"
 
-            result = _process_outbox(poller, role, agent, status, app, task_id, ts, manage_lock)
+            result = _process_outbox(poller, role, agent, status, app, task_id, ts, manage_lock, visible=visible)
             if result == "return":
                 return
 

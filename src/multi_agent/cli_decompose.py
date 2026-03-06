@@ -148,7 +148,8 @@ class _DecomposeExecContext:
                  no_watch: bool, auto_confirm: bool,
                  make_config: Any, build_state: Any, start_task: Any,
                  start_error: type[BaseException], show_waiting: Any, watch_loop: Any,
-                 save_yaml: Any, save_ckpt: Any, clear_rt: Any) -> None:
+                 save_yaml: Any, save_ckpt: Any, clear_rt: Any,
+                 visible: bool = False) -> None:
         self.app = app
         self.parent_task_id = parent_task_id
         self.builder = builder
@@ -168,6 +169,7 @@ class _DecomposeExecContext:
         self.save_yaml = save_yaml
         self.save_ckpt = save_ckpt
         self.clear_rt = clear_rt
+        self.visible = visible
 
     def run_one(
         self, i: int, total: int, st: Any,
@@ -277,7 +279,7 @@ class _DecomposeExecContext:
         Returns the sub-task result dict.
         """
         # Dispatch agent with subtask isolation
-        self.show_waiting(self.app, sub_config, subtask_id=subtask_id)
+        self.show_waiting(self.app, sub_config, subtask_id=subtask_id, visible=self.visible)
 
         if self.no_watch:
             return {
@@ -288,7 +290,7 @@ class _DecomposeExecContext:
             }
 
         # Watch subtask-specific outbox
-        self.watch_loop(self.app, sub_config, sub_task_id, manage_lock=False, subtask_id=subtask_id)
+        self.watch_loop(self.app, sub_config, sub_task_id, manage_lock=False, subtask_id=subtask_id, visible=self.visible)
         return _collect_sub_result(self.app, sub_config, st, sub_start)
 
     def _prepare_group(
@@ -619,6 +621,7 @@ def _run_decomposed(
     auto_confirm: bool = False,
     decompose_file: str | None = None,
     no_cache: bool = False,
+    visible: bool = False,
 ) -> None:
     """Decompose → grouped parallel/sequential sub-task build-review cycles → aggregate."""
     from multi_agent.cli import (  # type: ignore[attr-defined]
@@ -680,6 +683,7 @@ def _run_decomposed(
         show_waiting=_show_waiting, watch_loop=_run_watch_loop,
         save_yaml=save_task_yaml, save_ckpt=save_checkpoint,
         clear_rt=clear_runtime,
+        visible=visible,
     )
 
     # Phase 3b: Execute sub-tasks using parallel groups

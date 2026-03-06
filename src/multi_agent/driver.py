@@ -251,6 +251,117 @@ def spawn_cli_agent(
     return t
 
 
+def spawn_cli_in_terminal(
+    agent_id: str,
+    role: str,
+    command_template: str,
+    project_dir: str | None = None,
+    timeout_sec: int = 600,
+    subtask_id: str | None = None,
+    title: str | None = None,
+) -> None:
+    """Open a new Terminal.app window running the CLI agent visibly.
+
+    The user can watch Codex/Claude working in real-time. A wrapper script
+    handles output capture and writes the result to the outbox file.
+    """
+    if subtask_id:
+        task_file = str(subtask_task_file(subtask_id))
+        outbox_file = str(subtask_outbox_dir(subtask_id) / f"{role}.json")
+    else:
+        task_file = str(workspace_dir() / "TASK.md")
+        outbox_file = str(outbox_dir() / f"{role}.json")
+
+    cmd_str = command_template.format(task_file=task_file, outbox_file=outbox_file)
+    cwd = project_dir or str(Path.cwd())
+    label = title or f"{agent_id}/{role}"
+    if subtask_id:
+        label = f"{subtask_id} · {label}"
+
+    # Write a wrapper script that runs the command visibly and captures output
+    fd, wrapper_path = tempfile.mkstemp(
+        suffix=".sh", prefix=f"mygo-{agent_id}-{role}-",
+        dir=tempfile.gettempdir(),
+    )
+    # Build the shell script as a list of lines to avoid f-string escape issues
+    fence = "```"  # noqa: avoid backtick escape in f-string
+    lines = [
+        "#!/bin/bash",
+        f"# MyGO Agent: {label}",
+        f"printf '\\033]0;\\xf0\\x9f\\xa4\\x96 {label}\\007'",
+        'echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"',
+        f'echo "🤖 MyGO Agent: {label}"',
+        f'echo "📂 {cwd}"',
+        'echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"',
+        'echo ""',
+        f"cd {shlex.quote(cwd)}",
+        "",
+        f"OUTBOX={shlex.quote(outbox_file)}",
+        'mkdir -p "$(dirname "$OUTBOX")"',
+        "",
+        "TMPLOG=$(mktemp /tmp/mygo-output-XXXXXX.log)",
+        f"{cmd_str} 2>&1 | tee \"$TMPLOG\"",
+        "EXIT_CODE=${PIPESTATUS[0]}",
+        "",
+        'echo ""',
+        'echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"',
+        "",
+        '# If outbox not already written by the CLI, extract from output',
+        'if [ ! -f "$OUTBOX" ]; then',
+        '    python3 -c "',
+        "import json, re, sys",
+        "text = open('$TMPLOG').read()",
+        f"m = re.search(r'{fence}json\\\\s*\\\\n(.*?)\\\\n\\\\s*{fence}', text, re.DOTALL)",
+        "if m:",
+        "    try:",
+        "        d = json.loads(m.group(1))",
+        "        if isinstance(d, dict):",
+        "            json.dump(d, open('$OUTBOX','w'), ensure_ascii=False, indent=2)",
+        "            sys.exit(0)",
+        "    except: pass",
+        "for line in reversed(text.splitlines()):",
+        "    line = line.strip()",
+        "    if line.startswith('{'):",
+        "        try:",
+        "            d = json.loads(line)",
+        "            if isinstance(d, dict):",
+        "                json.dump(d, open('$OUTBOX','w'), ensure_ascii=False, indent=2)",
+        "                sys.exit(0)",
+        "        except: pass",
+        f"json.dump({{'status':'error','summary':'{agent_id} exit code '+str($EXIT_CODE),'changed_files':[]}},",
+        "          open('$OUTBOX','w'), ensure_ascii=False, indent=2)",
+        '" 2>/dev/null',
+        "fi",
+        "",
+        'if [ -f "$OUTBOX" ]; then',
+        '    echo "✅ 完成！结果已保存到 $OUTBOX"',
+        "else",
+        '    echo "❌ 未能提取 JSON 输出"',
+        "fi",
+        'echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"',
+        'rm -f "$TMPLOG"',
+        "sleep 3",
+    ]
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    Path(wrapper_path).chmod(0o755)
+
+    # Open in a new Terminal.app window via AppleScript
+    applescript = f'''
+tell application "Terminal"
+    activate
+    do script "{wrapper_path}"
+end tell
+'''
+    try:
+        subprocess.run(["osascript", "-e", applescript], capture_output=True, timeout=10)
+        logger.info("Opened terminal window for %s (%s)", agent_id, role)
+    except Exception as e:
+        logger.error("Failed to open terminal for %s: %s", agent_id, e)
+        # Fallback: run in background thread instead
+        spawn_cli_agent(agent_id, role, command_template, project_dir, timeout_sec, subtask_id)
+
+
 def _ensure_outbox_written(
     outbox_file: str, stdout_text: str, stderr_text: str,
     agent_id: str, returncode: int | None,
@@ -429,6 +540,7 @@ def dispatch_agent(
     *,
     timeout_sec: int = 600,
     subtask_id: str | None = None,
+    visible: bool = False,
 ) -> DispatchResult:
     """Resolve driver for *agent_id* and either auto-execute or return
     manual-mode instructions.
@@ -439,6 +551,9 @@ def dispatch_agent(
     When *subtask_id* is provided, CLI agents use an isolated workspace
     under ``.multi-agent/subtasks/<subtask_id>/`` for parallel execution.
 
+    When *visible* is True, CLI agents open in new Terminal.app windows
+    so the user can watch them work in real-time.
+
     Returns a ``DispatchResult`` so the caller only needs to display
     ``result.message`` — no driver-type branching required.
     """
@@ -448,6 +563,13 @@ def dispatch_agent(
 
     if drv["driver"] == "cli" and drv["command"]:
         if can_use_cli(drv["command"]):
+            if visible:
+                spawn_cli_in_terminal(agent_id, role, drv["command"], timeout_sec=timeout_sec, subtask_id=subtask_id)
+                return DispatchResult(
+                    mode="auto",
+                    thread=None,
+                    message=f"🖥️  [{step_label}] 在新终端窗口启动 {agent_id} CLI…",
+                )
             thread = spawn_cli_agent(agent_id, role, drv["command"], timeout_sec=timeout_sec, subtask_id=subtask_id)
             return DispatchResult(
                 mode="auto",

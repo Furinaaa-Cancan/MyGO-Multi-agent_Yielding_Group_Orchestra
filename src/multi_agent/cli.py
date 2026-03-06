@@ -345,10 +345,11 @@ def _ensure_no_active_task(app: Any) -> None:
 @click.option("--auto-confirm", is_flag=True, default=False, help="Skip decompose confirmation (for automated runs)")
 @click.option("--decompose-file", default=None, type=click.Path(exists=True), help="Read decompose result from file instead of agent")
 @click.option("--no-cache", is_flag=True, default=False, help="Skip decompose result cache (force fresh decomposition)")
+@click.option("--visible", is_flag=True, default=False, help="Open CLI agents in separate Terminal windows (macOS)")
 @click.option("--mode", default="strict", help="Workmode profile 名称")
 @click.option("--config", "mode_config_path", default="config/workmode.yaml", help="Workmode 配置路径")
 @handle_errors
-def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer: str, retry_budget: int, timeout: int, no_watch: bool, decompose: bool, auto_confirm: bool, decompose_file: str | None, no_cache: bool, mode: str, mode_config_path: str) -> None:
+def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer: str, retry_budget: int, timeout: int, no_watch: bool, decompose: bool, auto_confirm: bool, decompose_file: str | None, no_cache: bool, visible: bool, mode: str, mode_config_path: str) -> None:
     """Start a new task and watch for IDE output.
 
     Starts the task, then auto-watches outbox/ for agent output.
@@ -374,10 +375,14 @@ def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer
         _validate_task_id(task_id)
     _validate_skill_id(skill)
     if builder and reviewer and builder == reviewer:
-        raise click.BadParameter(
-            f"builder and reviewer must be different (got '{builder}')",
-            param_hint="--reviewer",
-        )
+        from multi_agent.driver import get_agent_driver
+        drv = get_agent_driver(builder)
+        if drv["driver"] == "file":
+            raise click.BadParameter(
+                f"file driver 不支持同一 agent 做 builder 和 reviewer (got '{builder}')",
+                param_hint="--reviewer",
+            )
+        click.echo(f"⚠️  builder 和 reviewer 都是 '{builder}'，将使用同一 agent 的不同实例", err=True)
 
     # Task 6: Apply project config defaults (CLI flags override)
     proj = load_project_config()
@@ -413,11 +418,11 @@ def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer
             _run_decomposed(app, task_id, requirement, skill, builder, reviewer,
                             retry_budget, timeout, no_watch, mode, review_policy,
                             auto_confirm=auto_confirm, decompose_file=decompose_file,
-                            no_cache=no_cache)
+                            no_cache=no_cache, visible=visible)
             return
 
         _run_single_task(app, task_id, requirement, skill, builder, reviewer,
-                         retry_budget, timeout, no_watch, mode, review_policy)
+                         retry_budget, timeout, no_watch, mode, review_policy, visible=visible)
     except (SystemExit, KeyboardInterrupt):
         raise  # don't release lock on intentional exit or Ctrl-C (task still active)
     except Exception:
@@ -427,7 +432,7 @@ def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer
 
 
 def _run_single_task(app: Any, task_id: str, requirement: str, skill: str, builder: str, reviewer: str,
-                     retry_budget: int, timeout: int, no_watch: bool, workflow_mode: str, review_policy: Any) -> None:
+                     retry_budget: int, timeout: int, no_watch: bool, workflow_mode: str, review_policy: Any, visible: bool = False) -> None:
     """Run a single monolithic build-review cycle (original behavior)."""
     from multi_agent.orchestrator import TaskStartError, start_task
 
@@ -480,14 +485,14 @@ def _run_single_task(app: Any, task_id: str, requirement: str, skill: str, build
     config = _make_config(task_id)
 
     # Show what to do
-    _show_waiting(app, config)
+    _show_waiting(app, config, visible=visible)
 
     if no_watch:
         click.echo("\n📌 Run `my done` after the IDE finishes, or `my watch` to auto-detect.")
         return
 
     # Auto-watch mode (default) — poll outbox and auto-submit
-    _run_watch_loop(app, config, task_id)
+    _run_watch_loop(app, config, task_id, visible=visible)
 
 
 def _resolve_done_task(app: Any, task_id: str | None) -> tuple[str, Any, Any]:
