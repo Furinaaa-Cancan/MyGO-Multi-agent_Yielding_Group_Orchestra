@@ -306,7 +306,7 @@ skills/                    # 技能定义 (contract.yaml)
 
 ---
 
-### 管理与诊断
+## 管理与诊断
 
 | 命令 | 说明 |
 |---|---|
@@ -388,8 +388,9 @@ agents:
   - id: windsurf
     driver: file
     capabilities: [planning, implementation, testing, docs]
-  - id: cursor
-    driver: file
+  - id: codex
+    driver: cli
+    command: "codex exec '...' --full-auto --skip-git-repo-check"
     capabilities: [planning, implementation, testing, review, docs]
   - id: claude
     driver: cli
@@ -399,7 +400,7 @@ agents:
 role_strategy: manual
 defaults:
   builder: windsurf
-  reviewer: antigravity
+  reviewer: codex
 ```
 
 ---
@@ -424,8 +425,10 @@ my status   # 确认 current_agent
 
 ### Q3: builder/reviewer 是同一个 agent
 
-`agents.yaml` 的 `defaults.builder` 和 `defaults.reviewer` 必须不同。  
-也可在命令行指定：`my go "..." --builder windsurf --reviewer cursor`
+- **CLI/GUI 模式**：builder 和 reviewer 可以是同一 agent（系统自动启动不同实例）  
+  `my go "..." --builder codex --reviewer codex`
+- **IDE 手动模式**：建议使用不同 agent，避免自审自批  
+  `my go "..." --builder windsurf --reviewer cursor`
 
 ### Q4: lock 相关错误
 
@@ -456,7 +459,7 @@ reviewer 输出被判定为 rubber-stamp（缺少具体 reasoning/evidence）。
 ## 测试
 
 ```bash
-pytest tests/ -q            # 1136 tests, 全通过
+pytest tests/ -q            # 1137 tests, 全通过
 python3 -m mypy src/        # 类型检查
 python3 -m ruff check src/  # Lint
 ```
@@ -471,7 +474,7 @@ python3 -m ruff check src/  # Lint
 ## 设计原则
 
 1. **单状态源**：LangGraph checkpoint 是唯一真相
-2. **对抗性审查**：builder/reviewer 必须不同 agent，防止自我审批
+2. **对抗性审查**：CLI/GUI 模式下同 agent 可同时做 builder+reviewer（不同实例）；IDE 模式建议不同 agent
 3. **纯文件协议**：IDE 只读 prompt、写 JSON，无需终端操作
 4. **原子写入**：关键文件使用 tempfile + os.replace，防崩溃损坏
 5. **并发安全**：文件锁（O_CREAT|O_EXCL）、线程锁、TOCTOU 防护
@@ -490,8 +493,7 @@ AGPL-3.0，详见 `LICENSE`。
 ## English Summary
 
 **MyGO — Multi-agent Yielding Group Orchestra** is your AI band for code delivery (v0.7.1).
-Each AI IDE is a band member — builder writes code, reviewer checks quality.
-One command to start the performance:
+Recommended: **1 IDE + N CLI agents** — one IDE orchestrates, multiple Codex/Claude CLI agents work in parallel.
 - Three driver modes: manual (file), auto CLI, and GUI automation (macOS AppleScript)
 - **Parallel execution**: independent sub-tasks run concurrently via ThreadPoolExecutor
 - **Slot-based terminal pool**: persistent Terminal.app windows reused across groups
@@ -500,4 +502,4 @@ One command to start the performance:
 - Task decomposition with dependency-aware topological execution
 - Rubber-stamp detection, retry budgets, timeout guards
 - Atomic file writes, TOCTOU race protection, input validation
-- 1136 tests, full mypy/ruff compliance
+- 1137 tests, full mypy/ruff compliance
