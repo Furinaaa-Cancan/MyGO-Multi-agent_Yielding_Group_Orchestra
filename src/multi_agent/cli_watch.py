@@ -78,7 +78,9 @@ def _normalize_resume_output(role: str, data: dict[str, Any], state_values: dict
             # Auto-populate evidence from feedback/summary for CLI-driven reviews
             feedback = out.get("feedback", "") or out.get("summary", "")
             if feedback and isinstance(feedback, str) and feedback.strip():
-                out.setdefault("evidence", [feedback.strip()])
+                # Use direct assignment — setdefault won't replace existing empty []
+                if not out.get("evidence"):
+                    out["evidence"] = [feedback.strip()]
                 evidence_items = 1
             if evidence_items < min_evidence:
                 raise ValueError(

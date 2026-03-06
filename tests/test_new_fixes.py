@@ -838,6 +838,19 @@ class TestLegacyResumeNormalization:
         assert normalized["decision"] == "approve"
         assert normalized["evidence"] == ["looks good"]
 
+    def test_reviewer_approve_auto_populates_evidence_from_empty_list(self):
+        """Approve with evidence: [] should still auto-populate from summary."""
+        from multi_agent.cli import _normalize_resume_output
+
+        state_values = {
+            "workflow_mode": "strict",
+            "review_policy": {"reviewer": {"require_evidence_on_approve": True, "min_evidence_items": 1}},
+        }
+        output = {"decision": "approve", "summary": "reviewed ok", "evidence": []}
+        normalized = _normalize_resume_output("reviewer", output, state_values)
+        assert normalized["decision"] == "approve"
+        assert normalized["evidence"] == ["reviewed ok"]
+
     def test_reviewer_evidence_check_can_be_disabled(self):
         from multi_agent.cli import _normalize_resume_output
 

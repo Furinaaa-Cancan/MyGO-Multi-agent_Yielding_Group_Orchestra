@@ -309,9 +309,24 @@ def dispatch_visible(
         outbox_file = str(outbox_dir() / f"{role}.json")
     cmd_str = command_template.format(task_file=task_file, outbox_file=outbox_file)
 
-    # Write trigger file (line1=outbox_path, line2=command) — wrapper picks this up
+    # Remove stale .done file from previous close — prevents new wrapper from
+    # exiting immediately when a slot is reused after close_all_visible_terminals.
+    done_file = tdir / ".done"
+    with contextlib.suppress(OSError):
+        done_file.unlink(missing_ok=True)
+
+    # Write trigger file atomically (tempfile + rename) — wrapper might read
+    # partial content if we use plain write_text due to a race condition.
     trigger = tdir / ".trigger"
-    trigger.write_text(f"{outbox_file}\n{cmd_str}", encoding="utf-8")
+    fd_trig, tmp_trig = tempfile.mkstemp(dir=str(tdir), suffix=".trigger.tmp")
+    try:
+        with os.fdopen(fd_trig, "w", encoding="utf-8") as f_trig:
+            f_trig.write(f"{outbox_file}\n{cmd_str}")
+        os.replace(tmp_trig, str(trigger))
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_trig)
+        raise
 
     # If terminal already open for this key, just return — wrapper will see trigger
     if key in _open_terminals:
@@ -458,15 +473,16 @@ def close_visible_terminal(subtask_id: str | None = None, agent_id: str = "", ro
 def close_all_visible_terminals() -> None:
     """Close all open visible terminals (called at end of decompose run)."""
     for key in list(_open_terminals.keys()):
-        # Extract slot number from key like "slot:0"
-        if key.startswith("slot:"):
-            slot = int(key.split(":")[1])
-            tdir = _trigger_dir(None, terminal_slot=slot)
-        else:
-            # Legacy subtask-based key
-            tdir = _trigger_dir(key)
-        done = tdir / ".done"
         with contextlib.suppress(OSError):
+            if key.startswith("slot:"):
+                slot = int(key.split(":")[1])
+                tdir = _trigger_dir(None, terminal_slot=slot)
+            else:
+                # Legacy key is a subtask_id or "agent:role".
+                # Subtask workspace may already be cleaned up — suppress errors.
+                tdir = _trigger_dir(key)
+            done = tdir / ".done"
+            done.parent.mkdir(parents=True, exist_ok=True)
             done.write_text("done", encoding="utf-8")
     _open_terminals.clear()
 
