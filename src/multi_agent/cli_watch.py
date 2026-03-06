@@ -181,7 +181,7 @@ def _process_outbox(poller: Any, role: str, agent: str, status: Any, app: Any, t
                 _sync_subtask_workspace(subtask_id)
 
             if not next_status.is_terminal and next_status.waiting_role:
-                _show_next_agent(next_status, ts, visible=visible, subtask_id=subtask_id)
+                _show_next_agent(next_status, ts, visible=False, subtask_id=subtask_id)
             break
     return "continue"
 
