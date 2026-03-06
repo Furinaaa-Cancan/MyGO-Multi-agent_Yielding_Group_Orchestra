@@ -456,10 +456,12 @@ def dispatch_visible(
         f.write("\n".join(lines) + "\n")
     Path(wrapper_path).chmod(0o755)
 
+    # Escape AppleScript string to prevent injection via wrapper_path
+    safe_path = wrapper_path.replace("\\", "\\\\").replace('"', '\\"')
     applescript = f'''
 tell application "Terminal"
     activate
-    do script "{wrapper_path}"
+    do script "{safe_path}"
 end tell
 '''
     try:
@@ -574,11 +576,13 @@ def send_gui_message(app_name: str, message: str) -> bool:
         logger.warning("osascript not found — GUI automation unavailable")
         return False
 
+    # Escape AppleScript strings to prevent injection via app_name
+    safe_app = app_name.replace("\\", "\\\\").replace('"', '\\"')
     applescript = f'''
-tell application "{app_name}" to activate
+tell application "{safe_app}" to activate
 delay 1.0
 tell application "System Events"
-    tell process "{app_name}"
+    tell process "{safe_app}"
         set frontmost to true
         delay 0.5
         keystroke "v" using command down
