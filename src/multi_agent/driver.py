@@ -299,9 +299,9 @@ def dispatch_visible(
         outbox_file = str(outbox_dir() / f"{role}.json")
     cmd_str = command_template.format(task_file=task_file, outbox_file=outbox_file)
 
-    # Write trigger file — the wrapper will pick this up
+    # Write trigger file (line1=outbox_path, line2=command) — wrapper picks this up
     trigger = tdir / ".trigger"
-    trigger.write_text(cmd_str, encoding="utf-8")
+    trigger.write_text(f"{outbox_file}\n{cmd_str}", encoding="utf-8")
 
     # If terminal already open for this key, just return — wrapper will see trigger
     if key in _open_terminals:
@@ -322,7 +322,6 @@ def dispatch_visible(
     )
     trigger_path = shlex.quote(str(trigger))
     done_path = shlex.quote(str(tdir / ".done"))
-    outbox_q = shlex.quote(outbox_file)
     fence = "```"
 
     lines = [
@@ -337,16 +336,18 @@ def dispatch_visible(
         "# Main loop — wait for trigger, run command, repeat",
         f"TRIGGER={trigger_path}",
         f"DONE={done_path}",
-        f"OUTBOX={outbox_q}",
-        'mkdir -p "$(dirname "$OUTBOX")"',
         "",
         "while true; do",
         '    # Wait for trigger file or done signal',
         '    while [ ! -f "$TRIGGER" ] && [ ! -f "$DONE" ]; do sleep 0.5; done',
         '    [ -f "$DONE" ] && break',
         "",
-        '    CMD=$(cat "$TRIGGER")',
+        '    # Read trigger: line1=outbox path, line2+=command',
+        '    OUTBOX=$(head -1 "$TRIGGER")',
+        '    CMD=$(tail -n +2 "$TRIGGER")',
         '    rm -f "$TRIGGER"',
+        '    mkdir -p "$(dirname "$OUTBOX")"',
+        '    rm -f "$OUTBOX"',
         '    echo ""',
         '    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"',
         '    echo "🚀 执行: $CMD"',

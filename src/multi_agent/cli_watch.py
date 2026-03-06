@@ -216,6 +216,9 @@ def _run_watch_loop(app: Any, config: dict[str, Any], task_id: str, interval: fl
             status = get_task_status(app, task_id)
 
             if status.is_terminal:
+                if visible and subtask_id:
+                    from multi_agent.driver import close_visible_terminal
+                    close_visible_terminal(subtask_id=subtask_id)
                 _handle_terminal(status, task_id, ts, manage_lock)
                 return
 
