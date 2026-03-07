@@ -110,19 +110,23 @@
         </a>
         <!-- Nav -->
         <nav class="hidden md:flex items-center gap-6">
-          <span class="nav-link active" onclick="scrollToSection('hero')">Overview</span>
-          <span class="nav-link" onclick="scrollToSection('dashboard-section')">Dashboard</span>
-          <span class="nav-link" onclick="scrollToSection('tasks-section')">Tasks</span>
-          <span class="nav-link" onclick="scrollToSection('events-section')">Events</span>
+          <span class="nav-link active" onclick="scrollToSection('hero')" data-i18n="nav_overview">Overview</span>
+          <span class="nav-link" onclick="scrollToSection('dashboard-section')" data-i18n="nav_dashboard">Dashboard</span>
+          <span class="nav-link" onclick="scrollToSection('tasks-section')" data-i18n="nav_tasks">Tasks</span>
+          <span class="nav-link" onclick="scrollToSection('events-section')" data-i18n="nav_events">Events</span>
         </nav>
       </div>
       <!-- Right -->
       <div class="flex items-center gap-4">
         <div class="flex items-center gap-2 text-xs" id="conn-wrap">
           <span class="w-2 h-2 rounded-full bg-zinc-600" id="conn-dot"></span>
-          <span class="text-zinc-500 text-xs" id="conn-text">Connecting</span>
+          <span class="text-zinc-500 text-xs" id="conn-text" data-i18n="connecting">Connecting</span>
         </div>
-        <button onclick="refreshAll()" class="h-8 px-4 rounded-lg text-xs font-medium bg-surface-3 text-zinc-300 hover:bg-surface-4 border border-surface-border hover:border-brand/30 transition-all">
+        <!-- Language Toggle -->
+        <button onclick="toggleLang()" id="lang-btn" class="h-8 px-3 rounded-lg text-xs font-medium bg-surface-3 text-zinc-400 hover:bg-surface-4 border border-surface-border hover:border-brand/30 transition-all" title="Switch Language">
+          <span id="lang-label">EN</span>
+        </button>
+        <button onclick="refreshAll()" class="h-8 px-4 rounded-lg text-xs font-medium bg-surface-3 text-zinc-300 hover:bg-surface-4 border border-surface-border hover:border-brand/30 transition-all" data-i18n="refresh">
           Refresh
         </button>
       </div>
@@ -140,12 +144,12 @@
         <div class="max-w-xl">
           <div class="flex items-center gap-2 mb-4">
             <span class="h-5 px-2.5 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-brand/10 text-brand border border-brand/20 inline-flex items-center">Live</span>
-            <span class="text-xs text-zinc-600">Multi-Agent Orchestration</span>
+            <span class="text-xs text-zinc-600" data-i18n="hero_badge">Multi-Agent Orchestration</span>
           </div>
-          <h1 class="text-3xl md:text-4xl font-extrabold text-white leading-tight tracking-tight mb-3">
+          <h1 class="text-3xl md:text-4xl font-extrabold text-white leading-tight tracking-tight mb-3" data-i18n="hero_title">
             Task Control Center
           </h1>
-          <p class="text-base text-zinc-500 leading-relaxed mb-6 max-w-md">
+          <p class="text-base text-zinc-500 leading-relaxed mb-6 max-w-md" data-i18n="hero_desc">
             Real-time monitoring for your multi-agent workflow.
             Track tasks, review events, and manage your AI orchestra.
           </p>
@@ -159,15 +163,15 @@
         <!-- Right: Stat cards -->
         <div class="grid grid-cols-2 gap-4 w-full md:w-auto md:min-w-[360px]">
           <div class="card p-5">
-            <div class="section-label mb-2">Active Task</div>
+            <div class="section-label mb-2" data-i18n="active_task">Active Task</div>
             <div class="text-sm font-semibold text-white truncate" id="active-task">-- idle --</div>
           </div>
           <div class="card p-5">
-            <div class="section-label mb-2">Total Tasks</div>
+            <div class="section-label mb-2" data-i18n="total_tasks">Total Tasks</div>
             <div class="stat-num" id="total-tasks">0</div>
           </div>
           <div class="card p-5 col-span-2">
-            <div class="section-label mb-2">Project</div>
+            <div class="section-label mb-2" data-i18n="project">Project</div>
             <div class="text-xs font-mono text-zinc-500 truncate" id="project-root">--</div>
           </div>
         </div>
@@ -176,7 +180,7 @@
       <!-- Pipeline Banner -->
       <div class="mt-12 card p-6" id="pipeline-card">
         <div class="flex items-center justify-between mb-5">
-          <div class="section-label">Workflow Pipeline</div>
+          <div class="section-label" data-i18n="workflow_pipeline">Workflow Pipeline</div>
           <div class="text-[10px] text-zinc-600 font-mono" id="pipeline-status">Idle</div>
         </div>
         <div class="flex items-center gap-3 max-w-2xl mx-auto" id="pipeline">
@@ -208,7 +212,7 @@
   <div id="status-banner" class="border-b border-surface-border bg-surface-1 hidden">
     <div class="max-w-[1400px] mx-auto px-6 py-3 flex items-center gap-3">
       <span class="w-2 h-2 rounded-full bg-ok pulse"></span>
-      <span class="text-xs text-zinc-400" id="banner-text">Task is running...</span>
+      <span class="text-xs text-zinc-400" id="banner-text" data-i18n="task_running">Task is running...</span>
     </div>
   </div>
 
@@ -224,7 +228,7 @@
           <div class="flex items-center justify-between px-6 py-4 border-b border-surface-border">
             <h2 class="text-xs font-semibold text-zinc-300 uppercase tracking-widest flex items-center gap-2">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c9a96e" stroke-width="2"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg>
-              Live Dashboard
+              <span data-i18n="live_dashboard">Live Dashboard</span>
             </h2>
             <span class="text-[10px] text-zinc-700 font-mono" id="dashboard-updated"></span>
           </div>
@@ -233,7 +237,7 @@
               <div class="w-16 h-16 rounded-2xl bg-surface-2 flex items-center justify-center mb-5 float border border-surface-border">
                 <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#3f3f46" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
               </div>
-              <p class="text-zinc-600 text-sm font-medium">No active task</p>
+              <p class="text-zinc-600 text-sm font-medium" data-i18n="no_active_task">No active task</p>
               <p class="text-zinc-700 text-xs mt-2 font-mono">my go "your requirement"</p>
             </div>
           </div>
@@ -244,13 +248,13 @@
           <div class="flex items-center justify-between px-5 py-4 border-b border-surface-border">
             <h2 class="text-xs font-semibold text-zinc-300 uppercase tracking-widest flex items-center gap-2">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c9a96e" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-              Event Stream
+              <span data-i18n="event_stream">Event Stream</span>
             </h2>
             <span class="text-[10px] text-zinc-700 font-mono" id="event-count">0 events</span>
           </div>
           <div id="event-timeline" class="flex-1 overflow-y-auto p-3 space-y-0.5">
             <div class="flex items-center justify-center py-16">
-              <p class="text-zinc-700 text-xs">Waiting for events...</p>
+              <p class="text-zinc-700 text-xs" data-i18n="waiting_events">Waiting for events...</p>
             </div>
           </div>
         </section>
@@ -261,7 +265,7 @@
         <div class="flex items-center justify-between px-6 py-4 border-b border-surface-border">
           <h2 class="text-xs font-semibold text-zinc-300 uppercase tracking-widest flex items-center gap-2">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c9a96e" stroke-width="2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="10"/></svg>
-            Task History
+            <span data-i18n="task_history">Task History</span>
           </h2>
           <div class="flex gap-1.5" id="task-tabs">
             <div class="tab-btn active" onclick="filterTasks('all',this)">All</div>
@@ -272,11 +276,11 @@
         </div>
         <!-- Table header -->
         <div class="grid grid-cols-[1fr_120px_80px] gap-3 px-6 py-2.5 text-[10px] text-zinc-600 uppercase tracking-widest bg-surface-1 border-b border-surface-border">
-          <span>Task / Requirement</span><span class="text-center">Status</span><span class="text-right">Time</span>
+          <span data-i18n="col_task">Task / Requirement</span><span class="text-center" data-i18n="col_status">Status</span><span class="text-right" data-i18n="col_time">Time</span>
         </div>
         <div id="task-list" class="max-h-[440px] overflow-y-auto">
           <div class="flex items-center justify-center py-12">
-            <p class="text-zinc-700 text-xs">Loading tasks...</p>
+            <p class="text-zinc-700 text-xs" data-i18n="loading">Loading tasks...</p>
           </div>
         </div>
       </section>
@@ -309,21 +313,21 @@
             </div>
             <span class="text-sm font-bold text-white">MyGO!!!!!</span>
           </div>
-          <p class="text-xs text-zinc-600 leading-relaxed">Multi-agent Yielding Group Orchestra. AI-driven task orchestration.</p>
+          <p class="text-xs text-zinc-600 leading-relaxed" data-i18n="footer_brand_desc">Multi-agent Yielding Group Orchestra. AI-driven task orchestration.</p>
         </div>
         <!-- Quick Links -->
         <div>
-          <div class="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider mb-3">Quick Start</div>
+          <div class="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider mb-3" data-i18n="footer_quickstart">Quick Start</div>
           <ul class="space-y-2 text-xs text-zinc-600">
-            <li><code class="text-zinc-500">my init</code> - Initialize project</li>
-            <li><code class="text-zinc-500">my go "task"</code> - Run task</li>
-            <li><code class="text-zinc-500">my status</code> - Check status</li>
-            <li><code class="text-zinc-500">my dashboard</code> - Open UI</li>
+            <li><code class="text-zinc-500">my init</code> - <span data-i18n="ft_init">Initialize project</span></li>
+            <li><code class="text-zinc-500">my go "task"</code> - <span data-i18n="ft_go">Run task</span></li>
+            <li><code class="text-zinc-500">my status</code> - <span data-i18n="ft_status">Check status</span></li>
+            <li><code class="text-zinc-500">my dashboard</code> - <span data-i18n="ft_dashboard">Open UI</span></li>
           </ul>
         </div>
         <!-- Architecture -->
         <div>
-          <div class="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider mb-3">Architecture</div>
+          <div class="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider mb-3" data-i18n="footer_arch">Architecture</div>
           <ul class="space-y-2 text-xs text-zinc-600">
             <li>Plan &rarr; Build &rarr; Review &rarr; Decide</li>
             <li>LangGraph State Machine</li>
@@ -333,7 +337,7 @@
         </div>
         <!-- Tech -->
         <div>
-          <div class="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider mb-3">Tech Stack</div>
+          <div class="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider mb-3" data-i18n="footer_tech">Tech Stack</div>
           <ul class="space-y-2 text-xs text-zinc-600">
             <li>Python + LangGraph</li>
             <li>Node.js + Express</li>
@@ -357,6 +361,101 @@
   </footer>
 
   <script>
+    // ── i18n ──────────────────────────────
+    const I18N = {
+      en: {
+        // Header & Nav
+        nav_overview: 'Overview', nav_dashboard: 'Dashboard', nav_tasks: 'Tasks', nav_events: 'Events',
+        connecting: 'Connecting', refresh: 'Refresh',
+        // Hero
+        hero_badge: 'Multi-Agent Orchestration',
+        hero_title: 'Task Control Center',
+        hero_desc: 'Real-time monitoring for your multi-agent workflow. Track tasks, review events, and manage your AI orchestra.',
+        // Stats
+        active_task: 'Active Task', total_tasks: 'Total Tasks', project: 'Project',
+        workflow_pipeline: 'Workflow Pipeline',
+        // Banner
+        task_running: 'Task is running...',
+        // Sections
+        live_dashboard: 'Live Dashboard', event_stream: 'Event Stream', task_history: 'Task History',
+        no_active_task: 'No active task', waiting_events: 'Waiting for events...', loading: 'Loading tasks...',
+        // Table
+        col_task: 'Task / Requirement', col_status: 'Status', col_time: 'Time',
+        // Tabs
+        tab_all: 'All', tab_active: 'Active', tab_done: 'Done', tab_failed: 'Failed',
+        // Status
+        idle: '-- idle --', running: 'Running', pipeline_idle: 'Idle',
+        live: 'Live', offline: 'Offline', connected: 'Connected', disconnected: 'Disconnected',
+        // Task detail
+        task_detail: 'Task Detail', task_info: 'Task Info', trace_events: 'Trace Events',
+        no_trace: 'No trace events', raw_json: 'Raw JSON',
+        lbl_status: 'Status', lbl_mode: 'Mode', lbl_builder: 'Builder', lbl_reviewer: 'Reviewer', lbl_requirement: 'Requirement',
+        // Footer
+        footer_brand_desc: 'Multi-agent Yielding Group Orchestra. AI-driven task orchestration.',
+        footer_quickstart: 'Quick Start', footer_arch: 'Architecture', footer_tech: 'Tech Stack',
+        ft_init: 'Initialize project', ft_go: 'Run task', ft_status: 'Check status', ft_dashboard: 'Open UI',
+        // Dynamic
+        events_count: (n) => `${n} events`,
+        banner_running: (t) => `Task "${t}" is running...`,
+        no_filter_tasks: (f) => `No ${f} tasks`,
+        no_tasks: 'No tasks found',
+      },
+      zh: {
+        nav_overview: '概览', nav_dashboard: '仪表盘', nav_tasks: '任务', nav_events: '事件',
+        connecting: '连接中', refresh: '刷新',
+        hero_badge: '多智能体编排',
+        hero_title: '任务控制中心',
+        hero_desc: '实时监控多智能体工作流。追踪任务进度、审查事件、管理你的 AI 乐队。',
+        active_task: '当前任务', total_tasks: '总任务数', project: '项目',
+        workflow_pipeline: '工作流水线',
+        task_running: '任务运行中...',
+        live_dashboard: '实时仪表盘', event_stream: '事件流', task_history: '任务历史',
+        no_active_task: '暂无活跃任务', waiting_events: '等待事件...', loading: '加载中...',
+        col_task: '任务 / 需求', col_status: '状态', col_time: '时间',
+        tab_all: '全部', tab_active: '进行中', tab_done: '已完成', tab_failed: '失败',
+        idle: '-- 空闲 --', running: '运行中', pipeline_idle: '空闲',
+        live: '在线', offline: '离线', connected: '已连接', disconnected: '未连接',
+        task_detail: '任务详情', task_info: '任务信息', trace_events: '追踪事件',
+        no_trace: '暂无追踪事件', raw_json: '原始 JSON',
+        lbl_status: '状态', lbl_mode: '模式', lbl_builder: '构建者', lbl_reviewer: '审查者', lbl_requirement: '需求',
+        footer_brand_desc: '多智能体协同乐团。AI 驱动的任务编排系统。',
+        footer_quickstart: '快速开始', footer_arch: '架构', footer_tech: '技术栈',
+        ft_init: '初始化项目', ft_go: '运行任务', ft_status: '查看状态', ft_dashboard: '打开界面',
+        events_count: (n) => `${n} 个事件`,
+        banner_running: (t) => `任务 "${t}" 运行中...`,
+        no_filter_tasks: (f) => { const m = {active:'进行中',approved:'已完成',failed:'失败'}; return `没有${m[f]||f}的任务`; },
+        no_tasks: '暂无任务',
+      }
+    };
+
+    let currentLang = localStorage.getItem('mygo-lang') || 'en';
+
+    function t(key) { return I18N[currentLang]?.[key] ?? I18N.en[key] ?? key; }
+    function tf(key, ...args) { const v = I18N[currentLang]?.[key] ?? I18N.en[key]; return typeof v === 'function' ? v(...args) : v; }
+
+    function applyLang() {
+      document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        const val = t(key);
+        if (val) el.textContent = val;
+      });
+      document.getElementById('lang-label').textContent = currentLang === 'en' ? '中文' : 'EN';
+      document.documentElement.lang = currentLang === 'zh' ? 'zh-CN' : 'en';
+      // Re-render tabs with translated labels
+      const tabs = document.querySelectorAll('#task-tabs .tab-btn');
+      const tabKeys = ['tab_all', 'tab_active', 'tab_done', 'tab_failed'];
+      tabs.forEach((tab, i) => { if (tabKeys[i]) tab.textContent = t(tabKeys[i]); });
+    }
+
+    function toggleLang() {
+      currentLang = currentLang === 'en' ? 'zh' : 'en';
+      localStorage.setItem('mygo-lang', currentLang);
+      applyLang();
+      // Re-render dynamic content
+      renderTaskList(allTasks);
+      document.getElementById('event-count').textContent = tf('events_count', allEvents.length);
+    }
+
     // ── State ─────────────────────────────
     let eventSource = null;
     let allEvents = [];
@@ -364,7 +463,7 @@
     let currentFilter = 'all';
 
     // ── Init ──────────────────────────────
-    document.addEventListener('DOMContentLoaded', () => { refreshAll(); connectSSE(); });
+    document.addEventListener('DOMContentLoaded', () => { applyLang(); refreshAll(); connectSSE(); });
 
     async function refreshAll() { await Promise.all([fetchStatus(), fetchTasks()]); }
 
@@ -387,14 +486,14 @@
           el.textContent = d.active_task;
           el.className = 'text-sm font-semibold text-ok truncate';
           banner.classList.remove('hidden');
-          document.getElementById('banner-text').textContent = `Task "${d.active_task}" is running...`;
-          document.getElementById('pipeline-status').textContent = 'Running';
+          document.getElementById('banner-text').textContent = tf('banner_running', d.active_task);
+          document.getElementById('pipeline-status').textContent = t('running');
           document.getElementById('pipeline-status').className = 'text-[10px] text-ok font-mono';
         } else {
-          el.textContent = '-- idle --';
+          el.textContent = t('idle');
           el.className = 'text-sm font-semibold text-zinc-600 truncate';
           banner.classList.add('hidden');
-          document.getElementById('pipeline-status').textContent = 'Idle';
+          document.getElementById('pipeline-status').textContent = t('pipeline_idle');
           document.getElementById('pipeline-status').className = 'text-[10px] text-zinc-600 font-mono';
         }
         document.getElementById('project-root').textContent = d.root_dir || '--';
@@ -446,12 +545,12 @@
       const fc = document.getElementById('footer-conn');
       if (ok) {
         dot.className = 'w-2 h-2 rounded-full bg-ok pulse';
-        txt.textContent = 'Live'; txt.className = 'text-ok text-xs';
-        fc.textContent = 'Connected'; fc.className = 'text-ok text-[11px]';
+        txt.textContent = t('live'); txt.className = 'text-ok text-xs';
+        fc.textContent = t('connected'); fc.className = 'text-ok text-[11px]';
       } else {
         dot.className = 'w-2 h-2 rounded-full bg-err';
-        txt.textContent = 'Offline'; txt.className = 'text-err text-xs';
-        fc.textContent = 'Disconnected'; fc.className = 'text-zinc-700 text-[11px]';
+        txt.textContent = t('offline'); txt.className = 'text-err text-xs';
+        fc.textContent = t('disconnected'); fc.className = 'text-zinc-700 text-[11px]';
       }
     }
 
@@ -501,7 +600,7 @@
         return true;
       });
       if (!filtered.length) {
-        c.innerHTML = `<div class="flex items-center justify-center py-12"><p class="text-zinc-700 text-xs">${currentFilter === 'all' ? 'No tasks found' : 'No ' + currentFilter + ' tasks'}</p></div>`;
+        c.innerHTML = `<div class="flex items-center justify-center py-12"><p class="text-zinc-700 text-xs">${currentFilter === 'all' ? t('no_tasks') : tf('no_filter_tasks', currentFilter)}</p></div>`;
         return;
       }
       c.innerHTML = filtered.slice(0, 50).map(t => {
@@ -533,7 +632,7 @@
       const c = document.getElementById('event-timeline');
       if (c.querySelector('p')) c.innerHTML = '';
 
-      document.getElementById('event-count').textContent = `${allEvents.length} events`;
+      document.getElementById('event-count').textContent = tf('events_count', allEvents.length);
 
       const colors = {
         session_start: '#4ade80', session_pull: '#38bdf8', session_push: '#a78bfa',
@@ -574,22 +673,22 @@
       if (data.task_data && Object.keys(data.task_data).length) {
         const td = data.task_data;
         h += `<div>
-          <div class="section-label mb-3">Task Info</div>
+          <div class="section-label mb-3">${t('task_info')}</div>
           <div class="grid grid-cols-2 gap-x-6 gap-y-3 text-xs">
-            ${td.status ? `<div class="text-zinc-600">Status</div><div>${statusBadge(td.status)}</div>` : ''}
-            ${td.mode ? `<div class="text-zinc-600">Mode</div><div class="text-zinc-300">${esc(td.mode)}</div>` : ''}
-            ${td.builder ? `<div class="text-zinc-600">Builder</div><div class="text-zinc-300 font-mono">${esc(td.builder)}</div>` : ''}
-            ${td.reviewer ? `<div class="text-zinc-600">Reviewer</div><div class="text-zinc-300 font-mono">${esc(td.reviewer)}</div>` : ''}
-            ${td.requirement ? `<div class="col-span-2 mt-1"><div class="text-zinc-600 mb-1">Requirement</div><div class="text-zinc-300">${esc(td.requirement)}</div></div>` : ''}
+            ${td.status ? `<div class="text-zinc-600">${t('lbl_status')}</div><div>${statusBadge(td.status)}</div>` : ''}
+            ${td.mode ? `<div class="text-zinc-600">${t('lbl_mode')}</div><div class="text-zinc-300">${esc(td.mode)}</div>` : ''}
+            ${td.builder ? `<div class="text-zinc-600">${t('lbl_builder')}</div><div class="text-zinc-300 font-mono">${esc(td.builder)}</div>` : ''}
+            ${td.reviewer ? `<div class="text-zinc-600">${t('lbl_reviewer')}</div><div class="text-zinc-300 font-mono">${esc(td.reviewer)}</div>` : ''}
+            ${td.requirement ? `<div class="col-span-2 mt-1"><div class="text-zinc-600 mb-1">${t('lbl_requirement')}</div><div class="text-zinc-300">${esc(td.requirement)}</div></div>` : ''}
           </div>
         </div>`;
-        h += `<details class="group"><summary class="text-[11px] text-zinc-600 cursor-pointer hover:text-zinc-400 transition">Raw JSON</summary>
+        h += `<details class="group"><summary class="text-[11px] text-zinc-600 cursor-pointer hover:text-zinc-400 transition">${t('raw_json')}</summary>
           <pre class="bg-surface-0 rounded-xl p-4 text-[11px] text-zinc-500 mt-2 max-h-48 overflow-y-auto border border-surface-border">${esc(JSON.stringify(td, null, 2))}</pre></details>`;
       }
 
       if (data.trace_events && data.trace_events.length) {
         h += `<div>
-          <div class="section-label mb-3">Trace Events <span class="normal-case text-zinc-600">(${data.trace_events.length})</span></div>
+          <div class="section-label mb-3">${t('trace_events')} <span class="normal-case text-zinc-600">(${data.trace_events.length})</span></div>
           <div class="space-y-0.5 max-h-72 overflow-y-auto">
             ${data.trace_events.map(evt => {
               const et = evt.event_type || evt.type || '?';
@@ -606,7 +705,7 @@
           </div>
         </div>`;
       } else {
-        h += '<p class="text-zinc-700 text-xs text-center py-6">No trace events</p>';
+        h += `<p class="text-zinc-700 text-xs text-center py-6">${t('no_trace')}</p>`;
       }
       c.innerHTML = h;
       document.getElementById('task-modal').classList.remove('hidden');
