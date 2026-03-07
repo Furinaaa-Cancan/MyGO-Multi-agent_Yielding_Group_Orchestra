@@ -2,7 +2,7 @@
 
 **你的 AI 乐队，一条命令开演。**
 
-基于 **LangGraph 单一状态源（SSOT）** 驱动 4 节点工作流。v0.8.0
+基于 **LangGraph 单一状态源（SSOT）** 驱动 4 节点工作流。v0.8.1
 
 ---
 
@@ -259,7 +259,7 @@ DRAFT → QUEUED → ASSIGNED → RUNNING → VERIFYING → APPROVED → MERGED 
 ## 项目结构
 
 ```text
-src/multi_agent/           # 核心包（28 个模块）
+src/multi_agent/           # 核心包（26 个模块）
 ├── cli.py                 # CLI 入口 (my go/done/watch/cancel/status/dashboard)
 ├── cli_admin.py           # 管理命令 (history/init/doctor/agents/...)
 ├── cli_decompose.py       # 任务分解执行
@@ -414,7 +414,7 @@ defaults:
 
 ---
 
-## Git 集成 (v0.8.0)
+## Git 集成 (v0.8.1)
 
 自动 commit、branch、tag 和测试运行，通过 EventHooks 触发，零侵入核心逻辑。
 
@@ -612,7 +612,7 @@ AGPL-3.0，详见 `LICENSE`。
 
 ## English Summary
 
-**MyGO — Multi-agent Yielding Group Orchestra** is your AI band for code delivery (v0.8.0).
+**MyGO — Multi-agent Yielding Group Orchestra** is your AI band for code delivery (v0.8.1).
 Recommended: **1 IDE + N CLI agents** — one IDE orchestrates, multiple Codex/Claude CLI agents work in parallel.
 - Three driver modes: manual (file), auto CLI, and GUI automation (macOS AppleScript)
 - **Parallel execution**: independent sub-tasks run concurrently via ThreadPoolExecutor
