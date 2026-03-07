@@ -286,8 +286,10 @@ src/multi_agent/           # 核心包（28 个模块）
 ├── git_ops.py             # Git 集成 (auto-commit/branch/tag/test)
 ├── _utils.py              # 共享工具函数
 ├── web/                   # Web 仪表板
-│   ├── server.py          # FastAPI 后端 (REST + SSE)
-│   └── static/index.html  # 前端 (TailwindCSS)
+│   ├── app.js             # Node.js/Express 后端 (REST + SSE + chokidar)
+│   ├── package.json       # Node.js 依赖
+│   ├── server.py          # Python/FastAPI 降级后端
+│   └── static/index.html  # 前端 (TailwindCSS + i18n)
 └── templates/             # Jinja2 prompt 模板
 
 agents/agents.yaml         # Agent 注册表
@@ -460,12 +462,12 @@ decide_node ──► auto_commit("approved: xxx") + auto_tag("task/xxx")
 
 ---
 
-## Web 仪表板 (v0.8.0)
+## Web 仪表板 (v0.8.1)
 
-实时任务监控 Dashboard，基于 FastAPI + SSE + TailwindCSS。
+实时任务监控 Dashboard，基于 **Node.js/Express**（主后端） + SSE + TailwindCSS。Python/uvicorn 作为降级备选。
 
 ```bash
-# 启动仪表板
+# 启动仪表板（自动检测 Node.js，没有则降级到 Python/uvicorn）
 my dashboard
 my dashboard --port 9000
 my dashboard --host 0.0.0.0   # ⚠️ 无认证，仅限可信网络
@@ -473,10 +475,13 @@ my dashboard --host 0.0.0.0   # ⚠️ 无认证，仅限可信网络
 
 ### 功能
 
-- **实时状态** — 当前活跃任务、dashboard.md 内容
-- **任务列表** — 所有历史任务及状态
-- **事件流** — SSE 推送 dashboard 变更、trace 更新、心跳
+- **实时状态** — 当前活跃任务、dashboard.md 内容（支持 Markdown 表格渲染）
+- **Workflow Pipeline** — Plan → Build → Review → Decide 可视化流水线
+- **任务列表** — 历史任务 + 状态筛选（All/Active/Done/Failed）
+- **事件流** — SSE 推送 dashboard 变更、trace 更新、状态变化、心跳
 - **Trace 查看** — 每个任务的 JSONL 事件时间线
+- **中英文切换** — 完整 i18n 支持，localStorage 持久化语言偏好
+- **Hero + Footer** — 高端深色主题，带导航、状态横幅、多栏页尾
 
 ### API 端点
 
@@ -489,10 +494,14 @@ my dashboard --host 0.0.0.0   # ⚠️ 无认证，仅限可信网络
 | `GET /api/tasks/{id}/trace` | Trace 事件 |
 | `GET /api/events` | SSE 实时事件流 |
 
-### 安装
+### 依赖
 
 ```bash
-pip install 'multi-agent[web]'   # 安装 FastAPI + uvicorn 依赖
+# Node.js 后端（推荐，首次运行自动 npm install）
+node >= 18
+
+# 或 Python 降级后端
+pip install 'multi-agent[web]'   # 安装 FastAPI + uvicorn
 ```
 
 ---
@@ -543,7 +552,8 @@ reviewer 输出被判定为 rubber-stamp（缺少具体 reasoning/evidence）。
 - **Click**（CLI 框架）
 - **Jinja2**（prompt 模板渲染）
 - **PyYAML**（配置解析）
-- **FastAPI** + **uvicorn**（Web 仪表板，可选依赖 `[web]`）
+- **Node.js** + **Express**（Web 仪表板主后端）
+- **FastAPI** + **uvicorn**（Web 仪表板降级后端，可选依赖 `[web]`）
 
 开发依赖：pytest, ruff, mypy
 
@@ -614,5 +624,5 @@ Recommended: **1 IDE + N CLI agents** — one IDE orchestrates, multiple Codex/C
 - Atomic file writes, TOCTOU race protection, input validation
 - **Platform**: macOS fully supported; Windows/Linux file+CLI modes work, `--visible` mode macOS-only (Windows Terminal adaptation planned)
 - **Git integration**: auto-commit, auto-branch, auto-tag via EventHooks; auto-test runner with evidence injection
-- **Web Dashboard**: real-time task monitoring via FastAPI + SSE, TailwindCSS frontend
+- **Web Dashboard**: real-time task monitoring via Node.js/Express + SSE, TailwindCSS frontend, Chinese/English i18n
 - 1203 tests, full mypy/ruff compliance

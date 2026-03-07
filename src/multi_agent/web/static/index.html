@@ -578,11 +578,23 @@
 
     function renderMarkdown(md) {
       const c = document.getElementById('dashboard-content');
-      let h = md
+      // Parse tables first (before line-level replacements)
+      let h = md.replace(/^(\|.+\|)\n(\|[-| :]+\|)\n((?:\|.+\|\n?)+)/gm, (_, hdr, sep, body) => {
+        const thCells = hdr.split('|').filter(c=>c.trim()).map(c =>
+          `<th class="px-3 py-2 text-left text-[11px] font-semibold text-zinc-300 uppercase tracking-wider">${c.trim()}</th>`).join('');
+        const rows = body.trim().split('\n').map(row => {
+          const cells = row.split('|').filter(c=>c.trim()).map(c =>
+            `<td class="px-3 py-2 text-xs text-zinc-400 border-t border-surface-border">${c.trim()}</td>`).join('');
+          return `<tr class="hover:bg-surface-2/50">${cells}</tr>`;
+        }).join('');
+        return `<table class="w-full border-collapse my-3 rounded-lg overflow-hidden border border-surface-border"><thead class="bg-surface-2"><tr>${thCells}</tr></thead><tbody>${rows}</tbody></table>`;
+      });
+      h = h
         .replace(/^#### (.+)$/gm, '<h4 class="text-zinc-400 font-semibold text-xs mt-3 mb-1">$1</h4>')
         .replace(/^### (.+)$/gm, '<h3 class="text-brand font-semibold mt-4 mb-1">$1</h3>')
         .replace(/^## (.+)$/gm, '<h2 class="text-white font-bold text-base mt-5 mb-2">$1</h2>')
         .replace(/^# (.+)$/gm, '<h1 class="text-white font-bold text-lg mt-5 mb-2">$1</h1>')
+        .replace(/^---$/gm, '<hr class="border-surface-border my-4">')
         .replace(/\*\*(.+?)\*\*/g, '<strong class="text-white font-semibold">$1</strong>')
         .replace(/^- (.+)$/gm, '<div class="flex gap-2 ml-1 my-0.5"><span class="text-brand/60 mt-[5px] text-[6px]">&#9679;</span><span>$1</span></div>')
         .replace(/^(\d+)\. (.+)$/gm, '<div class="flex gap-2 ml-1 my-0.5"><span class="text-brand font-mono text-xs w-5">$1.</span><span>$2</span></div>')
