@@ -11,6 +11,7 @@ from collections.abc import Callable, Mapping
 from operator import add
 from typing import Annotated, Any
 
+import yaml
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.errors import GraphInterrupt
 from langgraph.graph import END, START, StateGraph
@@ -688,12 +689,14 @@ def _decide_request_changes(
         return {"error": "REQUEST_CHANGES_CAP", "final_status": "escalated",
                 "conversation": [final_entry]}
 
+    # Use original (pre-trim) conversation for dashboard to avoid truncated display
+    dashboard_convo = original_convo if original_convo is not None else state.get("conversation", [])
     write_dashboard(
         task_id=state["task_id"],
         done_criteria=state.get("done_criteria", []),
         current_agent=state.get("builder_id", ""),
         current_role="builder",
-        conversation=state.get("conversation", []),
+        conversation=dashboard_convo,
         status_msg=f"🔧 需修改 ({retry_count}/{budget})",
     )
     return {"conversation": [
@@ -876,8 +879,6 @@ def _is_cancelled(task_id: str) -> bool:
     parse failure is treated as "not cancelled" — the next poll cycle will
     re-check.
     """
-    import yaml
-
     from multi_agent.config import tasks_dir
     path = tasks_dir() / f"{task_id}.yaml"
     try:

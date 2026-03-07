@@ -300,8 +300,17 @@ app.get("/api/events", (req, res) => {
 
 // ── Start Server ────────────────────────────────────────
 
-app.listen(PORT, HOST, () => {
+const server = app.listen(PORT, HOST, () => {
   console.log(`\n  🎸 MyGO Dashboard running at http://${HOST}:${PORT}`);
   console.log(`     Workspace: ${wsDir}`);
   console.log(`     Press Ctrl+C to stop\n`);
 });
+
+// Graceful shutdown
+function shutdown() {
+  console.log("\n  Shutting down...");
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(1), 3000);
+}
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);

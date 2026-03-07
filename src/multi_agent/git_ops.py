@@ -14,6 +14,7 @@ import re
 import shlex
 import shutil
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -313,61 +314,67 @@ def run_tests(config: AutoTestConfig | None = None) -> AutoTestResult:
 # ── Hook Handlers ─────────────────────────────────────────
 
 
-def _on_build_submit(state: Any, result: dict[str, Any] | None = None) -> None:
-    """Hook: auto-commit after builder submits."""
-    cfg = load_git_config()
-    if not cfg.auto_commit or "build" not in cfg.commit_on:
-        return
+def _make_on_build_submit(cfg: GitConfig) -> Callable[..., None]:
+    """Create build-submit hook with cached config."""
+    def _on_build_submit(state: Any, result: dict[str, Any] | None = None) -> None:
+        """Hook: auto-commit after builder submits."""
+        if not cfg.auto_commit or "build" not in cfg.commit_on:
+            return
 
-    task_id = state.get("task_id", "unknown") if isinstance(state, dict) else "unknown"
-    builder_id = state.get("builder_id", "?") if isinstance(state, dict) else "?"
-    summary = ""
-    files: list[str] = []
-    if isinstance(result, dict):
-        builder_out = result.get("builder_output")
-        if isinstance(builder_out, dict):
-            summary = builder_out.get("summary", "")
-            files = builder_out.get("changed_files", [])
+        task_id = state.get("task_id", "unknown") if isinstance(state, dict) else "unknown"
+        builder_id = state.get("builder_id", "?") if isinstance(state, dict) else "?"
+        summary = ""
+        files: list[str] = []
+        if isinstance(result, dict):
+            builder_out = result.get("builder_output")
+            if isinstance(builder_out, dict):
+                summary = builder_out.get("summary", "")
+                files = builder_out.get("changed_files", [])
 
-    msg = f"build({builder_id}): {summary}" if summary else f"build({builder_id}): task {task_id}"
-    auto_commit(msg, task_id=task_id, changed=files or None)
-
-
-def _on_decide_approve(state: Any, result: dict[str, Any] | None = None) -> None:
-    """Hook: auto-commit + tag after task approved.
-
-    IMPORTANT: This fires on ALL decide exits. Must check final_status
-    to avoid committing/tagging on reject or request_changes.
-    """
-    # Only act on actual approvals
-    if not isinstance(result, dict) or result.get("final_status") != "approved":
-        return
-
-    cfg = load_git_config()
-    task_id = state.get("task_id", "unknown") if isinstance(state, dict) else "unknown"
-
-    if cfg.auto_commit and "approve" in cfg.commit_on:
-        auto_commit(f"approved: task {task_id}", task_id=task_id)
-
-    if cfg.auto_tag:
-        tag = f"task/{task_id}"
-        create_tag(tag, f"Task {task_id} approved")
+        msg = f"build({builder_id}): {summary}" if summary else f"build({builder_id}): task {task_id}"
+        auto_commit(msg, task_id=task_id, changed=files or None)
+    return _on_build_submit
 
 
-def _on_plan_start(state: Any) -> None:
-    """Hook: create task branch at plan start (if auto_branch enabled)."""
-    cfg = load_git_config()
-    if not cfg.auto_branch or not has_git():
-        return
+def _make_on_decide_approve(cfg: GitConfig) -> Callable[..., None]:
+    """Create decide-approve hook with cached config."""
+    def _on_decide_approve(state: Any, result: dict[str, Any] | None = None) -> None:
+        """Hook: auto-commit + tag after task approved.
 
-    task_id = state.get("task_id", "") if isinstance(state, dict) else ""
-    if not task_id:
-        return
+        IMPORTANT: This fires on ALL decide exits. Must check final_status
+        to avoid committing/tagging on reject or request_changes.
+        """
+        # Only act on actual approvals
+        if not isinstance(result, dict) or result.get("final_status") != "approved":
+            return
 
-    try:
-        create_branch(task_id, prefix=cfg.branch_prefix)
-    except RuntimeError as e:
-        _log.warning("Auto-branch creation failed: %s", e)
+        task_id = state.get("task_id", "unknown") if isinstance(state, dict) else "unknown"
+
+        if cfg.auto_commit and "approve" in cfg.commit_on:
+            auto_commit(f"approved: task {task_id}", task_id=task_id)
+
+        if cfg.auto_tag:
+            tag = f"task/{task_id}"
+            create_tag(tag, f"Task {task_id} approved")
+    return _on_decide_approve
+
+
+def _make_on_plan_start(cfg: GitConfig) -> Callable[..., None]:
+    """Create plan-start hook with cached config."""
+    def _on_plan_start(state: Any) -> None:
+        """Hook: create task branch at plan start (if auto_branch enabled)."""
+        if not cfg.auto_branch or not has_git():
+            return
+
+        task_id = state.get("task_id", "") if isinstance(state, dict) else ""
+        if not task_id:
+            return
+
+        try:
+            create_branch(task_id, prefix=cfg.branch_prefix)
+        except RuntimeError as e:
+            _log.warning("Auto-branch creation failed: %s", e)
+    return _on_plan_start
 
 
 # ── Registration ──────────────────────────────────────────
@@ -431,13 +438,13 @@ def _register_hooks_for_config(cfg: GitConfig) -> None:
     from multi_agent.graph_infra import graph_hooks
 
     if cfg.auto_branch:
-        graph_hooks.on_node_enter("plan", _on_plan_start)
+        graph_hooks.on_node_enter("plan", _make_on_plan_start(cfg))
         _log.info("Registered git hook: auto-branch on plan start")
 
     if cfg.auto_commit:
         if "build" in cfg.commit_on:
-            graph_hooks.on_node_exit("build", _on_build_submit)
+            graph_hooks.on_node_exit("build", _make_on_build_submit(cfg))
             _log.info("Registered git hook: auto-commit on build submit")
         if "approve" in cfg.commit_on:
-            graph_hooks.on_node_exit("decide", _on_decide_approve)
+            graph_hooks.on_node_exit("decide", _make_on_decide_approve(cfg))
             _log.info("Registered git hook: auto-commit on approve")

@@ -88,7 +88,15 @@ def api_tasks() -> JSONResponse:
     tasks_dir = ws / "tasks"
     tasks: list[dict[str, Any]] = []
     if tasks_dir.exists():
-        for f in sorted(tasks_dir.glob("*.yaml"), key=lambda p: p.stat().st_mtime, reverse=True):
+        # Cache stat results to avoid double stat() per file
+        yaml_files = []
+        for f in tasks_dir.glob("*.yaml"):
+            try:
+                yaml_files.append((f, f.stat().st_mtime))
+            except OSError:
+                continue
+        yaml_files.sort(key=lambda x: x[1], reverse=True)
+        for f, mtime in yaml_files:
             try:
                 data = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
                 tasks.append({
@@ -97,7 +105,7 @@ def api_tasks() -> JSONResponse:
                     "requirement": data.get("requirement", ""),
                     "status": data.get("status", "unknown"),
                     "current_agent": data.get("current_agent", ""),
-                    "modified": f.stat().st_mtime,
+                    "modified": mtime,
                 })
             except Exception:
                 tasks.append({"task_id": f.stem, "file": f.name, "error": "parse failed"})
