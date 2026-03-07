@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.1] - 2026-03-07
+
+### Added
+- **Node.js/Express backend** (`web/app.js`) — primary dashboard server with SSE via chokidar file watching
+- **Chinese/English i18n** — full language toggle (50+ translation keys) with localStorage persistence
+- **Premium UI redesign** — warm gold/zinc theme, Hero section, workflow pipeline visualization, status banner, multi-column footer
+- **Markdown table rendering** — dashboard.md tables now render as styled HTML tables
+- **System architecture doc** (`docs/SYSTEM_ARCHITECTURE.md`) — complete pipeline learning guide
+- **Skills cheatsheet** (`docs/SKILLS_CHEATSHEET.md`) — 8 categories of reusable development patterns
+- **Common errors guide** (`docs/COMMON_ERRORS.md`) — 18 documented errors with solutions + 4 design decisions
+- **Audit reports** (`docs/REVIEW_REPORT_v0.8.1*.md`) — 7-round code review findings
+
+### Fixed
+- **C1**: SSE trace event detection used magic number approximation → byte-offset seek (no duplicates/misses)
+- **H1**: Git hooks re-read YAML config on every call → closure factory caches config at registration
+- **M1**: `decide_node` dashboard showed trimmed conversation → uses original pre-trim conversation
+- **M2**: Node.js server had no graceful shutdown → SIGTERM/SIGINT handlers added
+- **M4**: Python `server.py` called `stat()` twice per task file → cached mtime
+- **L1**: `_is_cancelled` function-level `import yaml` → moved to module top
+- **L2**: i18n `data-i18n` attribute conflicted with dynamic event counter → removed, refresh in JS
+- **Trace matching**: Both `app.js` and `server.py` now match `.events.jsonl` file naming pattern
+
+### Changed
+- CLI `my dashboard` prefers Node.js backend, falls back to Python/uvicorn if Node.js unavailable
+- Git hooks use `_make_on_build_submit(cfg)` / `_make_on_decide_approve(cfg)` factory pattern
+- `_decide_reject_retry` accepts `original_convo` parameter for dashboard consistency
+- `pyproject.toml` version synced to 0.8.1
+
 ## [0.8.0] - 2026-03-07
 
 ### Added

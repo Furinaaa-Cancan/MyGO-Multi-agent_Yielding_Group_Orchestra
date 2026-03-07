@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "multi-agent"
-version = "0.8.0"
+version = "0.8.1"
 description = "MyGO — Multi-agent Yielding Group Orchestra. A band of AI agents orchestrated to build, review, and ship code together."
 requires-python = ">=3.11"
 dependencies = [
