@@ -27,3 +27,6 @@ build/
 .multi-agent/dashboard.md
 .multi-agent/TASK.md
 .multi-agent/.lock
+
+# Node.js
+node_modules/

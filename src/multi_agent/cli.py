@@ -830,6 +830,67 @@ def _auto_fix_runtime_consistency() -> list[str]:
 # ── Web Dashboard ────────────────────────────────────────
 
 
+def _launch_dashboard_node(host: str, port: int, url: str) -> None:
+    """Launch Node.js dashboard server, fall back to Python/uvicorn."""
+    import contextlib
+    import os
+    import shutil
+    import subprocess
+
+    from multi_agent.config import history_dir, root_dir, workspace_dir
+
+    web_dir = Path(__file__).parent / "web"
+    app_js = web_dir / "app.js"
+    node_bin = shutil.which("node")
+
+    if node_bin and app_js.exists():
+        # Auto-install npm deps if needed
+        if not (web_dir / "node_modules").exists():
+            npm_bin = shutil.which("npm")
+            if npm_bin:
+                click.echo("   📦 Installing dashboard dependencies...")
+                subprocess.run(
+                    [npm_bin, "install", "--prefix", str(web_dir)],
+                    check=True,
+                    capture_output=True,
+                )
+
+        click.echo(f"🎸 MyGO Dashboard (Node.js): {url}")
+        click.echo("   Press Ctrl+C to stop\n")
+
+        env = {
+            **dict(os.environ),
+            "MYGO_WORKSPACE_DIR": str(workspace_dir()),
+            "MYGO_ROOT_DIR": str(root_dir()),
+            "MYGO_HISTORY_DIR": str(history_dir()),
+        }
+        with contextlib.suppress(KeyboardInterrupt):
+            subprocess.run(
+                [node_bin, str(app_js), "--port", str(port), "--host", host],
+                env=env,
+                check=True,
+            )
+        return
+
+    # Fallback: Python/uvicorn
+    try:
+        import uvicorn
+    except ImportError:
+        click.echo("❌ Node.js not found and uvicorn not installed.", err=True)
+        click.echo("   Install Node.js (>=18) or: pip install 'multi-agent[web]'", err=True)
+        sys.exit(1)
+
+    click.echo(f"🎸 MyGO Dashboard (Python): {url}")
+    click.echo("   Press Ctrl+C to stop\n")
+    uvicorn.run(
+        "multi_agent.web.server:app",
+        host=host,
+        port=port,
+        log_level="info",
+        access_log=False,
+    )
+
+
 @main.command()
 @click.option("--port", default=8765, type=int, help="Server port")
 @click.option("--host", default="127.0.0.1", help="Bind address")
@@ -846,20 +907,12 @@ def dashboard(port: int, host: str, open_browser: bool) -> None:
       my dashboard --port 9000
       my dashboard --host 0.0.0.0
     """
-    try:
-        import uvicorn
-    except ImportError:
-        click.echo("❌ Web dashboard requires extra dependencies. Install with:", err=True)
-        click.echo("   pip install 'multi-agent[web]'", err=True)
-        sys.exit(1)
-
     ensure_workspace()
     url = f"http://{host}:{port}"
-    click.echo(f"🎸 MyGO Dashboard: {url}")
+
     if host not in ("127.0.0.1", "localhost", "::1"):
         click.echo("   ⚠️  WARNING: Dashboard has no authentication. "
                     "Binding to non-localhost exposes task data to the network.", err=True)
-    click.echo("   Press Ctrl+C to stop\n")
 
     if open_browser:
         import threading
@@ -871,13 +924,8 @@ def dashboard(port: int, host: str, open_browser: bool) -> None:
             webbrowser.open(url)
         threading.Thread(target=_open, daemon=True).start()
 
-    uvicorn.run(
-        "multi_agent.web.server:app",
-        host=host,
-        port=port,
-        log_level="info",
-        access_log=False,
-    )
+    # Prefer Node.js backend, fall back to Python/uvicorn
+    _launch_dashboard_node(host, port, url)
 
 
 # ── Admin commands (extracted to cli_admin.py) ──────────

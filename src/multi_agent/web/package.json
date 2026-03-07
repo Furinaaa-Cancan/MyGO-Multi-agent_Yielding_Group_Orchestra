@@ -1,0 +1,19 @@
+{
+  "name": "mygo-dashboard",
+  "version": "0.8.0",
+  "description": "MyGO Multi-agent Dashboard — real-time task monitoring",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "node app.js --port 8765"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "js-yaml": "^4.1.0",
+    "chokidar": "^3.6.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "private": true
+}
