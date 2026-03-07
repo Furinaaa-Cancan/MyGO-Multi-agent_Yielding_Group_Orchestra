@@ -347,10 +347,11 @@ def _ensure_no_active_task(app: Any) -> None:
 @click.option("--decompose-file", default=None, type=click.Path(exists=True), help="Read decompose result from file instead of agent")
 @click.option("--no-cache", is_flag=True, default=False, help="Skip decompose result cache (force fresh decomposition)")
 @click.option("--visible", is_flag=True, default=False, help="Open CLI agents in separate Terminal windows (macOS)")
+@click.option("--git-commit", is_flag=True, default=False, help="Auto-commit after build/approve (overrides .ma.yaml git.auto_commit)")
 @click.option("--mode", default="strict", help="Workmode profile 名称")
 @click.option("--config", "mode_config_path", default="config/workmode.yaml", help="Workmode 配置路径")
 @handle_errors
-def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer: str, retry_budget: int, timeout: int, no_watch: bool, decompose: bool, auto_confirm: bool, decompose_file: str | None, no_cache: bool, visible: bool, mode: str, mode_config_path: str) -> None:
+def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer: str, retry_budget: int, timeout: int, no_watch: bool, decompose: bool, auto_confirm: bool, decompose_file: str | None, no_cache: bool, visible: bool, git_commit: bool, mode: str, mode_config_path: str) -> None:
     """Start a new task and watch for IDE output.
 
     Starts the task, then auto-watches outbox/ for agent output.
@@ -375,6 +376,14 @@ def go(requirement: str, skill: str, task_id: str | None, builder: str, reviewer
     # Load custom agent persona names from .ma.yaml (if any)
     from multi_agent.config import load_agent_names_from_config
     load_agent_names_from_config()
+
+    # Register git integration hooks (auto-commit, auto-branch, auto-tag)
+    from multi_agent.git_ops import register_git_hooks
+    if git_commit:
+        from multi_agent.git_ops import register_git_hooks_override
+        register_git_hooks_override()
+    else:
+        register_git_hooks()
 
     if task_id:
         _validate_task_id(task_id)

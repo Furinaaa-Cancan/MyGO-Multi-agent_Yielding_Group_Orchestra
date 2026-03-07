@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.0] - 2026-03-07
+
+### Added
+- **Git integration** (`git_ops.py`) — auto-commit, auto-branch, auto-tag triggered by EventHooks
+  - `auto_commit()` — stage and commit changes after build/approve steps
+  - `create_branch()` — create task-specific feature branches at plan start
+  - `create_tag()` — annotated tags on task approval
+  - `register_git_hooks()` / `register_git_hooks_override()` — hook lifecycle management
+- **Auto-test runner** — run project tests automatically, inject results as reviewer evidence
+  - `run_tests()` returns `AutoTestResult` with parsed pass/fail counts and evidence formatting
+  - Configurable via `.ma.yaml` `auto_test:` block (command, inject_evidence, fail_action)
+- **`--git-commit` CLI flag** — one-shot auto-commit without `.ma.yaml` configuration
+- `.ma.yaml` now supports `git:` and `auto_test:` configuration sections
+- 41 new tests in `test_git_ops.py` covering config, primitives, operations, hooks, and registration
+
+### Changed
+- `VALID_CONFIG_KEYS` extended with `git`, `auto_test`, `agent_names`
+- `my go` command registers git hooks at startup (no-op if git section absent)
+
 ## [0.7.1] - 2026-03-07
 
 ### Changed

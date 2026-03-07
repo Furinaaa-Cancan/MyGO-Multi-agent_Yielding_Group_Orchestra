@@ -406,6 +406,54 @@ defaults:
 
 ---
 
+## Git 集成 (v0.8.0)
+
+自动 commit、branch、tag 和测试运行，通过 EventHooks 触发，零侵入核心逻辑。
+
+### 快速启用
+
+```bash
+# 方式 1: CLI 一次性 flag
+my go "实现用户注册" --git-commit
+
+# 方式 2: .ma.yaml 持久配置
+```
+
+### `.ma.yaml` 配置
+
+```yaml
+git:
+  auto_commit: true           # builder/reviewer 完成后自动 commit
+  auto_branch: true           # 每个 task 创建 feature 分支
+  branch_prefix: "task/"      # 分支名前缀 (默认 task/)
+  commit_on: [build, approve] # 触发时机
+  auto_tag: true              # approve 后打 tag
+
+auto_test:
+  enabled: true
+  command: "pytest tests/ -q --tb=short"
+  inject_evidence: true       # 测试结果注入 reviewer evidence
+  fail_action: warn           # warn | block
+```
+
+### 工作流程
+
+```
+plan_node ──► auto_branch("task/xxx")
+build_node ──► auto_commit("build(codex): ...")
+review_node ──► run_tests() → evidence 注入
+decide_node ──► auto_commit("approved: xxx") + auto_tag("task/xxx")
+```
+
+### 安全保障
+
+- 检测 `.git` 存在后才执行
+- 不在 detached HEAD 上操作
+- 不 force-push
+- commit 失败不阻塞主流程（hook 错误静默记录日志）
+
+---
+
 ## 常见问题
 
 ### Q1: `task 'xxx' is already active`
@@ -460,7 +508,7 @@ reviewer 输出被判定为 rubber-stamp（缺少具体 reasoning/evidence）。
 ## 测试
 
 ```bash
-pytest tests/ -q            # 1137 tests, 全通过
+pytest tests/ -q            # 1183 tests, 全通过
 python3 -m mypy src/        # 类型检查
 python3 -m ruff check src/  # Lint
 ```
@@ -510,7 +558,7 @@ AGPL-3.0，详见 `LICENSE`。
 
 ## English Summary
 
-**MyGO — Multi-agent Yielding Group Orchestra** is your AI band for code delivery (v0.7.1).
+**MyGO — Multi-agent Yielding Group Orchestra** is your AI band for code delivery (v0.8.0).
 Recommended: **1 IDE + N CLI agents** — one IDE orchestrates, multiple Codex/Claude CLI agents work in parallel.
 - Three driver modes: manual (file), auto CLI, and GUI automation (macOS AppleScript)
 - **Parallel execution**: independent sub-tasks run concurrently via ThreadPoolExecutor
@@ -521,4 +569,5 @@ Recommended: **1 IDE + N CLI agents** — one IDE orchestrates, multiple Codex/C
 - Rubber-stamp detection, retry budgets, timeout guards
 - Atomic file writes, TOCTOU race protection, input validation
 - **Platform**: macOS fully supported; Windows/Linux file+CLI modes work, `--visible` mode macOS-only (Windows Terminal adaptation planned)
-- 1137 tests, full mypy/ruff compliance
+- **Git integration**: auto-commit, auto-branch, auto-tag via EventHooks; auto-test runner with evidence injection
+- 1183 tests, full mypy/ruff compliance
