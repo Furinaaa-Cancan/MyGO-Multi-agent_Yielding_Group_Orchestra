@@ -2,7 +2,7 @@
 
 **你的 AI 乐队，一条命令开演。**
 
-基于 **LangGraph 单一状态源（SSOT）** 驱动 4 节点工作流。v0.7.1
+基于 **LangGraph 单一状态源（SSOT）** 驱动 4 节点工作流。v0.8.0
 
 ---
 
@@ -112,6 +112,7 @@ my go "实现用户登录功能"
 | `my watch` | 恢复中断的自动检测 |
 | `my status` | 查看当前任务状态 |
 | `my cancel` | 取消当前任务 |
+| `my dashboard` | 启动 Web 仪表板（实时任务监控） |
 
 ### Session 命令（多 IDE 手动编排）
 
@@ -258,8 +259,8 @@ DRAFT → QUEUED → ASSIGNED → RUNNING → VERIFYING → APPROVED → MERGED 
 ## 项目结构
 
 ```text
-src/multi_agent/           # 核心包（25 个模块）
-├── cli.py                 # CLI 入口 (my go/done/watch/cancel/status)
+src/multi_agent/           # 核心包（28 个模块）
+├── cli.py                 # CLI 入口 (my go/done/watch/cancel/status/dashboard)
 ├── cli_admin.py           # 管理命令 (history/init/doctor/agents/...)
 ├── cli_decompose.py       # 任务分解执行
 ├── cli_watch.py           # 自动轮询 + agent 调度
@@ -282,7 +283,11 @@ src/multi_agent/           # 核心包（25 个模块）
 ├── dashboard.py           # 目标看板生成
 ├── watcher.py             # Outbox 文件轮询器
 ├── state_machine.py       # 状态转移验证
+├── git_ops.py             # Git 集成 (auto-commit/branch/tag/test)
 ├── _utils.py              # 共享工具函数
+├── web/                   # Web 仪表板
+│   ├── server.py          # FastAPI 后端 (REST + SSE)
+│   └── static/index.html  # 前端 (TailwindCSS)
 └── templates/             # Jinja2 prompt 模板
 
 agents/agents.yaml         # Agent 注册表
@@ -322,6 +327,7 @@ skills/                    # 技能定义 (contract.yaml)
 | `my export <task_id>` | 导出任务结果 |
 | `my replay <task_id>` | 重放任务历史 |
 | `my cleanup` | 清理旧文件 |
+| `my dashboard` | Web 仪表板（实时任务监控 + SSE 事件流） |
 | `my version` | 版本信息 |
 
 ---
@@ -454,6 +460,43 @@ decide_node ──► auto_commit("approved: xxx") + auto_tag("task/xxx")
 
 ---
 
+## Web 仪表板 (v0.8.0)
+
+实时任务监控 Dashboard，基于 FastAPI + SSE + TailwindCSS。
+
+```bash
+# 启动仪表板
+my dashboard
+my dashboard --port 9000
+my dashboard --host 0.0.0.0   # ⚠️ 无认证，仅限可信网络
+```
+
+### 功能
+
+- **实时状态** — 当前活跃任务、dashboard.md 内容
+- **任务列表** — 所有历史任务及状态
+- **事件流** — SSE 推送 dashboard 变更、trace 更新、心跳
+- **Trace 查看** — 每个任务的 JSONL 事件时间线
+
+### API 端点
+
+| 端点 | 说明 |
+|------|------|
+| `GET /` | 仪表板 UI |
+| `GET /api/status` | 当前活跃任务 + 项目信息 |
+| `GET /api/tasks` | 任务列表 |
+| `GET /api/tasks/{id}` | 任务详情 + trace 事件 |
+| `GET /api/tasks/{id}/trace` | Trace 事件 |
+| `GET /api/events` | SSE 实时事件流 |
+
+### 安装
+
+```bash
+pip install 'multi-agent[web]'   # 安装 FastAPI + uvicorn 依赖
+```
+
+---
+
 ## 常见问题
 
 ### Q1: `task 'xxx' is already active`
@@ -500,6 +543,7 @@ reviewer 输出被判定为 rubber-stamp（缺少具体 reasoning/evidence）。
 - **Click**（CLI 框架）
 - **Jinja2**（prompt 模板渲染）
 - **PyYAML**（配置解析）
+- **FastAPI** + **uvicorn**（Web 仪表板，可选依赖 `[web]`）
 
 开发依赖：pytest, ruff, mypy
 
@@ -508,7 +552,7 @@ reviewer 输出被判定为 rubber-stamp（缺少具体 reasoning/evidence）。
 ## 测试
 
 ```bash
-pytest tests/ -q            # 1183 tests, 全通过
+pytest tests/ -q            # 1203 tests, 全通过
 python3 -m mypy src/        # 类型检查
 python3 -m ruff check src/  # Lint
 ```
@@ -570,4 +614,5 @@ Recommended: **1 IDE + N CLI agents** — one IDE orchestrates, multiple Codex/C
 - Atomic file writes, TOCTOU race protection, input validation
 - **Platform**: macOS fully supported; Windows/Linux file+CLI modes work, `--visible` mode macOS-only (Windows Terminal adaptation planned)
 - **Git integration**: auto-commit, auto-branch, auto-tag via EventHooks; auto-test runner with evidence injection
-- 1183 tests, full mypy/ruff compliance
+- **Web Dashboard**: real-time task monitoring via FastAPI + SSE, TailwindCSS frontend
+- 1203 tests, full mypy/ruff compliance
