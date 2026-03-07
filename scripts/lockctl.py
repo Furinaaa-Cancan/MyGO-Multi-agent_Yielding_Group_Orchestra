@@ -270,12 +270,27 @@ def command_doctor(args: argparse.Namespace) -> int:
         for row in rows:
             file_path = str(row["file_path"])
             candidates = _canonical_candidates(file_path, candidate_cwds=cwds)
+            raw_path_obj = pathlib.Path(file_path).expanduser()
             if not candidates:
                 canonical = file_path
             else:
                 existing = [c for c in candidates if pathlib.Path(c).exists()]
                 canonical = existing[0] if existing else candidates[0]
             row_issue: dict[str, Any] | None = None
+
+            # Relative paths without an existing target are ambiguous across roots.
+            # Keep as-is unless we can resolve to an existing canonical location.
+            if (not raw_path_obj.is_absolute()) and candidates and not any(pathlib.Path(c).exists() for c in candidates):
+                ambiguous = {
+                    "type": "ambiguous_relative_path",
+                    "file_path": file_path,
+                    "owner_task": row["owner_task"],
+                    "severity": "warning",
+                    "fixable": False,
+                    "note": "Relative lock path has no existing target; skip auto-fix to avoid wrong rewrite.",
+                }
+                issues.append(ambiguous)
+                continue
 
             if canonical != file_path:
                 row_issue = {

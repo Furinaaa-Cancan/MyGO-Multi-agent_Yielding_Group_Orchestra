@@ -152,3 +152,40 @@ def test_lockctl_doctor_fix_uses_db_context_for_legacy_relative_path(tmp_path):
     listed = json.loads(res.stdout)
     assert len(listed) == 1
     assert listed[0]["file_path"] == str(file_path)
+
+
+def test_lockctl_doctor_fix_skips_ambiguous_missing_relative_path(tmp_path):
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "lockctl.py"
+    db = tmp_path / "locks.db"
+    missing_rel = "specs/not-created-yet.py"
+
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS locks (
+                file_path TEXT PRIMARY KEY,
+                owner_task TEXT NOT NULL,
+                lock_version INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                renewed_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO locks(file_path, owner_task, lock_version, created_at, renewed_at, expires_at) VALUES (?, ?, 1, 1, 1, 9999999999)",
+            (missing_rel, "task-a"),
+        )
+        conn.commit()
+
+    res = _run(script, ["--db", str(db), "doctor", "--fix"], cwd=repo_root)
+    assert res.returncode == 1
+    payload = json.loads(res.stdout)
+    assert any(item["type"] == "ambiguous_relative_path" for item in payload["issues"])
+    assert payload["fixed"] == []
+
+    res = _run(script, ["--db", str(db), "list"], cwd=repo_root)
+    assert res.returncode == 0, res.stderr
+    listed = json.loads(res.stdout)
+    assert listed[0]["file_path"] == missing_rel
