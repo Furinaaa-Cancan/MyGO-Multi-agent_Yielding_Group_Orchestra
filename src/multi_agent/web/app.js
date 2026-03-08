@@ -208,6 +208,30 @@ app.post("/api/projects/switch", (req, res) => {
   res.json({ status: "switched", name, root: rootDir });
 });
 
+// ── Agent Health API ────────────────────────────────────
+
+app.get("/api/agents", (_req, res) => {
+  const agentsFile = path.join(currentRootDir, "agents", "agents.yaml");
+  if (!fs.existsSync(agentsFile)) return res.json({ agents: [], count: 0 });
+  const data = readYamlFile(agentsFile);
+  if (!data || !Array.isArray(data.agents)) return res.json({ agents: [], count: 0 });
+
+  const { execSync } = require("child_process");
+  const results = data.agents.map(a => {
+    const info = { id: a.id || "?", driver: a.driver || "file", capabilities: a.capabilities || [], issues: [] };
+    if (a.driver === "cli") {
+      const binary = (a.command || "").split(" ")[0];
+      try { execSync(`which ${binary}`, { stdio: "pipe" }); info.cli_available = true; info.cli_binary = binary; }
+      catch { info.cli_available = false; info.cli_binary = binary; info.issues.push(`CLI binary '${binary}' not found`); }
+    } else if (a.driver === "gui") {
+      info.app_name = a.app_name || "";
+    }
+    info.status = info.issues.length === 0 ? "healthy" : "degraded";
+    return info;
+  });
+  res.json({ agents: results, count: results.length });
+});
+
 // ── Core API ───────────────────────────────────────────
 
 app.get("/api/status", (_req, res) => {

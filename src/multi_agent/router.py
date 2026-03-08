@@ -207,35 +207,61 @@ def _eligible(
     return candidates
 
 
+def _check_cli_available(command: str) -> tuple[bool, str]:
+    """Check if CLI binary is available on PATH. Returns (available, binary_name)."""
+    import shutil
+    binary = command.split()[0] if command.strip() else ""
+    if not binary:
+        return False, ""
+    return shutil.which(binary) is not None, binary
+
+
+def _check_single_agent(agent: AgentProfile) -> dict[str, Any]:
+    """Check health of a single agent. Returns info dict with status and issues."""
+    issues: list[str] = []
+    info: dict[str, Any] = {"id": agent.id, "driver": agent.driver, "capabilities": agent.capabilities}
+
+    if agent.reliability < 0.5:
+        issues.append(f"low reliability: {agent.reliability}")
+    if agent.queue_health < 0.5:
+        issues.append(f"low queue_health: {agent.queue_health}")
+    if not agent.capabilities:
+        issues.append("no capabilities defined")
+
+    if agent.driver == "cli":
+        if not agent.command:
+            issues.append("CLI driver but no command configured")
+            info["cli_available"] = False
+        else:
+            available, binary = _check_cli_available(agent.command)
+            info["cli_available"] = available
+            info["cli_binary"] = binary
+            if not available:
+                issues.append(f"CLI binary '{binary}' not found on PATH")
+    elif agent.driver == "gui":
+        if not agent.app_name:
+            issues.append("GUI driver but no app_name configured")
+        info["app_name"] = agent.app_name
+    elif agent.driver == "file":
+        info["mode"] = "manual"
+
+    info["status"] = "healthy" if not issues else "degraded"
+    info["issues"] = issues
+    return info
+
+
 def check_agent_health(agents: list[AgentProfile]) -> list[dict[str, Any]]:
     """Check health of all registered agents.
 
-    Returns list of {id, status, issues} for each agent.
-    Also warns about cross-model diversity for adversarial review effectiveness
-    (literature: Brilliant 2026, correlated error theory).
+    Returns list of {id, status, driver, issues, cli_available, capabilities} for each agent.
     """
-    results: list[dict[str, Any]] = []
-    for agent in agents:
-        issues: list[str] = []
-        if agent.reliability < 0.5:
-            issues.append(f"low reliability: {agent.reliability}")
-        if agent.queue_health < 0.5:
-            issues.append(f"low queue_health: {agent.queue_health}")
-        if agent.driver == "cli" and not agent.command:
-            issues.append("CLI driver but no command configured")
-        if not agent.capabilities:
-            issues.append("no capabilities defined")
-        status = "healthy" if not issues else "degraded"
-        results.append({"id": agent.id, "status": status, "issues": issues})
-    # Cross-model diversity check (Brilliant 2026: correlated error risk)
+    results = [_check_single_agent(a) for a in agents]
     if len(agents) < 2:
         results.append({
-            "id": "_system",
-            "status": "warning",
-            "issues": [
+            "id": "_system", "status": "warning", "driver": "system",
+            "capabilities": [], "issues": [
                 "Only 1 agent configured. Cross-model adversarial review "
-                "requires ≥2 agents backed by different LLMs to reduce "
-                "correlated errors (Brilliant 2026)."
+                "requires ≥2 agents backed by different LLMs (Brilliant 2026)."
             ],
         })
     return results
