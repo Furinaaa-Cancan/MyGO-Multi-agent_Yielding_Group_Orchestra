@@ -24,6 +24,7 @@ from typing import Any
 import yaml
 from fastmcp import FastMCP
 
+from multi_agent._utils import SAFE_TASK_ID_RE as _SAFE_ID_RE
 from multi_agent.config import (
     history_dir,
     root_dir,
@@ -33,6 +34,13 @@ from multi_agent.config import (
 from multi_agent.workspace import read_lock
 
 _log = logging.getLogger(__name__)
+
+_MAX_TASK_LIST = 100
+
+
+def _is_safe_id(task_id: str) -> bool:
+    """Validate task_id against path traversal."""
+    return bool(_SAFE_ID_RE.match(task_id)) and ".." not in task_id
 
 mcp = FastMCP(
     name="MyGO",
@@ -52,7 +60,11 @@ def task_status() -> dict[str, Any]:
     """Get current active task status including pipeline stage, builder, reviewer, and retry count."""
     active = read_lock()
     if not active:
-        return {"active": False, "message": "No active task. Start one with task_start()."}
+        return {"active": False, "message": "No active task."}
+
+    # Validate lock content before using as file path
+    if not _is_safe_id(active):
+        return {"active": True, "task_id": active, "error": "invalid task_id in lock"}
 
     # Read task YAML for details
     task_data = _read_task_yaml(active)
@@ -81,8 +93,8 @@ def task_status() -> dict[str, Any]:
             "retry_budget": ts.values.get("retry_budget", 2),
             "final_status": ts.final_status,
         })
-    except Exception as e:
-        result["graph_error"] = str(e)
+    except Exception:
+        result["graph_error"] = "failed to read graph state"
 
     return result
 
@@ -95,6 +107,9 @@ def task_list(limit: int = 20, status_filter: str = "") -> dict[str, Any]:
         limit: Maximum number of tasks to return (default 20)
         status_filter: Filter by status: 'active', 'approved', 'failed', 'cancelled', or empty for all
     """
+    # Cap limit to prevent resource exhaustion
+    limit = max(1, min(limit, _MAX_TASK_LIST))
+
     td = tasks_dir()
     if not td.exists():
         return {"tasks": [], "count": 0}
@@ -127,9 +142,7 @@ def task_detail(task_id: str) -> dict[str, Any]:
     Args:
         task_id: The task ID to look up (e.g. 'task-abc123')
     """
-    from multi_agent._utils import SAFE_TASK_ID_RE
-
-    if not SAFE_TASK_ID_RE.match(task_id):
+    if not _is_safe_id(task_id):
         return {"error": f"Invalid task_id: {task_id}"}
 
     task_data = _read_task_yaml(task_id)
@@ -150,7 +163,7 @@ def dashboard() -> dict[str, str]:
     active = read_lock()
     return {
         "active_task": active or "",
-        "content": content or "No active task. Start one with task_start().",
+        "content": content or "No active task.",
         "project": str(root_dir()),
     }
 
@@ -161,14 +174,16 @@ def task_cancel() -> dict[str, str]:
     active = read_lock()
     if not active:
         return {"status": "no_task", "message": "No active task to cancel."}
+    if not _is_safe_id(active):
+        return {"status": "error", "message": "Invalid task_id in lock file."}
 
     try:
         from multi_agent.workspace import release_lock, save_task_yaml
         save_task_yaml(active, {"status": "cancelled", "task_id": active})
         release_lock()
         return {"status": "cancelled", "task_id": active, "message": f"Task {active} cancelled."}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+    except Exception:
+        return {"status": "error", "message": "Failed to cancel task."}
 
 
 @mcp.tool()
@@ -218,7 +233,12 @@ def resource_status() -> str:
 
 
 def _read_task_yaml(task_id: str) -> dict[str, Any]:
-    """Read task YAML file, trying multiple naming patterns."""
+    """Read task YAML file, trying multiple naming patterns.
+
+    Caller must validate task_id before calling.
+    """
+    if not _is_safe_id(task_id):
+        return {}
     td = tasks_dir()
     for name in [f"{task_id}.yaml", f"task-{task_id}.yaml"]:
         path = td / name
@@ -242,7 +262,12 @@ def _read_dashboard() -> str:
 
 
 def _read_trace_events(task_id: str) -> list[dict[str, Any]]:
-    """Read JSONL trace events for a task."""
+    """Read JSONL trace events for a task.
+
+    Caller must validate task_id before calling.
+    """
+    if not _is_safe_id(task_id):
+        return []
     hdir = history_dir()
     for pattern in [
         f"{task_id}.events.jsonl",
