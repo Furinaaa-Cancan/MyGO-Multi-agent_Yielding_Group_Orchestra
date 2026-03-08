@@ -603,26 +603,59 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
         raise
 
 
-def _try_extract_json(text: str, outbox_path: Path) -> None:
-    """Try to find and extract a JSON object from CLI output text."""
-    # Look for JSON between ```json ... ``` markers
-    match = re.search(r"```json\s*\n(.*?)\n\s*```", text, re.DOTALL)
-    if match:
+def _extract_fenced_json(text: str) -> list[dict[str, Any]]:
+    """Extract JSON dicts from fenced code blocks (```json ... ```)."""
+    results: list[dict[str, Any]] = []
+    for match in re.finditer(r"```(?:json)?\s*\n(.*?)\n\s*```", text, re.DOTALL):
         try:
             data = json.loads(match.group(1))
             if isinstance(data, dict):
-                _atomic_write_json(outbox_path, data)
-                return
+                results.append(data)
+        except json.JSONDecodeError:
+            continue
+    return results
+
+
+def _extract_bare_json(text: str) -> list[dict[str, Any]]:
+    """Extract bare JSON objects { ... } embedded in text."""
+    results: list[dict[str, Any]] = []
+    for match in re.finditer(r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})", text):
+        try:
+            data = json.loads(match.group(1))
+            if isinstance(data, dict) and len(data) >= 2:
+                results.append(data)
+        except json.JSONDecodeError:
+            continue
+    return results
+
+
+def _try_extract_json(text: str, outbox_path: Path) -> None:
+    """Try to find and extract a JSON object from CLI output text.
+
+    Handles multiple output patterns from Claude CLI, Codex, and other agents:
+    1. Fenced code blocks: ```json ... ``` or ``` ... ```
+    2. Bare JSON objects in text
+    3. Pure JSON output
+    Picks the best candidate (prefers one with 'status' field).
+    """
+    candidates = _extract_fenced_json(text)
+    if not candidates:
+        candidates = _extract_bare_json(text)
+    if not candidates:
+        try:
+            data = json.loads(text.strip())
+            if isinstance(data, dict):
+                candidates.append(data)
         except json.JSONDecodeError:
             pass
 
-    # Try parsing the whole output as JSON
-    try:
-        data = json.loads(text.strip())
-        if isinstance(data, dict):
-            _atomic_write_json(outbox_path, data)
-    except json.JSONDecodeError:
-        pass
+    if not candidates:
+        return
+
+    best = next((c for c in candidates if "status" in c), None)
+    if not best:
+        best = max(candidates, key=lambda c: len(c))
+    _atomic_write_json(outbox_path, best)
 
 
 def _write_error(outbox_file: str, error_msg: str) -> None:
