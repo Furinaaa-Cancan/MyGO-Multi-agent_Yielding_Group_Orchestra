@@ -141,6 +141,78 @@ def _stream_stderr(proc: subprocess.Popen[str], agent_id: str, role: str) -> str
     return "\n".join(lines)
 
 
+# ── Intelligent Stderr Analysis ──────────────────────────
+
+_KNOWN_PATTERNS: list[tuple[str, str, str]] = [
+    # (pattern_substring, short_id, user_message)
+    (
+        "UTF-8 encoding error",
+        "utf8_path",
+        "Codex CLI 的 WebSocket 因非 ASCII 路径编码失败，已降级到 HTTPS。\n"
+        "   💡 建议: 将项目移到纯英文路径（如 /Users/you/snake-test）可避免此问题。",
+    ),
+    (
+        "Reconnecting...",
+        "ws_reconnect",
+        "Codex CLI WebSocket 连接不稳定，正在重连。通常会自动恢复。",
+    ),
+    (
+        "Falling back from WebSockets to HTTPS",
+        "ws_fallback",
+        "Codex CLI 已从 WebSocket 降级到 HTTPS 传输。功能正常但速度略慢。",
+    ),
+    (
+        "invalid_token",
+        "auth_token",
+        "MCP 认证令牌无效。这通常是 Codex 内部 MCP 插件问题，不影响核心功能。",
+    ),
+    (
+        "sysmond service not found",
+        "sysmon",
+        "macOS sysmon 服务未找到（沙盒限制）。不影响功能。",
+    ),
+    (
+        "rate limit",
+        "rate_limit",
+        "API 速率限制。Codex 会自动重试，但任务可能变慢。\n"
+        "   💡 建议: 减少并行任务数或等待一段时间再试。",
+    ),
+]
+
+
+def analyze_agent_stderr(stderr_text: str, agent_id: str) -> list[str]:
+    """Analyze CLI agent stderr for known error patterns.
+
+    Returns a list of user-friendly diagnostic messages. Empty list = no issues.
+    Deduplicates: each pattern reported at most once even if it appears many times.
+    """
+    if not stderr_text:
+        return []
+
+    diagnostics: list[str] = []
+    seen: set[str] = set()
+
+    for pattern, short_id, message in _KNOWN_PATTERNS:
+        if short_id in seen:
+            continue
+        count = stderr_text.count(pattern)
+        if count > 0:
+            seen.add(short_id)
+            prefix = f"[{agent_id}] " if agent_id else ""
+            if count > 1:
+                diagnostics.append(f"{prefix}⚠️  {message} (出现 {count} 次)")
+            else:
+                diagnostics.append(f"{prefix}⚠️  {message}")
+
+    return diagnostics
+
+
+def _log_stderr_diagnostics(stderr_text: str, agent_id: str) -> None:
+    """Run intelligent stderr analysis and log any diagnostics."""
+    for diag in analyze_agent_stderr(stderr_text, agent_id):
+        logger.warning(diag)
+
+
 def spawn_cli_agent(
     agent_id: str,
     role: str,
@@ -229,6 +301,7 @@ def spawn_cli_agent(
                 outbox_file, stdout_text, stderr_text,
                 agent_id, proc.returncode,
             )
+            _log_stderr_diagnostics(stderr_text, agent_id)
         except subprocess.TimeoutExpired:
             if proc:
                 proc.kill()
