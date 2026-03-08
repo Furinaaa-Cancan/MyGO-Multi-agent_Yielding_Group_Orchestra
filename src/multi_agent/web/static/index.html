@@ -122,6 +122,10 @@
           <span class="w-2 h-2 rounded-full bg-zinc-600" id="conn-dot"></span>
           <span class="text-zinc-500 text-xs" id="conn-text" data-i18n="connecting">Connecting</span>
         </div>
+        <!-- Project Selector -->
+        <select id="project-select" onchange="switchProject(this.value)" class="h-8 px-2 rounded-lg text-xs font-medium bg-surface-3 text-zinc-300 border border-surface-border hover:border-brand/30 transition-all cursor-pointer" title="Switch Project">
+          <option value="">--</option>
+        </select>
         <!-- Language Toggle -->
         <button onclick="toggleLang()" id="lang-btn" class="h-8 px-3 rounded-lg text-xs font-medium bg-surface-3 text-zinc-400 hover:bg-surface-4 border border-surface-border hover:border-brand/30 transition-all" title="Switch Language">
           <span id="lang-label">EN</span>
@@ -469,9 +473,38 @@
     let currentFilter = 'all';
 
     // ── Init ──────────────────────────────
-    document.addEventListener('DOMContentLoaded', () => { applyLang(); refreshAll(); connectSSE(); });
+    document.addEventListener('DOMContentLoaded', () => { applyLang(); fetchProjects(); refreshAll(); connectSSE(); });
 
     async function refreshAll() { await Promise.all([fetchStatus(), fetchTasks()]); }
+
+    // ── Projects ─────────────────────────
+    async function fetchProjects() {
+      try {
+        const r = await fetch('/api/projects');
+        const d = await r.json();
+        const sel = document.getElementById('project-select');
+        sel.innerHTML = '';
+        (d.projects || []).forEach(p => {
+          const opt = document.createElement('option');
+          opt.value = p.name;
+          opt.textContent = p.name + (p.active_task ? ' ●' : '');
+          opt.selected = p.current;
+          sel.appendChild(opt);
+        });
+      } catch (e) { console.error('Projects fetch failed:', e); }
+    }
+
+    async function switchProject(name) {
+      if (!name) return;
+      try {
+        await fetch('/api/projects/switch', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ name })
+        });
+        await refreshAll();
+        await fetchProjects();
+      } catch (e) { console.error('Project switch failed:', e); }
+    }
 
     function scrollToSection(id) {
       document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });

@@ -34,12 +34,28 @@ const WORKSPACE = getArg("workspace", process.env.MYGO_WORKSPACE_DIR || "");
 const ROOT_DIR = getArg("root", process.env.MYGO_ROOT_DIR || process.cwd());
 const HISTORY = getArg("history", process.env.MYGO_HISTORY_DIR || "");
 
-// Resolve paths
-const wsDir = WORKSPACE || path.join(ROOT_DIR, ".multi-agent");
-const historyDir = HISTORY || path.join(wsDir, "history");
-const tasksDir = path.join(wsDir, "tasks");
-const lockFile = path.join(wsDir, ".lock");
-const dashboardMd = path.join(wsDir, "dashboard.md");
+// Resolve paths (mutable for multi-project switching)
+let wsDir = WORKSPACE || path.join(ROOT_DIR, ".multi-agent");
+let historyDir = HISTORY || path.join(wsDir, "history");
+let tasksDir = path.join(wsDir, "tasks");
+let lockFile = path.join(wsDir, ".lock");
+let dashboardMd = path.join(wsDir, "dashboard.md");
+let currentRootDir = ROOT_DIR;
+
+// ── Multi-project Registry ──────────────────────────────
+const projectRegistry = new Map(); // name → rootDir
+projectRegistry.set(path.basename(ROOT_DIR), ROOT_DIR);
+
+function switchProject(rootDir) {
+  if (!fs.existsSync(rootDir)) return false;
+  currentRootDir = rootDir;
+  wsDir = path.join(rootDir, ".multi-agent");
+  historyDir = path.join(wsDir, "history");
+  tasksDir = path.join(wsDir, "tasks");
+  lockFile = path.join(wsDir, ".lock");
+  dashboardMd = path.join(wsDir, "dashboard.md");
+  return true;
+}
 
 // ── Validation ──────────────────────────────────────────
 const SAFE_TASK_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
@@ -152,10 +168,46 @@ app.use(express.static(path.join(__dirname, "static")));
 
 // ── REST API ────────────────────────────────────────────
 
+app.use(express.json());
+
+// ── Multi-project API ──────────────────────────────────
+
+app.get("/api/projects", (_req, res) => {
+  const projects = [];
+  for (const [name, rootDir] of projectRegistry) {
+    const ws = path.join(rootDir, ".multi-agent");
+    const lockPath = path.join(ws, ".lock");
+    let active = null;
+    try { active = fs.readFileSync(lockPath, "utf-8").trim() || null; } catch { /* no lock */ }
+    projects.push({ name, root: rootDir, active_task: active, current: rootDir === currentRootDir });
+  }
+  res.json({ projects, count: projects.length });
+});
+
+app.post("/api/projects/add", (req, res) => {
+  const { name, root } = req.body || {};
+  if (!name || !root) return res.status(400).json({ error: "name and root required" });
+  if (!fs.existsSync(root)) return res.status(400).json({ error: `path not found: ${root}` });
+  projectRegistry.set(name, root);
+  res.json({ status: "added", name, root });
+});
+
+app.post("/api/projects/switch", (req, res) => {
+  const { name } = req.body || {};
+  if (!name) return res.status(400).json({ error: "name required" });
+  const rootDir = projectRegistry.get(name);
+  if (!rootDir) return res.status(404).json({ error: `project not found: ${name}` });
+  if (!switchProject(rootDir)) return res.status(400).json({ error: `path not accessible: ${rootDir}` });
+  res.json({ status: "switched", name, root: rootDir });
+});
+
+// ── Core API ───────────────────────────────────────────
+
 app.get("/api/status", (_req, res) => {
   res.json({
     active_task: readLock(),
-    root_dir: ROOT_DIR,
+    root_dir: currentRootDir,
+    project: path.basename(currentRootDir),
     dashboard_md: readDashboardMd(),
   });
 });
