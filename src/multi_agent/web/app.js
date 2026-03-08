@@ -187,7 +187,14 @@ app.get("/api/projects", (_req, res) => {
 app.post("/api/projects/add", (req, res) => {
   const { name, root } = req.body || {};
   if (!name || !root) return res.status(400).json({ error: "name and root required" });
-  if (!fs.existsSync(root)) return res.status(400).json({ error: `path not found: ${root}` });
+  // Validate project name (alphanumeric + hyphens, max 64 chars)
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(name)) {
+    return res.status(400).json({ error: "invalid project name" });
+  }
+  if (!fs.existsSync(root)) return res.status(400).json({ error: "path not found" });
+  // Validate project has .multi-agent workspace (prevent arbitrary dir access)
+  const wsPath = path.join(root, ".multi-agent");
+  if (!fs.existsSync(wsPath)) return res.status(400).json({ error: "not a MyGO project (no .multi-agent directory)" });
   projectRegistry.set(name, root);
   res.json({ status: "added", name, root });
 });
