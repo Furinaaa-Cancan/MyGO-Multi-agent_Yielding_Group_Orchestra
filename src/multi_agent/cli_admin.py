@@ -412,6 +412,105 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
         click.echo(f"Python {sys.version}")
         click.echo(f"Install: {Path(__file__).parent}")
 
+    # ── stats ────────────────────────────────────────────
+
+    def _collect_task_stats(cutoff: float) -> tuple[int, dict[str, int]]:
+        """Scan task YAMLs and return (total, status_counts)."""
+        import yaml as _yaml
+
+        from multi_agent.config import tasks_dir
+        td = tasks_dir()
+        if not td.exists():
+            return 0, {}
+        status_counts: dict[str, int] = {}
+        total = 0
+        for f in td.glob("*.yaml"):
+            try:
+                if f.stat().st_mtime < cutoff:
+                    continue
+                data = _yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            except Exception:
+                continue
+            total += 1
+            s = data.get("status", "unknown")
+            status_counts[s] = status_counts.get(s, 0) + 1
+        return total, status_counts
+
+    def _collect_timing_stats(cutoff: float) -> dict[str, list[int]]:
+        """Parse timing JSONL logs and return {node: [duration_ms...]}."""
+        import json as _json
+
+        from multi_agent.config import workspace_dir
+        logs_dir = workspace_dir() / "logs"
+        node_stats: dict[str, list[int]] = {}
+        if not logs_dir.exists():
+            return node_stats
+        for tf in logs_dir.glob("timing-*.jsonl"):
+            try:
+                if tf.stat().st_mtime < cutoff:
+                    continue
+            except OSError:
+                continue
+            try:
+                for line in tf.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = _json.loads(line)
+                        node_stats.setdefault(entry.get("node", "?"), []).append(entry.get("duration_ms", 0))
+                    except _json.JSONDecodeError:
+                        continue
+            except Exception:
+                continue
+        return node_stats
+
+    def _fmt_ms(ms: float) -> str:
+        return f"{ms/1000:.1f}s" if ms > 1000 else f"{int(ms)}ms"
+
+    @main.command()
+    @handle_errors
+    @click.option("--days", default=30, type=int, help="统计最近 N 天的任务")
+    def stats(days: int) -> None:
+        """显示任务执行统计报告."""
+        import time as _time
+
+        cutoff = _time.time() - days * 86400
+        total, status_counts = _collect_task_stats(cutoff)
+        if total == 0:
+            click.echo("暂无任务数据")
+            return
+
+        approved = status_counts.get("approved", 0) + status_counts.get("done", 0)
+        failed = status_counts.get("failed", 0)
+        cancelled = status_counts.get("cancelled", 0)
+        escalated = status_counts.get("escalated", 0)
+        active = status_counts.get("active", 0)
+        success_rate = (approved / total * 100) if total > 0 else 0
+
+        click.echo(f"\n📊 MyGO 任务统计 (最近 {days} 天)\n")
+        click.echo(f"  总任务数: {total}")
+        click.echo(f"  ✅ 通过: {approved}  ❌ 失败: {failed}  ⚠️ 升级: {escalated}")
+        click.echo(f"  🛑 取消: {cancelled}  🔵 进行中: {active}")
+        click.echo(f"  📈 成功率: {success_rate:.1f}%")
+        other = total - approved - failed - cancelled - escalated - active
+        if other > 0:
+            click.echo(f"  ⚪ 其他: {other}")
+
+        node_stats = _collect_timing_stats(cutoff)
+        if node_stats:
+            click.echo("\n⏱️  节点耗时统计:\n")
+            click.echo(f"  {'节点':<12} {'次数':>6} {'平均':>8} {'最大':>8} {'总计':>10}")
+            click.echo(f"  {'─'*12} {'─'*6} {'─'*8} {'─'*8} {'─'*10}")
+            for node in ["plan", "build", "review", "decide"]:
+                vals = node_stats.get(node, [])
+                if not vals:
+                    continue
+                count = len(vals)
+                avg_ms = sum(vals) / count
+                click.echo(f"  {node:<12} {count:>6} {_fmt_ms(avg_ms):>8} {_fmt_ms(max(vals)):>8} {_fmt_ms(sum(vals)):>10}")
+        click.echo()
+
     # ── trace ───────────────────────────────────────────
 
     @main.command("trace")
