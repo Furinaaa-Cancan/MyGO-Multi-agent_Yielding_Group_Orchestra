@@ -347,7 +347,11 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
                 result["config"] = {"_error": "corrupted YAML"}
         if history_file.exists():
             try:
-                result["conversation"] = _json.loads(history_file.read_text(encoding="utf-8"))
+                fsize = history_file.stat().st_size
+                if fsize > 10 * 1024 * 1024:  # 10 MB cap
+                    result["conversation"] = [{"_error": f"file too large ({fsize} bytes)"}]
+                else:
+                    result["conversation"] = _json.loads(history_file.read_text(encoding="utf-8"))
             except Exception:
                 result["conversation"] = [{"_error": "corrupted JSON"}]
         else:
@@ -384,6 +388,10 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
             click.echo(f"❌ 未找到历史记录: {task_id}", err=True)
             raise SystemExit(1)
 
+        fsize = history_file.stat().st_size
+        if fsize > 10 * 1024 * 1024:  # 10 MB cap
+            click.echo(f"❌ 历史文件过大: {fsize} bytes > 10 MB", err=True)
+            raise SystemExit(1)
         conversation = _json.loads(history_file.read_text(encoding="utf-8"))
         click.echo(f"📼 Replay: {task_id} ({len(conversation)} steps)\n")
 

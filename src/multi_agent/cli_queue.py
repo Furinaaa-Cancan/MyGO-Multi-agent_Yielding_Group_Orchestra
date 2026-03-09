@@ -132,6 +132,9 @@ def register_queue_commands(main: click.Group) -> None:  # noqa: C901
 # ── Core logic (testable without CLI) ────────────────────
 
 
+_MAX_QUEUE_FILE_SIZE = 10 * 1024 * 1024  # 10 MB cap
+
+
 def extract_tasks_from_md(md_path: Path) -> list[tuple[int, str, str]]:
     """Extract (number, title, prompt) from a markdown queue file.
 
@@ -141,6 +144,14 @@ def extract_tasks_from_md(md_path: Path) -> list[tuple[int, str, str]]:
         prompt content
         ```
     """
+    try:
+        fsize = md_path.stat().st_size
+    except OSError:
+        fsize = 0
+    if fsize > _MAX_QUEUE_FILE_SIZE:
+        raise click.ClickException(
+            f"Queue file too large: {fsize} bytes > {_MAX_QUEUE_FILE_SIZE} limit"
+        )
     text = md_path.read_text(encoding="utf-8")
     pattern = r"### (\d+)\.\s+(.+?)\n\n?```\n(.*?)```"
     matches = re.findall(pattern, text, re.DOTALL)
@@ -162,7 +173,7 @@ def run_single_queue_task(
     click.echo(f"{'=' * 60}\n")
 
     start_time = time.time()
-    cmd = ["ma", "go", prompt, "--task-id", task_id, "--builder", builder, "--reviewer", reviewer]
+    cmd = ["my", "go", prompt, "--task-id", task_id, "--builder", builder, "--reviewer", reviewer]
 
     try:
         result = subprocess.run(cmd, timeout=timeout)
@@ -173,13 +184,13 @@ def run_single_queue_task(
         elapsed = time.time() - start_time
         click.echo(f"  ⏰ TIMEOUT after {timeout}s")
         with contextlib.suppress(Exception):
-            subprocess.run(["ma", "cancel"], capture_output=True, timeout=30)
+            subprocess.run(["my", "cancel"], capture_output=True, timeout=30)
         status = "timeout"
         success = False
     except KeyboardInterrupt:
         click.echo(f"\n  🛑 User interrupted at task #{num}")
         with contextlib.suppress(Exception):
-            subprocess.run(["ma", "cancel"], capture_output=True, timeout=30)
+            subprocess.run(["my", "cancel"], capture_output=True, timeout=30)
         raise
 
     return {

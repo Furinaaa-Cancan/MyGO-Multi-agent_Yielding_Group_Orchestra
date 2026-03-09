@@ -85,16 +85,40 @@ def _send_macos_notification(title: str, message: str, *, sound: bool = True) ->
 
 
 def _escape_applescript(text: str) -> str:
-    """Escape text for AppleScript string literal."""
-    return text.replace("\\", "\\\\").replace('"', '\\"')
+    """Escape text for AppleScript string literal.
+
+    Handles backslash, double-quote, and control characters (newline, tab)
+    that could break or inject into AppleScript strings.
+    """
+    text = text.replace("\\", "\\\\")
+    text = text.replace('"', '\\"')
+    text = text.replace("\n", " ")
+    text = text.replace("\r", " ")
+    text = text.replace("\t", " ")
+    return text
+
+
+_ALLOWED_WEBHOOK_SCHEMES = frozenset({"http", "https"})
 
 
 def _send_webhook(url: str, payload: dict[str, Any]) -> bool:
     """Send notification via HTTP webhook (non-blocking).
 
     Returns True if request was initiated (not necessarily delivered).
+    Only http:// and https:// URLs are allowed (SSRF prevention).
     """
     if not url:
+        return False
+
+    # Validate URL scheme to prevent SSRF (file://, ftp://, etc.)
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        _log.warning("Invalid webhook URL: %s", url)
+        return False
+    if parsed.scheme not in _ALLOWED_WEBHOOK_SCHEMES:
+        _log.warning("Webhook URL scheme '%s' not allowed (only http/https): %s", parsed.scheme, url)
         return False
 
     def _post() -> None:
