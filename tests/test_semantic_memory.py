@@ -1065,3 +1065,66 @@ class TestTaskQueue:
         _save_queue([])  # empty queue
         result = run_daemon(once=True, poll_interval=0.1)
         assert result["processed"] == 0
+
+
+# ══════════════════════════════════════════════════════════
+# Feature Q: Task History Detail
+# ══════════════════════════════════════════════════════════
+
+
+class TestTaskHistoryDetail:
+    """Test enhanced history command with --detail and --task-id."""
+
+    def test_history_basic(self):
+        from click.testing import CliRunner
+        from multi_agent.cli import main
+        runner = CliRunner()
+        result = runner.invoke(main, ["history"])
+        assert result.exit_code == 0
+
+    def test_history_with_detail_flag(self):
+        from click.testing import CliRunner
+        from multi_agent.cli import main
+        runner = CliRunner()
+        result = runner.invoke(main, ["history", "--detail"])
+        assert result.exit_code == 0
+
+    def test_history_with_task_id_not_found(self):
+        from click.testing import CliRunner
+        from multi_agent.cli import main
+        runner = CliRunner()
+        result = runner.invoke(main, ["history", "--task-id", "nonexistent-task-123"])
+        assert result.exit_code == 0
+        assert "未找到" in result.output or "暂无" in result.output
+
+    def test_history_with_status_filter(self):
+        from click.testing import CliRunner
+        from multi_agent.cli import main
+        runner = CliRunner()
+        result = runner.invoke(main, ["history", "--status", "approved"])
+        assert result.exit_code == 0
+
+
+# ══════════════════════════════════════════════════════════
+# Feature R: Agent Capability Matrix
+# ══════════════════════════════════════════════════════════
+
+
+class TestAgentCapabilityMatrix:
+    """Test agent capability matrix view."""
+
+    def test_agents_basic(self):
+        from click.testing import CliRunner
+        from multi_agent.cli import main
+        runner = CliRunner()
+        result = runner.invoke(main, ["agents"])
+        assert result.exit_code == 0
+
+    def test_agents_matrix(self):
+        from click.testing import CliRunner
+        from multi_agent.cli import main
+        runner = CliRunner()
+        result = runner.invoke(main, ["agents", "--matrix"])
+        assert result.exit_code == 0
+        # Should show "Agent" header or "暂无"
+        assert "Agent" in result.output or "暂无" in result.output

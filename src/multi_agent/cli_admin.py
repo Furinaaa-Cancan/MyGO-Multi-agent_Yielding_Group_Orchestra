@@ -37,7 +37,9 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
     @handle_errors
     @click.option("--limit", default=20, type=int, help="Max number of tasks to show")
     @click.option("--status", "filter_status", default=None, help="Filter by status (active/approved/failed/cancelled)")
-    def history(limit: int, filter_status: str | None) -> None:
+    @click.option("--detail", is_flag=True, default=False, help="Show detailed task info")
+    @click.option("--task-id", "detail_task_id", default=None, help="Show detail for a specific task ID")
+    def history(limit: int, filter_status: str | None, detail: bool, detail_task_id: str | None) -> None:
         """查看历史任务记录."""
         import yaml
 
@@ -61,15 +63,45 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
             task_status = data.get("status", "unknown")
             if filter_status and task_status != filter_status:
                 continue
+            if detail_task_id and task_id != detail_task_id:
+                continue
             mtime = yf.stat().st_mtime
             from datetime import datetime
             ts = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
             emoji = {"approved": "✅", "failed": "❌", "cancelled": "🛑", "active": "🔵"}.get(task_status, "⚪")
             click.echo(f"  {emoji} {task_id}  [{task_status}]  {ts}")
+
+            if detail or detail_task_id:
+                req = data.get("requirement", "—")
+                builder = data.get("builder_id", "—")
+                reviewer = data.get("reviewer_id", "—")
+                skill = data.get("skill_id", "—")
+                retries = data.get("retry_count", 0)
+                elapsed = data.get("elapsed_sec")
+                elapsed_str = f"{elapsed:.1f}s" if elapsed else "—"
+                click.echo(f"      需求: {str(req)[:80]}")
+                click.echo(f"      Builder: {builder}  |  Reviewer: {reviewer}")
+                click.echo(f"      Skill: {skill}  |  重试: {retries}  |  耗时: {elapsed_str}")
+                # Show changed files if present
+                changed = data.get("changed_files") or data.get("build_output", {}).get("changed_files", [])
+                if changed and isinstance(changed, list):
+                    click.echo(f"      文件变更: {len(changed)}")
+                    for cf in changed[:5]:
+                        click.echo(f"        • {cf}")
+                    if len(changed) > 5:
+                        click.echo(f"        … 还有 {len(changed) - 5} 个")
+                # Show review summary if present
+                review_summary = data.get("review_summary") or data.get("review_output", {}).get("summary", "")
+                if review_summary:
+                    click.echo(f"      审查: {str(review_summary)[:120]}")
+                click.echo()
+
             shown += 1
 
         if shown == 0:
-            if filter_status:
+            if detail_task_id:
+                click.echo(f"未找到任务: {detail_task_id}")
+            elif filter_status:
                 click.echo(f"暂无 status={filter_status} 的任务记录")
             else:
                 click.echo("暂无历史任务记录")
@@ -409,13 +441,39 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
 
     @main.command()
     @handle_errors
-    def agents() -> None:
+    @click.option("--matrix", is_flag=True, default=False, help="Show capability matrix")
+    def agents(matrix: bool) -> None:
         """显示所有 agent 状态."""
         from multi_agent.router import check_agent_health, load_agents
         agent_list = load_agents()
         if not agent_list:
             click.echo("暂无配置的 agent")
             return
+
+        if matrix:
+            # Feature R: Capability Matrix
+            all_caps: set[str] = set()
+            agent_caps: dict[str, set[str]] = {}
+            for ag in agent_list:
+                caps = set(getattr(ag, "capabilities", []) or [])
+                driver = getattr(ag, "driver", "file")
+                caps.add(f"driver:{driver}")
+                agent_caps[ag.id] = caps
+                all_caps.update(caps)
+
+            sorted_caps = sorted(all_caps)
+            # Header
+            header = f"  {'Agent':<16}" + "".join(f"{c:<16}" for c in sorted_caps)
+            click.echo(header)
+            click.echo("  " + "─" * (16 + 16 * len(sorted_caps)))
+            # Rows
+            for ag in agent_list:
+                row = f"  {ag.id:<16}"
+                for cap in sorted_caps:
+                    row += f"{'✅':<16}" if cap in agent_caps[ag.id] else f"{'—':<16}"
+                click.echo(row)
+            return
+
         health = check_agent_health(agent_list)
         for h in health:
             status_icon = "✅" if h["status"] == "healthy" else "⚠️"

@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.17.0] - 2026-03-09
+
+### Added
+- **Task History Detail** — enhanced `my history` with deep inspection
+  - `my history --detail` — show requirement, builder, reviewer, skill, retries, elapsed time
+  - `my history --task-id <id>` — inspect a specific task's full state
+  - Shows changed files (top 5), review summary preview
+  - Combined with existing `--status` and `--limit` filters
+- **Agent Capability Matrix** — visual overview of agent skills
+  - `my agents --matrix` — tabular view of all agents × capabilities
+  - Auto-includes `driver:<type>` as a capability column
+  - Shows ✅/— for each agent-capability pair
+- **6 new tests** — history detail (4) + agent matrix (2)
+
 ## [0.16.0] - 2026-03-09
 
 ### Added
