@@ -333,3 +333,109 @@ notify:
 5. ✅ token 显示时掩码处理，考虑 len < 4 边界
 6. ✅ CORS 允许 Authorization header
 7. ✅ 静态文件无需 auth（否则 login 页面加载不了）
+
+---
+
+## 十一、双后端搜索 + 自动降级 (v0.13.0)
+
+```python
+def _get_backend() -> str:
+    cfg = _get_memory_config()
+    if cfg.get("backend") == "openai" and os.environ.get("OPENAI_API_KEY"):
+        return "openai"
+    return "tfidf"
+
+def search(query, **kw):
+    backend = _get_backend()
+    if backend == "openai":
+        try:
+            return _search_openai(query, **kw)
+        except Exception:
+            return _search_tfidf(query, **kw)  # 自动降级
+    return _search_tfidf(query, **kw)
+```
+**要点**: 外部 API 调用**必须** try/except + fallback。缓存要设上限 + 裁剪。
+
+---
+
+## 十二、YAML Manifest 加载验证模式 (v0.14.0)
+
+```python
+_MAX_FILE_SIZE = 256 * 1024
+_MAX_ITEMS = 50
+
+def load_manifest(path: Path) -> list[dict]:
+    if not path.exists():
+        raise FileNotFoundError(...)
+    if path.stat().st_size > _MAX_FILE_SIZE:
+        raise ValidationError("too large")
+    data = yaml.safe_load(path.read_text("utf-8"))
+    items = data.get("tasks")
+    if not isinstance(items, list) or not items:
+        raise ValidationError("non-empty list required")
+    if len(items) > _MAX_ITEMS:
+        raise ValidationError(f"Too many: {len(items)} > {_MAX_ITEMS}")
+    for i, item in enumerate(items):
+        if not item.get("requirement") and not item.get("template"):
+            raise ValidationError(f"Item #{i+1} needs requirement or template")
+    return items
+```
+**要点**: 文件大小限制 → YAML 解析 → 结构校验 → 逐项校验。**每一层都防御。**
+
+---
+
+## 十三、Config Profiles 模式 (v0.15.0)
+
+```yaml
+# .ma.yaml
+profiles:
+  fast:
+    retry_budget: 0
+    timeout: 600
+    builder: windsurf
+    reviewer: windsurf
+  thorough:
+    retry_budget: 5
+    timeout: 3600
+    reviewer: codex
+```
+
+```python
+# CLI: 显式 flag 永远覆盖 profile
+if not builder and prof.get("builder"):
+    builder = prof["builder"]
+if retry_budget == 2 and "retry_budget" in prof:  # 2 是 Click 默认值
+    retry_budget = prof["retry_budget"]
+```
+**要点**: Profile 只提供默认值，CLI flag 优先。用 `_PROFILE_FIELDS` frozenset 过滤未知字段。
+
+---
+
+## 十四、优先级队列 + Daemon 模式 (v0.16.0)
+
+```python
+# 优先级排序: high(0) > normal(1) > low(2), 同优先级按提交时间 FIFO
+_PRIORITY_ORDER = {"high": 0, "normal": 1, "low": 2}
+queued.sort(key=lambda e: (
+    _PRIORITY_ORDER.get(e.get("priority", "normal"), 1),
+    e.get("submitted_at", 0),
+))
+
+# Daemon 优雅退出
+_shutdown = [False]  # 用 list 避免 nonlocal
+def _handle_signal(signum, frame):
+    _shutdown[0] = True
+signal.signal(signal.SIGINT, _handle_signal)
+signal.signal(signal.SIGTERM, _handle_signal)
+```
+**要点**: JSONL 存储 → 优先级+FIFO → signal 优雅退出 → `--once` 单次模式方便测试。
+
+---
+
+## 十五、新模块 Import 检查清单 (v0.14-v0.16 教训)
+
+每次创建新 `.py` 模块后，检查：
+1. ✅ 每个 import 都有实际使用（E39/E40/E41 连续踩坑）
+2. ✅ 不要从模板复制 `import os, logging, time` 全家桶
+3. ✅ CLI 子命令中的 `from pathlib import Path` 要在函数内导入
+4. ✅ Click Choice 列表要和 elif 分支对应（E42：export/import/prune 漏加）
