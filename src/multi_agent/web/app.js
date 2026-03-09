@@ -209,11 +209,12 @@ function safeEqual(a, b) {
 function authMiddleware(req, res, next) {
   if (!AUTH_TOKEN) return next(); // auth disabled
 
-  // /api/auth/check is public — frontend uses it to detect if auth is required
-  if (req.path === "/api/auth/check") return next();
+  // Auth endpoints are public — frontend uses them to detect and perform auth
+  // Note: when mounted via app.use("/api", ...), req.path is relative to mount point
+  if (req.path === "/auth/check" || req.path === "/auth/login") return next();
 
   // SSE: accept token via query param (?token=xxx) since EventSource can't set headers
-  if (req.path === "/api/events" && safeEqual(req.query.token || "", AUTH_TOKEN)) return next();
+  if (req.path === "/events" && safeEqual(req.query.token || "", AUTH_TOKEN)) return next();
 
   const authHeader = req.headers.authorization || "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
