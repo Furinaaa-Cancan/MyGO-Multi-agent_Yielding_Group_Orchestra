@@ -216,13 +216,20 @@ app.get("/api/agents", (_req, res) => {
   const data = readYamlFile(agentsFile);
   if (!data || !Array.isArray(data.agents)) return res.json({ agents: [], count: 0 });
 
-  const { execSync } = require("child_process");
+  const { execFileSync } = require("child_process");
+  const SAFE_BINARY_RE = /^[a-zA-Z0-9._-]+$/;
   const results = data.agents.map(a => {
     const info = { id: a.id || "?", driver: a.driver || "file", capabilities: a.capabilities || [], issues: [] };
     if (a.driver === "cli") {
       const binary = (a.command || "").split(" ")[0];
-      try { execSync(`which ${binary}`, { stdio: "pipe" }); info.cli_available = true; info.cli_binary = binary; }
-      catch { info.cli_available = false; info.cli_binary = binary; info.issues.push(`CLI binary '${binary}' not found`); }
+      info.cli_binary = binary;
+      if (!binary || !SAFE_BINARY_RE.test(binary)) {
+        info.cli_available = false;
+        info.issues.push("invalid CLI binary name");
+      } else {
+        try { execFileSync("which", [binary], { stdio: "pipe" }); info.cli_available = true; }
+        catch { info.cli_available = false; info.issues.push(`CLI binary '${binary}' not found`); }
+      }
     } else if (a.driver === "gui") {
       info.app_name = a.app_name || "";
     }

@@ -96,6 +96,9 @@ def register_queue_commands(main: click.Group) -> None:  # noqa: C901
             click.echo(f"\n共 {len(tasks)} 条任务 (dry-run, 未执行)")
             return
 
+        if parallel > 1:
+            click.echo("⚠️  并行模式注意: 当前系统一次只能有一个活跃任务 (.lock 限制)。", err=True)
+            click.echo("   并行任务可能因 lock 冲突而失败。建议使用 --parallel 1 (默认)。", err=True)
         results = run_queue(tasks, builder, reviewer, timeout, pause, parallel=parallel)
         _print_summary(results)
 
