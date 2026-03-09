@@ -967,3 +967,101 @@ class TestMemoryAutoPrune:
         result = runner.invoke(main, ["memory", "prune"])
         assert result.exit_code == 0
         assert "Pruned" in result.output
+
+
+# ══════════════════════════════════════════════════════════
+# Feature N+O: Daemon Mode + Task Queue
+# ══════════════════════════════════════════════════════════
+
+
+class TestTaskQueue:
+    """Test task queue operations."""
+
+    def test_submit_task(self):
+        from multi_agent.daemon import submit_task
+        result = submit_task("Add login endpoint", priority="high")
+        assert result["status"] == "queued"
+        assert result["queue_id"].startswith("q-")
+        assert result["position"] >= 1
+
+    def test_submit_empty_requirement(self):
+        from multi_agent.daemon import submit_task
+        result = submit_task("")
+        assert result["status"] == "error"
+        assert "empty" in result["reason"]
+
+    def test_list_queue(self):
+        from multi_agent.daemon import list_queue, submit_task
+        submit_task("Task A")
+        submit_task("Task B", priority="high")
+        entries = list_queue()
+        assert len(entries) >= 2
+
+    def test_list_queue_filter(self):
+        from multi_agent.daemon import list_queue, submit_task
+        submit_task("Filtered task")
+        queued = list_queue(status_filter="queued")
+        assert all(e["status"] == "queued" for e in queued)
+
+    def test_cancel_task(self):
+        from multi_agent.daemon import cancel_task, submit_task
+        result = submit_task("Cancelable task")
+        qid = result["queue_id"]
+        cancel_result = cancel_task(qid)
+        assert cancel_result["status"] == "cancelled"
+
+    def test_cancel_nonexistent(self):
+        from multi_agent.daemon import cancel_task
+        result = cancel_task("q-nonexistent")
+        assert result["status"] == "error"
+
+    def test_queue_stats(self):
+        from multi_agent.daemon import queue_stats, submit_task
+        submit_task("Stats task")
+        stats = queue_stats()
+        assert stats["total"] >= 1
+        assert "queued" in stats["by_status"]
+
+    def test_next_task_priority_ordering(self):
+        from multi_agent.daemon import _next_task, _save_queue
+        import time as _time
+        # Clear and set up fresh queue
+        _save_queue([
+            {"queue_id": "q-low", "requirement": "low", "priority": "low",
+             "status": "queued", "submitted_at": _time.time() - 10},
+            {"queue_id": "q-high", "requirement": "high", "priority": "high",
+             "status": "queued", "submitted_at": _time.time()},
+        ])
+        nxt = _next_task()
+        assert nxt is not None
+        assert nxt["queue_id"] == "q-high"
+
+    def test_submit_caps_requirement(self):
+        from multi_agent.daemon import submit_task, _load_queue
+        long_req = "x" * 5000
+        submit_task(long_req)
+        entries = _load_queue()
+        last = [e for e in entries if len(e.get("requirement", "")) > 0]
+        assert all(len(e["requirement"]) <= 2000 for e in last)
+
+    def test_submit_cli(self):
+        from click.testing import CliRunner
+        from multi_agent.cli import main
+        runner = CliRunner()
+        result = runner.invoke(main, ["submit", "CLI submitted task"])
+        assert result.exit_code == 0
+        assert "已入队" in result.output
+
+    def test_jobs_cli(self):
+        from click.testing import CliRunner
+        from multi_agent.cli import main
+        runner = CliRunner()
+        result = runner.invoke(main, ["jobs"])
+        assert result.exit_code == 0
+        assert "队列" in result.output
+
+    def test_serve_once_empty_queue(self):
+        from multi_agent.daemon import _save_queue, run_daemon
+        _save_queue([])  # empty queue
+        result = run_daemon(once=True, poll_interval=0.1)
+        assert result["processed"] == 0

@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.16.0] - 2026-03-09
+
+### Added
+- **Daemon Mode** — long-running background task processor
+  - New `daemon.py` module: task queue, daemon loop, priority scheduling
+  - `my serve` — start daemon (foreground), polls queue every 2s
+  - `my serve --once` — process one task and exit
+  - SIGINT/SIGTERM graceful shutdown
+- **Task Queue** — priority-based task submission and management
+  - `my submit "requirement" --priority high` — queue tasks for daemon
+  - `my jobs` — view queue status with icons and priority labels
+  - `submit_task()`: priority (high/normal/low), template support, requirement cap
+  - `cancel_task()`, `queue_stats()`, `list_queue()` with status filter
+  - `_next_task()`: priority-first, FIFO within same priority
+  - Queue storage: `.multi-agent/queue/tasks.jsonl`, max 200 tasks
+- **12 new tests** — submit, cancel, priority ordering, CLI integration, daemon once
+
 ## [0.15.0] - 2026-03-09
 
 ### Added

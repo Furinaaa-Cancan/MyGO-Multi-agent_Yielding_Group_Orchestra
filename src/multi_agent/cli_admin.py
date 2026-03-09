@@ -947,3 +947,79 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
                 continue
 
         click.echo(f"\n{format_batch_summary(results)}")
+
+    # ── submit (queue a task) ─────────────────────────
+
+    @main.command("submit")
+    @click.argument("requirement", required=False, default="")
+    @click.option("--priority", "-p", default="normal",
+                  type=click.Choice(["high", "normal", "low"]), help="Task priority")
+    @click.option("--skill", default="code-implement", help="Skill ID")
+    @click.option("--builder", default="", help="Builder IDE")
+    @click.option("--reviewer", default="", help="Reviewer IDE")
+    @click.option("--template", default="", help="Template ID")
+    @handle_errors
+    def submit_cmd(requirement: str, priority: str, skill: str,
+                   builder: str, reviewer: str, template: str) -> None:
+        """提交任务到队列 (配合 my serve 使用)."""
+        from multi_agent.daemon import submit_task
+        if not requirement and not template:
+            click.echo("❌ 请提供 requirement 或 --template。", err=True)
+            sys.exit(1)
+        result = submit_task(
+            requirement, priority=priority, skill=skill,
+            builder=builder, reviewer=reviewer, template=template,
+        )
+        if result["status"] == "queued":
+            click.echo(f"📥 已入队: {result['queue_id']} (位置 #{result['position']})")
+        else:
+            click.echo(f"❌ {result.get('reason', 'unknown error')}", err=True)
+
+    # ── queue (list queued tasks) ─────────────────────
+
+    @main.command("jobs")
+    @click.option("--status", "status_filter", default=None,
+                  type=click.Choice(["queued", "running", "completed", "failed", "cancelled"]),
+                  help="Filter by status")
+    @handle_errors
+    def jobs_cmd(status_filter: str | None) -> None:
+        """查看 daemon 任务队列状态."""
+        from multi_agent.daemon import list_queue, queue_stats
+        stats = queue_stats()
+        click.echo(f"📋 队列: {stats['queued']} 等待, {stats['running']} 运行中, {stats['total']} 总计\n")
+
+        entries = list_queue(status_filter=status_filter)
+        if not entries:
+            click.echo("  (空)")
+            return
+        for e in entries:
+            icon = {"queued": "⏳", "running": "🔄", "completed": "✅",
+                    "failed": "❌", "cancelled": "🚫"}.get(e.get("status", ""), "❓")
+            req = (e.get("requirement") or e.get("template", "?"))[:50]
+            pri = e.get("priority", "normal")
+            click.echo(f"  {icon} [{pri}] {e.get('queue_id', '?')} — {req}")
+            if e.get("error"):
+                click.echo(f"     ↳ {e['error'][:80]}")
+
+    # ── serve (daemon mode) ──────────────────────────
+
+    @main.command("serve")
+    @click.option("--once", is_flag=True, default=False, help="Process one task and exit")
+    @click.option("--poll", default=2.0, type=float, help="Poll interval in seconds")
+    @handle_errors
+    def serve_cmd(once: bool, poll: float) -> None:
+        """启动后台 daemon，持续处理队列中的任务.
+
+        用法:
+          1. 先提交任务: my submit "实现登录功能" --priority high
+          2. 启动 daemon: my serve
+          3. daemon 会自动从队列取任务执行
+        """
+        from multi_agent.daemon import queue_stats, run_daemon
+        stats = queue_stats()
+        click.echo(f"🚀 Daemon 启动 (poll={poll}s, once={once})")
+        click.echo(f"   队列: {stats['queued']} 等待中")
+        click.echo("   Ctrl+C 停止\n")
+
+        result = run_daemon(once=once, poll_interval=poll)
+        click.echo(f"\n🛑 Daemon 停止: 处理了 {result['processed']} 个任务")
