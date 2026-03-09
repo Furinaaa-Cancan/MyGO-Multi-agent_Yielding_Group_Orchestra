@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.15.0] - 2026-03-09
+
+### Added
+- **Config Profiles** — named presets for common task configurations
+  - New `profiles.py` module: load/validate/list profiles from `.ma.yaml`
+  - `my go --profile fast` — apply profile defaults (builder, reviewer, timeout, etc.)
+  - `my profiles` — list all available profiles
+  - Profile fields: retry_budget, timeout, builder, reviewer, skill, mode, decompose, visible
+  - Unknown fields filtered out; CLI flags always override profile values
+  - `profiles` added to `VALID_CONFIG_KEYS`
+- **Memory Auto-Prune** — TTL expiry and entry cap for semantic memory
+  - `prune()` function: remove entries older than N days (default 180) + cap total entries
+  - `my memory prune [days]` — CLI action for manual pruning
+  - Two-phase: TTL expiry first, then cap most-recent
+- **12 new tests** — config profiles (7) + memory auto-prune (5)
+
 ## [0.14.0] - 2026-03-09
 
 ### Added

@@ -696,7 +696,7 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
 
     # ── memory ───────────────────────────────────────────
     @main.command("memory")
-    @click.argument("action", type=click.Choice(["search", "add", "list", "stats", "delete", "clear"]))
+    @click.argument("action", type=click.Choice(["search", "add", "list", "stats", "delete", "clear", "export", "import", "prune"]))
     @click.argument("text", required=False, default="")
     @click.option("--category", "-c", default="general", help="Memory category")
     @click.option("--top-k", "-k", default=5, type=int, help="Max results for search")
@@ -824,6 +824,29 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
             from multi_agent.semantic_memory import import_entries
             result = import_entries(text)
             click.echo(f"  📥 Imported {result['imported']} entries ({result['skipped']} duplicates)")
+
+        elif action == "prune":
+            from multi_agent.semantic_memory import prune as mem_prune
+            max_days = int(text) if text and text.isdigit() else None
+            result = mem_prune(max_age_days=max_days)
+            click.echo(f"  🧹 Pruned {result['removed']} entries (remaining: {result['remaining']})")
+
+    # ── profiles ──────────────────────────────────────
+
+    @main.command("profiles")
+    @handle_errors
+    def profiles_cmd() -> None:
+        """列出所有可用的 config profiles."""
+        from multi_agent.profiles import load_profiles
+        profiles = load_profiles()
+        if not profiles:
+            click.echo("⚠️  未配置任何 profile。在 .ma.yaml 中添加 profiles: 段。")
+            return
+        click.echo(f"📋 {len(profiles)} 个 profile:\n")
+        for name, cfg in sorted(profiles.items()):
+            fields = ", ".join(f"{k}={v}" for k, v in cfg.items())
+            click.echo(f"  {name}: {fields}")
+        click.echo(f"\n使用方法: my go --profile <name>")
 
     # ── batch ──────────────────────────────────────────
 

@@ -170,7 +170,7 @@ VALID_CONFIG_KEYS = {
     "default_skill", "default_builder", "default_reviewer",
     "retry_budget", "timeout_sec", "watch_interval",
     "verbose", "auto_watch", "lang",
-    "git", "auto_test", "agent_names", "dashboard", "finops", "memory", "notify",
+    "git", "auto_test", "agent_names", "dashboard", "finops", "memory", "notify", "profiles",
 }
 
 

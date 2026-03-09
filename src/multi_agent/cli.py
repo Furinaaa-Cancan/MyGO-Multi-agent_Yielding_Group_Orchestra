@@ -351,9 +351,10 @@ def _ensure_no_active_task(app: Any) -> None:
 @click.option("--visible", is_flag=True, default=False, help="Open CLI agents in separate Terminal windows (macOS)")
 @click.option("--git-commit", is_flag=True, default=False, help="Auto-commit after build/approve (overrides .ma.yaml git.auto_commit)")
 @click.option("--mode", default="strict", help="Workmode profile 名称")
+@click.option("--profile", "profile_name", default=None, help="Config profile name (e.g. fast, thorough, solo)")
 @click.option("--config", "mode_config_path", default="config/workmode.yaml", help="Workmode 配置路径")
 @handle_errors
-def go(requirement: str | None, template_id: str | None, var_args: tuple[str, ...], skill: str, task_id: str | None, builder: str, reviewer: str, retry_budget: int, timeout: int, no_watch: bool, decompose: bool, auto_confirm: bool, decompose_file: str | None, no_cache: bool, visible: bool, git_commit: bool, mode: str, mode_config_path: str) -> None:
+def go(requirement: str | None, template_id: str | None, var_args: tuple[str, ...], skill: str, task_id: str | None, builder: str, reviewer: str, retry_budget: int, timeout: int, no_watch: bool, decompose: bool, auto_confirm: bool, decompose_file: str | None, no_cache: bool, visible: bool, git_commit: bool, mode: str, profile_name: str | None, mode_config_path: str) -> None:
     """Start a new task and watch for IDE output.
 
     Starts the task, then auto-watches outbox/ for agent output.
@@ -370,10 +371,38 @@ def go(requirement: str | None, template_id: str | None, var_args: tuple[str, ..
       my go "Fix login bug" --no-watch
       my go "实现完整用户认证模块" --decompose
       my go --template auth
+      my go --profile fast
       my go --template crud --var model=User --var endpoint=users
     """
     from multi_agent.config import load_project_config
     from multi_agent.graph import compile_graph
+
+    # ── Profile resolution ───────────────────────────────────
+    if profile_name:
+        from multi_agent.profiles import ProfileNotFoundError, get_profile
+        try:
+            prof = get_profile(profile_name)
+        except ProfileNotFoundError as e:
+            click.echo(f"❌ {e}", err=True)
+            sys.exit(1)
+        # Profile provides defaults; explicit CLI flags still override
+        if not builder and prof.get("builder"):
+            builder = prof["builder"]
+        if not reviewer and prof.get("reviewer"):
+            reviewer = prof["reviewer"]
+        if retry_budget == 2 and "retry_budget" in prof:
+            retry_budget = prof["retry_budget"]
+        if timeout == 1800 and "timeout" in prof:
+            timeout = prof["timeout"]
+        if skill == "code-implement" and prof.get("skill"):
+            skill = prof["skill"]
+        if mode == "strict" and prof.get("mode"):
+            mode = prof["mode"]
+        if not decompose and prof.get("decompose"):
+            decompose = True
+        if not visible and prof.get("visible"):
+            visible = True
+        click.echo(f"📋 Profile: {profile_name}")
 
     # ── Template resolution ──────────────────────────────
     if var_args and not template_id:

@@ -849,3 +849,121 @@ class TestMemoryExportImport:
         entries = _load_entries()
         imported = [e for e in entries if e["id"] == "long01"]
         assert len(imported[0]["content"]) <= 2000
+
+
+# ══════════════════════════════════════════════════════════
+# Feature L: Config Profiles
+# ══════════════════════════════════════════════════════════
+
+
+class TestConfigProfiles:
+    """Test config profile loading and validation."""
+
+    def test_load_profiles_empty(self, monkeypatch):
+        from multi_agent.profiles import load_profiles
+        monkeypatch.setattr("multi_agent.profiles.load_project_config", lambda: {})
+        assert load_profiles() == {}
+
+    def test_load_profiles_valid(self, monkeypatch):
+        from multi_agent.profiles import load_profiles
+        monkeypatch.setattr("multi_agent.profiles.load_project_config", lambda: {
+            "profiles": {
+                "fast": {"retry_budget": 0, "timeout": 600},
+                "thorough": {"retry_budget": 5, "timeout": 3600, "reviewer": "codex"},
+            }
+        })
+        profiles = load_profiles()
+        assert "fast" in profiles
+        assert profiles["fast"]["retry_budget"] == 0
+        assert profiles["thorough"]["reviewer"] == "codex"
+
+    def test_get_profile_not_found(self, monkeypatch):
+        from multi_agent.profiles import ProfileNotFoundError, get_profile
+        monkeypatch.setattr("multi_agent.profiles.load_project_config", lambda: {})
+        with pytest.raises(ProfileNotFoundError, match="not found"):
+            get_profile("nonexistent")
+
+    def test_get_profile_invalid_name(self):
+        from multi_agent.profiles import ProfileNotFoundError, get_profile
+        with pytest.raises(ProfileNotFoundError, match="Invalid"):
+            get_profile("../../etc")
+
+    def test_filters_unknown_fields(self, monkeypatch):
+        from multi_agent.profiles import load_profiles
+        monkeypatch.setattr("multi_agent.profiles.load_project_config", lambda: {
+            "profiles": {"test": {"retry_budget": 1, "unknown_field": "bad"}}
+        })
+        profiles = load_profiles()
+        assert "unknown_field" not in profiles["test"]
+        assert profiles["test"]["retry_budget"] == 1
+
+    def test_list_profile_names(self, monkeypatch):
+        from multi_agent.profiles import list_profile_names
+        monkeypatch.setattr("multi_agent.profiles.load_project_config", lambda: {
+            "profiles": {"fast": {}, "slow": {}}
+        })
+        assert list_profile_names() == ["fast", "slow"]
+
+    def test_profiles_cmd_empty(self):
+        from click.testing import CliRunner
+        from multi_agent.cli import main
+        runner = CliRunner()
+        result = runner.invoke(main, ["profiles"])
+        assert result.exit_code == 0
+
+
+# ══════════════════════════════════════════════════════════
+# Feature M: Memory Auto-Prune
+# ══════════════════════════════════════════════════════════
+
+
+class TestMemoryAutoPrune:
+    """Test memory TTL expiry and auto-prune."""
+
+    def test_prune_empty(self):
+        from multi_agent.semantic_memory import prune
+        result = prune()
+        assert result["removed"] == 0
+
+    def test_prune_by_age(self):
+        import time as _time
+        from multi_agent.semantic_memory import prune, _load_entries, _rewrite_entries
+        # Insert entries with old timestamps
+        old_entry = {"id": "old1", "ts": _time.time() - 400 * 86400,
+                     "content": "very old", "category": "general"}
+        new_entry = {"id": "new1", "ts": _time.time(),
+                     "content": "fresh", "category": "general"}
+        _rewrite_entries([old_entry, new_entry])
+
+        result = prune(max_age_days=180)
+        assert result["removed"] == 1
+        assert result["remaining"] == 1
+        entries = _load_entries()
+        assert entries[0]["id"] == "new1"
+
+    def test_prune_by_max_entries(self):
+        import time as _time
+        from multi_agent.semantic_memory import prune, _load_entries, _rewrite_entries
+        entries = [{"id": f"e{i}", "ts": _time.time() - i, "content": f"entry {i}",
+                    "category": "general"} for i in range(10)]
+        _rewrite_entries(entries)
+
+        result = prune(max_entries=3, max_age_days=0)
+        assert result["removed"] == 7
+        assert result["remaining"] == 3
+
+    def test_prune_keeps_recent(self):
+        import time as _time
+        from multi_agent.semantic_memory import prune, store, _load_entries
+        store("Recent knowledge about testing", category="convention")
+        result = prune(max_age_days=30)
+        assert result["removed"] == 0
+        assert result["remaining"] > 0
+
+    def test_prune_cli_action(self):
+        from click.testing import CliRunner
+        from multi_agent.cli import main
+        runner = CliRunner()
+        result = runner.invoke(main, ["memory", "prune"])
+        assert result.exit_code == 0
+        assert "Pruned" in result.output

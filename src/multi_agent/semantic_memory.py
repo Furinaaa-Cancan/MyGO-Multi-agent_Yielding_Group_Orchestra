@@ -554,6 +554,51 @@ def _rewrite_entries(entries: list[dict[str, Any]]) -> None:
         _log.warning("Failed to rewrite memory: %s", e)
 
 
+# ── Auto-Prune ───────────────────────────────────────────
+
+_DEFAULT_TTL_DAYS = 180  # 6 months
+
+
+def prune(
+    *,
+    max_age_days: int | None = None,
+    max_entries: int | None = None,
+) -> dict[str, Any]:
+    """Prune old or excess memory entries.
+
+    Args:
+        max_age_days: Remove entries older than this (default: 180 days).
+        max_entries: Keep only the N most recent entries (by timestamp).
+
+    Returns:
+        Dict with 'removed' count and 'remaining' count.
+    """
+    entries = _load_entries()
+    if not entries:
+        return {"removed": 0, "remaining": 0}
+
+    original_count = len(entries)
+    now = time.time()
+
+    # Phase 1: TTL expiry
+    ttl_days = max_age_days if max_age_days is not None else _DEFAULT_TTL_DAYS
+    if ttl_days > 0:
+        cutoff = now - (ttl_days * 86400)
+        entries = [e for e in entries if e.get("ts", now) >= cutoff]
+
+    # Phase 2: Cap total entries (keep most recent)
+    cap = max_entries if max_entries is not None else _MAX_ENTRIES
+    if len(entries) > cap:
+        entries.sort(key=lambda e: e.get("ts", 0), reverse=True)
+        entries = entries[:cap]
+
+    removed = original_count - len(entries)
+    if removed > 0:
+        _rewrite_entries(entries)
+
+    return {"removed": removed, "remaining": len(entries)}
+
+
 # ── Export / Import ───────────────────────────────────────
 
 
