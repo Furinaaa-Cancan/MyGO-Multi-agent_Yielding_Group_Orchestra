@@ -2,7 +2,7 @@
 
 **你的 AI 乐队，一条命令开演。**
 
-基于 **LangGraph 单一状态源（SSOT）** 驱动 4 节点工作流。v0.9.0
+基于 **LangGraph 单一状态源（SSOT）** 驱动 4 节点工作流。v0.9.1
 
 ---
 
@@ -600,7 +600,7 @@ reviewer 输出被判定为 rubber-stamp（缺少具体 reasoning/evidence）。
 ## 测试
 
 ```bash
-pytest tests/ -q            # 1203 tests, 全通过
+pytest tests/ -q            # 1250 tests, 全通过
 python3 -m mypy src/        # 类型检查
 python3 -m ruff check src/  # Lint
 ```
@@ -609,6 +609,38 @@ python3 -m ruff check src/  # Lint
 - 单元测试：workspace, session, graph, router, schema, driver, memory, trace, decompose, watcher, ...
 - 集成测试：approve flow, reject-retry, budget exhausted, timeout, cancel, rubber stamp, request_changes cap
 - 回归测试：原子写入, TOCTOU 竞态, 锁泄漏, spawn 竞态
+
+---
+
+## 安全 (v0.9.1)
+
+全代码库企业级安全审计，覆盖 31 个文件，修复 22 个漏洞。详见 [`docs/SECURITY_AUDIT.md`](docs/SECURITY_AUDIT.md)。
+
+### 输入验证
+
+| 输入 | 校验 | 正则 |
+|------|------|------|
+| task_id | ✅ | `[a-z0-9][a-z0-9-]{2,63}` |
+| agent_id | ✅ | `[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}` |
+| skill_id | ✅ | `[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}` |
+| subtask_id | ✅ | `[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}` |
+| branch_prefix | ✅ | `[a-zA-Z0-9][a-zA-Z0-9/_.-]{0,30}` |
+| webhook URL | ✅ | scheme ∈ {http, https} |
+
+### 防护措施
+
+- **命令注入**：所有 subprocess 调用 `shell=False`；git 命令使用 `--` 分隔符防 flag 注入
+- **路径遍历**：所有 ID 类输入正则校验 + 工作空间符号链接保护
+- **YAML 安全**：全面使用 `yaml.safe_load` / `JSON_SCHEMA`，禁止 `!!python/object` 等危险标签
+- **DoS 防护**：所有文件读取有大小限制（1MB-10MB），SSE 连接数上限 10
+- **SSRF 防护**：webhook URL 仅允许 http/https 协议
+- **XSS 防护**：Web Dashboard HTML 转义后再渲染 markdown
+- **CORS 保护**：仅允许 localhost 来源的跨域请求
+- **原子写入**：checkpoint 等关键文件使用 tempfile + os.replace，防崩溃损坏
+- **TOCTOU 防护**：文件操作使用 open 而非 exists()+open 模式
+- **AppleScript 注入**：GUI 驱动模式转义双引号、反斜杠、换行符
+
+> ⚠️ Web Dashboard **无认证**，仅限可信网络使用。
 
 ---
 
@@ -650,7 +682,7 @@ AGPL-3.0，详见 `LICENSE`。
 
 ## English Summary
 
-**MyGO — Multi-agent Yielding Group Orchestra** is your AI band for code delivery (v0.9.0).
+**MyGO — Multi-agent Yielding Group Orchestra** is your AI band for code delivery (v0.9.1).
 Recommended: **1 IDE + N CLI agents** — one IDE orchestrates, multiple Codex/Claude CLI agents work in parallel.
 - Three driver modes: manual (file), auto CLI, and GUI automation (macOS AppleScript)
 - **Parallel execution**: independent sub-tasks run concurrently via ThreadPoolExecutor
@@ -664,4 +696,4 @@ Recommended: **1 IDE + N CLI agents** — one IDE orchestrates, multiple Codex/C
 - **Task templates**: 6 built-in templates (auth, crud, bugfix, refactor, test, api-endpoint) with `${var}` substitution
 - **Git integration**: auto-commit, auto-branch, auto-tag via EventHooks; auto-test runner with evidence injection
 - **Web Dashboard**: real-time task monitoring via Node.js/Express + SSE, TailwindCSS frontend, Chinese/English i18n
-- 1203 tests, full mypy/ruff compliance
+- 1250 tests, full mypy/ruff compliance
