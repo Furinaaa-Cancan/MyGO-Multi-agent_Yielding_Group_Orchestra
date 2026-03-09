@@ -94,6 +94,10 @@ my list-skills   # 查看可用技能
 
 ```bash
 my go "实现用户登录功能"
+
+# 或使用预定义模板
+my go --template auth
+my go --template crud --var model=User --var endpoint=users
 ```
 
 系统自动完成：锁定任务 → 生成 prompt → 自动/手动调用 builder → 等待输出 → 交给 reviewer → 决策 → 完成/重试。
@@ -107,6 +111,7 @@ my go "实现用户登录功能"
 | 命令 | 作用 |
 |---|---|
 | `my go "<需求>"` | 启动任务（自动 watch） |
+| `my go --template <id>` | 使用预定义模板启动任务 |
 | `my go "..." --decompose --visible` | 分解为子任务 + 可视化终端并行执行 |
 | `my done` | 提交当前角色的输出 |
 | `my watch` | 恢复中断的自动检测 |
@@ -189,6 +194,36 @@ my go "..." --decompose-file result.json           # 从文件加载分解结果
 ```
 
 每个子任务独立经历完整的 build → review → decide 循环，支持中断恢复（checkpoint）。
+
+### 任务模板 (v0.9.0)
+
+预定义常见任务配置，一条命令启动：
+
+```bash
+# 查看可用模板
+my template list
+
+# 使用模板启动任务
+my go --template auth                              # 用户认证模块
+my go --template crud --var model=User              # CRUD API（自定义模型）
+my go --template bugfix --var bug_description="..." # Bug 修复
+my go --template test --var target_module=auth      # 测试补全
+my go --template refactor --var target_module=api   # 代码重构
+my go --template api-endpoint --var method=POST --var path=/api/users
+```
+
+内置模板：
+
+| 模板 ID | 名称 | 分解模式 | 说明 |
+|-----------|------|----------|------|
+| `auth` | 用户认证模块 | ✅ | 注册/登录/JWT/中间件 |
+| `crud` | CRUD API | ✅ | 完整 RESTful CRUD + 分页 |
+| `bugfix` | Bug 修复 | ✖ | 根因分析 + 回归测试 |
+| `refactor` | 代码重构 | ✖ | 保持接口兼容的重构 |
+| `test` | 测试补全 | ✖ | 补充单元/集成测试 |
+| `api-endpoint` | API Endpoint | ✖ | 单个 endpoint 实现 |
+
+模板支持 `${var}` 变量占位符，通过 `--var key=value` 覆盖。自定义模板放在 `task-templates/` 目录即可。
 
 **并行执行 (v0.7.0)**：无依赖的子任务自动并行——系统使用 `topo_sort_grouped()` 将子任务分组，同组任务通过 `ThreadPoolExecutor` 并发执行，每个 CLI agent 在隔离的 `.multi-agent/subtasks/<id>/` 工作区运行，互不干扰。
 
@@ -292,6 +327,7 @@ src/multi_agent/           # 核心包（26 个模块）
 │   └── static/index.html  # 前端 (TailwindCSS + i18n)
 └── templates/             # Jinja2 prompt 模板
 
+task-templates/            # 任务模板 (auth, crud, bugfix, ...)
 agents/agents.yaml         # Agent 注册表
 config/workmode.yaml       # 工作模式配置
 skills/                    # 技能定义 (contract.yaml)
@@ -331,6 +367,8 @@ skills/                    # 技能定义 (contract.yaml)
 | `my cleanup` | 清理旧文件 |
 | `my dashboard` | Web 仪表板（实时任务监控 + SSE 事件流） |
 | `my version` | 版本信息 |
+| `my template list` | 列出可用任务模板 |
+| `my template show <id>` | 查看模板详情 |
 
 ---
 
@@ -623,6 +661,7 @@ Recommended: **1 IDE + N CLI agents** — one IDE orchestrates, multiple Codex/C
 - Rubber-stamp detection, retry budgets, timeout guards
 - Atomic file writes, TOCTOU race protection, input validation
 - **Platform**: macOS fully supported; Windows/Linux file+CLI modes work, `--visible` mode macOS-only (Windows Terminal adaptation planned)
+- **Task templates**: 6 built-in templates (auth, crud, bugfix, refactor, test, api-endpoint) with `${var}` substitution
 - **Git integration**: auto-commit, auto-branch, auto-tag via EventHooks; auto-test runner with evidence injection
 - **Web Dashboard**: real-time task monitoring via Node.js/Express + SSE, TailwindCSS frontend, Chinese/English i18n
 - 1203 tests, full mypy/ruff compliance

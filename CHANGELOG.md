@@ -18,6 +18,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - /api/projects, /api/projects/add, /api/projects/switch endpoints
   - Frontend project selector dropdown in header
 - **Task statistics** (`my stats`) — execution statistics report with node timing analysis
+- **Task template system** (`task_templates.py`) — predefined task configs for one-command launch
+  - 6 built-in templates: auth, crud, bugfix, refactor, test, api-endpoint
+  - `my go --template auth` / `my go --template crud --var model=User`
+  - `my template list` / `my template show <id>` CLI commands
+  - `${var}` placeholder substitution with `--var key=value` overrides
+  - Security: path traversal prevention, file size cap, skill validation
 - **Intelligent stderr analysis** — detect known Codex CLI error patterns (UTF-8, WebSocket, rate limit)
 - **Enhanced JSON extraction** — 3-strategy cascade for CLI agent output parsing
   - Fenced code blocks, bare JSON objects, pure JSON, best-candidate selection
