@@ -1128,3 +1128,134 @@ class TestAgentCapabilityMatrix:
         assert result.exit_code == 0
         # Should show "Agent" header or "暂无"
         assert "Agent" in result.output or "暂无" in result.output
+
+
+# ══════════════════════════════════════════════════════════
+# Feature P: Plugin/Hook System
+# ══════════════════════════════════════════════════════════
+
+
+class TestHookSystem:
+    """Test event hook registration, emit, and lifecycle."""
+
+    def test_register_and_emit(self):
+        from multi_agent.hooks import clear_hooks, emit, register_hook
+        clear_hooks()
+        calls = []
+        register_hook("on_task_complete", lambda e: calls.append(e))
+        count = emit("on_task_complete", {"task_id": "t-1"})
+        assert count == 1
+        assert calls[0]["task_id"] == "t-1"
+        assert calls[0]["event"] == "on_task_complete"
+        clear_hooks()
+
+    def test_register_decorator(self):
+        from multi_agent.hooks import clear_hooks, emit, register_hook
+        clear_hooks()
+        calls = []
+
+        @register_hook("on_build_complete")
+        def my_hook(event):
+            calls.append(event)
+
+        emit("on_build_complete", {"task_id": "t-2"})
+        assert len(calls) == 1
+        clear_hooks()
+
+    def test_invalid_event(self):
+        from multi_agent.hooks import register_hook
+        with pytest.raises(ValueError, match="Unknown event"):
+            register_hook("on_invalid_event", lambda e: None)
+
+    def test_emit_unknown_event(self):
+        from multi_agent.hooks import emit
+        assert emit("on_nonexistent", {}) == 0
+
+    def test_unregister(self):
+        from multi_agent.hooks import clear_hooks, emit, register_hook, unregister_hook
+        clear_hooks()
+        fn = lambda e: None
+        register_hook("on_retry", fn)
+        assert unregister_hook("on_retry", fn) is True
+        assert emit("on_retry", {}) == 0
+        clear_hooks()
+
+    def test_list_hooks(self):
+        from multi_agent.hooks import clear_hooks, list_hooks, register_hook
+        clear_hooks()
+        register_hook("on_task_start", lambda e: None)
+        register_hook("on_task_start", lambda e: None)
+        counts = list_hooks()
+        assert counts["on_task_start"] == 2
+        clear_hooks()
+
+    def test_hook_error_doesnt_crash(self):
+        from multi_agent.hooks import clear_hooks, emit, register_hook
+        clear_hooks()
+        register_hook("on_task_failed", lambda e: 1/0)  # raises
+        count = emit("on_task_failed", {"task_id": "t-err"})
+        assert count == 0  # failed hook not counted
+        clear_hooks()
+
+    def test_hooks_cli(self):
+        from click.testing import CliRunner
+        from multi_agent.cli import main
+        runner = CliRunner()
+        result = runner.invoke(main, ["hooks"])
+        assert result.exit_code == 0
+        assert "Hooks" in result.output
+
+    def test_valid_events_constant(self):
+        from multi_agent.hooks import VALID_EVENTS
+        assert "on_task_complete" in VALID_EVENTS
+        assert "on_build_complete" in VALID_EVENTS
+        assert len(VALID_EVENTS) == 6
+
+
+# ══════════════════════════════════════════════════════════
+# Feature S: Task Dependencies
+# ══════════════════════════════════════════════════════════
+
+
+class TestTaskDependencies:
+    """Test task queue dependency chains."""
+
+    def test_submit_with_after(self):
+        from multi_agent.daemon import _save_queue, submit_task
+        _save_queue([{"queue_id": "q-parent", "requirement": "parent",
+                      "status": "queued", "submitted_at": 0}])
+        result = submit_task("child task", after="q-parent")
+        assert result["status"] == "queued"
+
+    def test_submit_after_nonexistent(self):
+        from multi_agent.daemon import _save_queue, submit_task
+        _save_queue([])
+        result = submit_task("orphan", after="q-nope")
+        assert result["status"] == "error"
+        assert "not found" in result["reason"]
+
+    def test_next_task_skips_blocked(self):
+        from multi_agent.daemon import _next_task, _save_queue
+        import time as _t
+        _save_queue([
+            {"queue_id": "q-a", "requirement": "a", "status": "queued",
+             "priority": "high", "submitted_at": _t.time(), "depends_on": "q-pending"},
+            {"queue_id": "q-pending", "requirement": "pending", "status": "queued",
+             "priority": "normal", "submitted_at": _t.time() - 10, "depends_on": None},
+        ])
+        nxt = _next_task()
+        assert nxt is not None
+        assert nxt["queue_id"] == "q-pending"  # q-a blocked, so q-pending runs first
+
+    def test_next_task_unblocks_after_complete(self):
+        from multi_agent.daemon import _next_task, _save_queue
+        import time as _t
+        _save_queue([
+            {"queue_id": "q-dep", "requirement": "dep", "status": "completed",
+             "priority": "normal", "submitted_at": _t.time() - 10, "depends_on": None},
+            {"queue_id": "q-child", "requirement": "child", "status": "queued",
+             "priority": "normal", "submitted_at": _t.time(), "depends_on": "q-dep"},
+        ])
+        nxt = _next_task()
+        assert nxt is not None
+        assert nxt["queue_id"] == "q-child"  # dependency completed, child eligible

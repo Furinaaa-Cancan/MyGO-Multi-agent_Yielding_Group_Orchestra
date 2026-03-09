@@ -1016,9 +1016,10 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
     @click.option("--builder", default="", help="Builder IDE")
     @click.option("--reviewer", default="", help="Reviewer IDE")
     @click.option("--template", default="", help="Template ID")
+    @click.option("--after", default="", help="Queue ID of dependency (run after that task completes)")
     @handle_errors
     def submit_cmd(requirement: str, priority: str, skill: str,
-                   builder: str, reviewer: str, template: str) -> None:
+                   builder: str, reviewer: str, template: str, after: str) -> None:
         """提交任务到队列 (配合 my serve 使用)."""
         from multi_agent.daemon import submit_task
         if not requirement and not template:
@@ -1026,12 +1027,30 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
             sys.exit(1)
         result = submit_task(
             requirement, priority=priority, skill=skill,
-            builder=builder, reviewer=reviewer, template=template,
+            builder=builder, reviewer=reviewer, template=template, after=after,
         )
         if result["status"] == "queued":
-            click.echo(f"📥 已入队: {result['queue_id']} (位置 #{result['position']})")
+            dep_info = f" (after {after})" if after else ""
+            click.echo(f"📥 已入队: {result['queue_id']} (位置 #{result['position']}){dep_info}")
         else:
             click.echo(f"❌ {result.get('reason', 'unknown error')}", err=True)
+
+    # ── hooks (list registered hooks) ────────────────
+
+    @main.command("hooks")
+    @handle_errors
+    def hooks_cmd() -> None:
+        """列出所有已注册的 event hooks."""
+        from multi_agent.hooks import VALID_EVENTS, list_hooks, load_hooks_from_config
+        load_hooks_from_config()
+        counts = list_hooks()
+        total = sum(counts.values())
+        click.echo(f"🔌 Hooks: {total} 个已注册\n")
+        for event in sorted(VALID_EVENTS):
+            n = counts.get(event, 0)
+            icon = "✅" if n > 0 else "—"
+            click.echo(f"  {icon} {event}: {n}")
+        click.echo(f"\n在 .ma.yaml 的 hooks: 段配置自定义 hook。")
 
     # ── queue (list queued tasks) ─────────────────────
 

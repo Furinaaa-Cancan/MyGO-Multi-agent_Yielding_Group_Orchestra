@@ -105,8 +105,12 @@ def submit_task(
     template: str = "",
     retry_budget: int = 2,
     timeout: int = 1800,
+    after: str = "",
 ) -> dict[str, Any]:
     """Submit a new task to the queue.
+
+    Args:
+        after: Queue ID of a task that must complete before this one starts.
 
     Returns:
         Dict with queue_id, status, and position.
@@ -121,6 +125,12 @@ def submit_task(
     active = [e for e in entries if e.get("status") in ("queued", "running")]
     if len(active) >= _MAX_QUEUE_SIZE:
         return {"status": "error", "reason": f"queue full ({_MAX_QUEUE_SIZE})"}
+
+    # Validate dependency
+    if after:
+        dep_ids = {e.get("queue_id") for e in entries}
+        if after not in dep_ids:
+            return {"status": "error", "reason": f"dependency {after} not found in queue"}
 
     # Validate priority
     if priority not in [p.value for p in TaskPriority]:
@@ -141,6 +151,7 @@ def submit_task(
         "template": template,
         "retry_budget": retry_budget,
         "timeout": timeout,
+        "depends_on": after or None,
         "status": TaskStatus.QUEUED.value,
         "submitted_at": time.time(),
         "started_at": None,
@@ -196,17 +207,33 @@ def queue_stats() -> dict[str, Any]:
 
 
 def _next_task() -> dict[str, Any] | None:
-    """Get the next queued task (highest priority, oldest first)."""
+    """Get the next queued task (highest priority, oldest first).
+
+    Respects depends_on: a task is only eligible if its dependency
+    has status 'completed' (or dependency doesn't exist).
+    """
     entries = _load_queue()
-    queued = [e for e in entries if e.get("status") == "queued"]
-    if not queued:
+    status_map = {e.get("queue_id"): e.get("status") for e in entries}
+
+    eligible = []
+    for e in entries:
+        if e.get("status") != "queued":
+            continue
+        dep = e.get("depends_on")
+        if dep:
+            dep_status = status_map.get(dep)
+            if dep_status != "completed":
+                continue  # dependency not yet done
+        eligible.append(e)
+
+    if not eligible:
         return None
     # Sort by priority then by submitted_at
-    queued.sort(key=lambda e: (
+    eligible.sort(key=lambda e: (
         _PRIORITY_ORDER.get(e.get("priority", "normal"), 1),
         e.get("submitted_at", 0),
     ))
-    return queued[0]
+    return eligible[0]
 
 
 def _mark_running(queue_id: str) -> None:

@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.18.0] - 2026-03-09
+
+### Added
+- **Plugin/Hook System** — extensible event hooks for task lifecycle
+  - New `hooks.py` module: register, emit, unregister, clear, list hooks
+  - 6 lifecycle events: on_task_start, on_build_complete, on_review_complete, on_task_complete, on_task_failed, on_retry
+  - Programmatic API: `@register_hook("on_task_complete")` decorator
+  - Config-driven: `.ma.yaml` `hooks:` section loads `module.function` pairs
+  - `my hooks` — list all registered hooks per event
+  - Error-resilient: failing hooks don't crash the pipeline
+  - Max 10 hooks per event from config
+- **Task Dependencies** — dependency chains in the task queue
+  - `my submit "task" --after q-xxx` — run after dependency completes
+  - `_next_task()` skips blocked tasks (dependency not yet completed)
+  - Validates dependency exists at submit time
+  - Shows dependency info in `my jobs` output
+- **13 new tests** — hook system (9) + task dependencies (4)
+
 ## [0.17.0] - 2026-03-09
 
 ### Added
