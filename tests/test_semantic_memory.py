@@ -672,3 +672,180 @@ class TestOpenAIEmbeddingsBackend:
         from multi_agent.semantic_memory import _get_memory_config
         cfg = _get_memory_config()
         assert isinstance(cfg, dict)
+
+
+# ══════════════════════════════════════════════════════════
+# Feature I: Batch Mode
+# ══════════════════════════════════════════════════════════
+
+
+class TestBatchMode:
+    """Test batch manifest loading and validation."""
+
+    def test_load_valid_manifest(self, tmp_path):
+        from multi_agent.batch import load_batch_manifest
+        manifest = tmp_path / "tasks.yaml"
+        manifest.write_text(
+            "tasks:\n  - requirement: 'Add login'\n  - requirement: 'Fix bug'\n",
+            encoding="utf-8",
+        )
+        tasks = load_batch_manifest(manifest)
+        assert len(tasks) == 2
+        assert tasks[0]["requirement"] == "Add login"
+
+    def test_missing_tasks_key(self, tmp_path):
+        from multi_agent.batch import BatchValidationError, load_batch_manifest
+        manifest = tmp_path / "bad.yaml"
+        manifest.write_text("foo: bar\n", encoding="utf-8")
+        with pytest.raises(BatchValidationError, match="non-empty list"):
+            load_batch_manifest(manifest)
+
+    def test_empty_tasks_list(self, tmp_path):
+        from multi_agent.batch import BatchValidationError, load_batch_manifest
+        manifest = tmp_path / "empty.yaml"
+        manifest.write_text("tasks: []\n", encoding="utf-8")
+        with pytest.raises(BatchValidationError, match="non-empty list"):
+            load_batch_manifest(manifest)
+
+    def test_task_without_requirement_or_template(self, tmp_path):
+        from multi_agent.batch import BatchValidationError, load_batch_manifest
+        manifest = tmp_path / "noreg.yaml"
+        manifest.write_text("tasks:\n  - skill: code-implement\n", encoding="utf-8")
+        with pytest.raises(BatchValidationError, match="requirement.*template"):
+            load_batch_manifest(manifest)
+
+    def test_too_many_tasks(self, tmp_path):
+        from multi_agent.batch import BatchValidationError, load_batch_manifest
+        lines = "tasks:\n" + "".join(f"  - requirement: 'task {i}'\n" for i in range(51))
+        manifest = tmp_path / "big.yaml"
+        manifest.write_text(lines, encoding="utf-8")
+        with pytest.raises(BatchValidationError, match="Too many"):
+            load_batch_manifest(manifest)
+
+    def test_file_not_found(self, tmp_path):
+        from multi_agent.batch import load_batch_manifest
+        with pytest.raises(FileNotFoundError):
+            load_batch_manifest(tmp_path / "nope.yaml")
+
+    def test_format_batch_summary(self):
+        from multi_agent.batch import format_batch_summary
+        results = [
+            {"requirement": "Add login", "status": "completed", "elapsed": 10.5},
+            {"requirement": "Fix bug", "status": "failed", "error": "timeout", "elapsed": 5.0},
+        ]
+        summary = format_batch_summary(results)
+        assert "1/2" in summary
+        assert "15.5s" in summary
+        assert "Add login" in summary
+
+    def test_template_task_in_manifest(self, tmp_path):
+        from multi_agent.batch import load_batch_manifest
+        manifest = tmp_path / "tmpl.yaml"
+        manifest.write_text("tasks:\n  - template: bugfix\n", encoding="utf-8")
+        tasks = load_batch_manifest(manifest)
+        assert tasks[0]["template"] == "bugfix"
+
+    def test_batch_dry_run(self, tmp_path):
+        from click.testing import CliRunner
+        from multi_agent.cli import main
+        manifest = tmp_path / "tasks.yaml"
+        manifest.write_text(
+            "tasks:\n  - requirement: 'Test task'\n", encoding="utf-8"
+        )
+        runner = CliRunner()
+        result = runner.invoke(main, ["batch", str(manifest), "--dry-run"])
+        assert result.exit_code == 0
+        assert "Dry-run" in result.output
+        assert "1 个任务" in result.output
+
+
+# ══════════════════════════════════════════════════════════
+# Feature K: Memory Export/Import
+# ══════════════════════════════════════════════════════════
+
+
+class TestMemoryExportImport:
+    """Test memory export and import for team sharing."""
+
+    def test_export_roundtrip(self, tmp_path):
+        from multi_agent.semantic_memory import export_entries, import_entries, store, clear
+        store("Always use pytest fixtures", category="convention")
+        store("Use dataclasses for config", category="pattern")
+
+        out_file = str(tmp_path / "export.json")
+        count = export_entries(out_file)
+        assert count == 2
+
+        # Verify file content
+        import json
+        data = json.loads(Path(out_file).read_text())
+        assert data["version"] == 1
+        assert data["count"] == 2
+        assert len(data["entries"]) == 2
+
+    def test_import_deduplicates(self, tmp_path):
+        from multi_agent.semantic_memory import export_entries, import_entries, store
+        store("Use type hints everywhere", category="convention")
+
+        out_file = str(tmp_path / "export.json")
+        export_entries(out_file)
+
+        # Import same data — should skip all
+        result = import_entries(out_file)
+        assert result["imported"] == 0
+        assert result["skipped"] > 0
+
+    def test_import_new_entries(self, tmp_path):
+        from multi_agent.semantic_memory import import_entries
+        import json
+
+        export_data = {
+            "version": 1,
+            "exported_at": 0,
+            "count": 2,
+            "entries": [
+                {"id": "new001", "content": "New convention alpha", "category": "convention",
+                 "source": "import", "task_id": "", "tags": [], "metadata": {}},
+                {"id": "new002", "content": "New pattern beta", "category": "pattern",
+                 "source": "import", "task_id": "", "tags": [], "metadata": {}},
+            ],
+        }
+        in_file = str(tmp_path / "import.json")
+        Path(in_file).write_text(json.dumps(export_data))
+
+        result = import_entries(in_file)
+        assert result["imported"] == 2
+        assert result["skipped"] == 0
+
+    def test_import_invalid_format(self, tmp_path):
+        from multi_agent.semantic_memory import import_entries
+        bad_file = str(tmp_path / "bad.json")
+        Path(bad_file).write_text('{"foo": "bar"}')
+        result = import_entries(bad_file)
+        assert result["imported"] == 0
+        assert "missing 'entries'" in result.get("error", "")
+
+    def test_import_file_not_found(self):
+        from multi_agent.semantic_memory import import_entries
+        result = import_entries("/nonexistent/path.json")
+        assert result["imported"] == 0
+        assert "not found" in result.get("error", "")
+
+    def test_import_caps_content_length(self, tmp_path):
+        from multi_agent.semantic_memory import import_entries, _load_entries
+        import json
+
+        long_content = "x" * 5000
+        export_data = {
+            "version": 1, "exported_at": 0, "count": 1,
+            "entries": [{"id": "long01", "content": long_content, "category": "general",
+                         "source": "", "task_id": "", "tags": [], "metadata": {}}],
+        }
+        in_file = str(tmp_path / "long.json")
+        Path(in_file).write_text(json.dumps(export_data))
+
+        result = import_entries(in_file)
+        assert result["imported"] == 1
+        entries = _load_entries()
+        imported = [e for e in entries if e["id"] == "long01"]
+        assert len(imported[0]["content"]) <= 2000

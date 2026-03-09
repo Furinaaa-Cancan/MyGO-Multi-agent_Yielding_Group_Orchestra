@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.14.0] - 2026-03-09
+
+### Added
+- **Batch Mode** — run multiple tasks from a YAML manifest
+  - New `batch.py` module: manifest loading, validation, summary formatting
+  - `my batch tasks.yaml` — sequential task execution from manifest
+  - `my batch tasks.yaml --dry-run` — validate without executing
+  - `--builder` / `--reviewer` overrides for all tasks
+  - Supports `requirement` and `template` per task, max 50 tasks per batch
+  - Safety: file size cap (256KB), requirement length cap (2000 chars)
+- **Memory Export/Import** — share team knowledge across projects
+  - `my memory export [file.json]` — export all entries with metadata
+  - `my memory import file.json` — import with dedup by content hash
+  - Versioned export format (`version: 1`) for forward compatibility
+  - Import validation: file size cap (10MB), content length cap, category normalization
+- **15 new tests** — batch mode (9) + memory export/import (6)
+
 ## [0.13.0] - 2026-03-09
 
 ### Added

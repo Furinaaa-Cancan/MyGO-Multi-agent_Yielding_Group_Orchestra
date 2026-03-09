@@ -810,3 +810,118 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
             cat_filter = category if category != "general" else None
             result = mem_clear(category=cat_filter)
             click.echo(f"  🗑️  Cleared {result.get('removed', 0)} entries")
+
+        elif action == "export":
+            from multi_agent.semantic_memory import export_entries
+            out_path = text or "memory_export.json"
+            count = export_entries(out_path)
+            click.echo(f"  📤 Exported {count} entries → {out_path}")
+
+        elif action == "import":
+            if not text:
+                click.echo("Usage: my memory import <file.json>", err=True)
+                return
+            from multi_agent.semantic_memory import import_entries
+            result = import_entries(text)
+            click.echo(f"  📥 Imported {result['imported']} entries ({result['skipped']} duplicates)")
+
+    # ── batch ──────────────────────────────────────────
+
+    @main.command("batch")
+    @click.argument("manifest", type=click.Path(exists=True))
+    @click.option("--dry-run", is_flag=True, default=False, help="Validate manifest without executing")
+    @click.option("--builder", default="", help="Override builder for all tasks")
+    @click.option("--reviewer", default="", help="Override reviewer for all tasks")
+    @handle_errors
+    def batch_cmd(manifest: str, dry_run: bool, builder: str, reviewer: str) -> None:
+        """从 YAML 文件批量运行任务.
+
+        Manifest 格式:
+          tasks:
+            - requirement: "Add login endpoint"
+              skill: code-implement
+            - requirement: "Write tests"
+              template: test
+        """
+        import time as _time
+
+        from multi_agent.batch import (
+            BatchValidationError,
+            format_batch_summary,
+            load_batch_manifest,
+        )
+
+        from pathlib import Path
+        path = Path(manifest)
+        try:
+            tasks = load_batch_manifest(path)
+        except (BatchValidationError, FileNotFoundError) as e:
+            click.echo(f"❌ {e}", err=True)
+            sys.exit(1)
+
+        click.echo(f"📋 Batch: {len(tasks)} 个任务")
+        for i, t in enumerate(tasks):
+            req = t.get("requirement", t.get("template", "?"))[:60]
+            click.echo(f"   {i+1}. {req}")
+        click.echo()
+
+        if dry_run:
+            click.echo("✅ Dry-run 验证通过，未执行任何任务。")
+            return
+
+        from multi_agent.config import load_project_config
+        from multi_agent.graph import compile_graph
+
+        results: list[dict[str, Any]] = []
+
+        for i, task_def in enumerate(tasks):
+            req = task_def.get("requirement", "")
+            tmpl_id = task_def.get("template")
+            skill = task_def.get("skill", "code-implement")
+            task_builder = builder or task_def.get("builder", "")
+            task_reviewer = reviewer or task_def.get("reviewer", "")
+            retry_budget = task_def.get("retry_budget", 2)
+            timeout = task_def.get("timeout", 1800)
+
+            click.echo(f"\n{'─'*40}")
+            click.echo(f"🚀 [{i+1}/{len(tasks)}] {req or tmpl_id}")
+
+            t0 = _time.time()
+            try:
+                # Resolve template if specified
+                if tmpl_id:
+                    from multi_agent.task_templates import load_template, resolve_variables
+                    tmpl = load_template(tmpl_id)
+                    tmpl = resolve_variables(tmpl)
+                    req = req or tmpl.requirement
+                    if skill == "code-implement" and tmpl.skill:
+                        skill = tmpl.skill
+
+                if not req:
+                    results.append({"requirement": tmpl_id, "status": "skipped",
+                                    "error": "No requirement", "elapsed": 0})
+                    continue
+
+                from multi_agent.cli import _generate_task_id, _run_single_task
+                from multi_agent.session import _resolve_review_policy
+
+                app = compile_graph()
+                task_id = _generate_task_id(req)
+                review_policy = _resolve_review_policy("strict", "config/workmode.yaml")
+
+                _run_single_task(app, task_id, req, skill, task_builder, task_reviewer,
+                                 retry_budget, timeout, False, "strict", review_policy)
+
+                elapsed = _time.time() - t0
+                results.append({"requirement": req, "status": "completed",
+                                "task_id": task_id, "elapsed": elapsed})
+                click.echo(f"   ✅ 完成 ({elapsed:.1f}s)")
+
+            except Exception as e:
+                elapsed = _time.time() - t0
+                results.append({"requirement": req or str(tmpl_id), "status": "failed",
+                                "error": str(e)[:200], "elapsed": elapsed})
+                click.echo(f"   ❌ 失败: {e}")
+                continue
+
+        click.echo(f"\n{format_batch_summary(results)}")

@@ -554,6 +554,101 @@ def _rewrite_entries(entries: list[dict[str, Any]]) -> None:
         _log.warning("Failed to rewrite memory: %s", e)
 
 
+# ── Export / Import ───────────────────────────────────────
+
+
+_MAX_IMPORT_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
+def export_entries(out_path: str) -> int:
+    """Export all memory entries to a JSON file for sharing.
+
+    Args:
+        out_path: Output file path (JSON format).
+
+    Returns:
+        Number of entries exported.
+    """
+    entries = _load_entries()
+    export_data = {
+        "version": 1,
+        "exported_at": time.time(),
+        "count": len(entries),
+        "entries": entries,
+    }
+    Path(out_path).write_text(
+        json.dumps(export_data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return len(entries)
+
+
+def import_entries(in_path: str) -> dict[str, Any]:
+    """Import memory entries from a JSON file.
+
+    Deduplicates by content hash — existing entries are skipped.
+
+    Args:
+        in_path: Input file path (JSON format, from export_entries).
+
+    Returns:
+        Dict with 'imported' and 'skipped' counts.
+    """
+    path = Path(in_path)
+    if not path.exists():
+        return {"imported": 0, "skipped": 0, "error": "file not found"}
+
+    try:
+        fsize = path.stat().st_size
+    except OSError:
+        return {"imported": 0, "skipped": 0, "error": "cannot stat file"}
+
+    if fsize > _MAX_IMPORT_FILE_SIZE:
+        return {"imported": 0, "skipped": 0, "error": f"file too large ({fsize} bytes)"}
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        return {"imported": 0, "skipped": 0, "error": str(e)}
+
+    if not isinstance(data, dict) or "entries" not in data:
+        return {"imported": 0, "skipped": 0, "error": "invalid format (missing 'entries')"}
+
+    entries_to_import = data["entries"]
+    if not isinstance(entries_to_import, list):
+        return {"imported": 0, "skipped": 0, "error": "entries must be a list"}
+
+    existing = _load_entries()
+    existing_ids = {e.get("id") for e in existing}
+
+    imported = 0
+    skipped = 0
+    for entry in entries_to_import:
+        if not isinstance(entry, dict) or not entry.get("content"):
+            skipped += 1
+            continue
+        eid = entry.get("id") or _content_hash(entry["content"])
+        if eid in existing_ids:
+            skipped += 1
+            continue
+        # Validate category
+        if entry.get("category") not in CATEGORIES:
+            entry["category"] = "general"
+        # Cap content
+        entry["content"] = str(entry["content"])[:_MAX_CONTENT_LENGTH]
+        entry["id"] = eid
+        existing.append(entry)
+        existing_ids.add(eid)
+        imported += 1
+
+        if len(existing) >= _MAX_ENTRIES:
+            break
+
+    if imported > 0:
+        _rewrite_entries(existing)
+
+    return {"imported": imported, "skipped": skipped}
+
+
 # ── Auto-capture helpers ─────────────────────────────────
 
 def capture_from_review(
