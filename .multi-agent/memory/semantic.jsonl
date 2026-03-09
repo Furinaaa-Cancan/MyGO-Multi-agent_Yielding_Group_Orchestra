@@ -1,0 +1,5 @@
+{"id": "1852befca8a768b2", "ts": 1773064260.664486, "content": "Use JWT tokens for API authentication", "category": "architecture", "source": "", "task_id": "", "tags": ["auth", "jwt"], "metadata": {}}
+{"id": "645a6fe5e7040b0a", "ts": 1773064260.667559, "content": "Always run ruff before committing Python code", "category": "convention", "source": "", "task_id": "", "tags": ["python", "lint"], "metadata": {}}
+{"id": "73c3aebf2b7c8ed4", "ts": 1773064260.668076, "content": "Database migrations should be reversible", "category": "architecture", "source": "", "task_id": "", "tags": ["database"], "metadata": {}}
+{"id": "2d8b677c341a33e4", "ts": 1773064260.668635, "content": "Avoid N+1 queries in ORM usage", "category": "pattern", "source": "", "task_id": "", "tags": ["database", "performance"], "metadata": {}}
+{"id": "a20c0980d792e3f1", "ts": 1773064260.669329, "content": "Use pytest fixtures for test setup", "category": "convention", "source": "", "task_id": "", "tags": ["python", "testing"], "metadata": {}}

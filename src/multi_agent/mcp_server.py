@@ -6,6 +6,8 @@ Allows any MCP client (Claude Desktop, Cursor, Windsurf, etc.) to:
 - View task details and trace events
 - Read dashboard content
 - Cancel active tasks
+- Submit reviews (approve/reject/request_changes)
+- Store and search semantic memory
 - Query project configuration
 
 Usage:
@@ -18,8 +20,10 @@ Usage:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
+import time
 from typing import Any
 
 import yaml
@@ -191,6 +195,112 @@ def task_cancel() -> dict[str, str]:
         return {"status": "cancelled", "task_id": active, "message": f"Task {active} cancelled."}
     except Exception:
         return {"status": "error", "message": "Failed to cancel task."}
+
+
+@mcp.tool()
+def submit_review(decision: str, feedback: str = "", summary: str = "") -> dict[str, Any]:
+    """Submit a review decision for the active task (approve/reject/request_changes).
+
+    Writes reviewer.json to outbox — the watcher picks it up to resume the graph.
+
+    Args:
+        decision: Must be 'approve', 'reject', or 'request_changes'
+        feedback: Review feedback text (required for reject)
+        summary: Optional summary of the review
+    """
+    if decision not in ("approve", "reject", "request_changes"):
+        return {"error": "decision must be 'approve', 'reject', or 'request_changes'"}
+
+    active = read_lock()
+    if not active:
+        return {"error": "No active task to review."}
+
+    feedback = (feedback or "")[:2000]
+    if not feedback:
+        feedback = "Approved via MCP" if decision == "approve" else "Rejected via MCP"
+    summary = (summary or "")[:500] or f"Review {decision} via MCP"
+
+    ws = workspace_dir()
+    outbox = ws / "outbox"
+    outbox.mkdir(parents=True, exist_ok=True)
+    reviewer_output = {
+        "decision": decision, "feedback": feedback, "summary": summary,
+        "source": "mcp", "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    out_file = outbox / "reviewer.json"
+    try:
+        out_file.write_text(json.dumps(reviewer_output, indent=2), encoding="utf-8")
+        return {"ok": True, "decision": decision, "task_id": active}
+    except OSError as e:
+        return {"error": f"Failed to write reviewer output: {e}"}
+
+
+@mcp.tool()
+def memory_search(query: str, top_k: int = 5) -> dict[str, Any]:
+    """Search semantic memory for relevant project knowledge.
+
+    Args:
+        query: Natural language search query
+        top_k: Maximum number of results (default 5)
+    """
+    if not query.strip():
+        return {"results": [], "error": "Empty query"}
+    top_k = max(1, min(top_k, 20))
+    try:
+        from multi_agent.semantic_memory import search
+        results = search(query, top_k=top_k)
+        return {"results": results, "count": len(results)}
+    except Exception as e:
+        return {"results": [], "error": str(e)}
+
+
+@mcp.tool()
+def memory_store(content: str, category: str = "general", tags: str = "") -> dict[str, Any]:
+    """Store a new entry in semantic memory.
+
+    Args:
+        content: The knowledge to store (e.g. 'Always use type hints for function params')
+        category: One of: architecture, convention, pattern, bugfix, preference, context, general
+        tags: Comma-separated tags (e.g. 'python,typing')
+    """
+    if not content.strip():
+        return {"error": "Empty content"}
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+    try:
+        from multi_agent.semantic_memory import store
+        result = store(content, category=category, tags=tag_list, source="mcp")
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+def memory_list(category: str = "", limit: int = 20) -> dict[str, Any]:
+    """List semantic memory entries with optional category filter.
+
+    Args:
+        category: Filter by category (empty for all)
+        limit: Maximum entries to return (default 20)
+    """
+    limit = max(1, min(limit, 100))
+    try:
+        from multi_agent.semantic_memory import list_entries, stats
+        cat = category if category else None
+        entries = list_entries(category=cat, limit=limit)
+        s = stats()
+        return {"entries": entries, "count": len(entries), "stats": s}
+    except Exception as e:
+        return {"entries": [], "error": str(e)}
+
+
+@mcp.tool()
+def finops_summary() -> dict[str, Any]:
+    """Get FinOps token usage and cost summary."""
+    try:
+        from multi_agent.finops import aggregate_usage
+        return aggregate_usage()
+    except Exception as e:
+        return {"error": str(e), "total_tokens": 0, "total_cost": 0}
 
 
 @mcp.tool()

@@ -393,3 +393,100 @@ class TestMemoryCLI:
         result = runner.invoke(main, ["memory", "search", "JWT auth"])
         assert result.exit_code == 0
         assert "JWT" in result.output
+
+
+# ══════════════════════════════════════════════════════════
+# Feature E: Smart Retry with Memory Injection
+# ══════════════════════════════════════════════════════════
+
+
+class TestSmartRetry:
+    """Test that retry prompts get memory context injected."""
+
+    def test_get_context_returns_relevant_memory(self):
+        from multi_agent.semantic_memory import get_context, store
+        store("Always validate input before database queries", category="convention", tags=["security"])
+        store("Use parameterized queries to prevent SQL injection", category="bugfix", tags=["security", "sql"])
+        ctx = get_context("input validation SQL injection")
+        assert "Relevant Project Memory" in ctx
+        assert "validate" in ctx.lower() or "sql" in ctx.lower()
+
+    def test_get_context_respects_max_chars(self):
+        from multi_agent.semantic_memory import get_context, store
+        store("A" * 500, category="general")
+        store("B" * 500, category="general")
+        ctx = get_context("test", max_chars=100)
+        assert len(ctx) < 200  # header + truncated content
+
+    def test_memory_injection_does_not_crash_on_empty(self):
+        """Smart retry should not crash when no memory exists."""
+        from multi_agent.semantic_memory import get_context
+        ctx = get_context("nonexistent topic with no matches")
+        assert ctx == ""
+
+
+# ══════════════════════════════════════════════════════════
+# Feature B: MCP Server Write Tools
+# ══════════════════════════════════════════════════════════
+
+
+_has_fastmcp = True
+try:
+    import fastmcp  # noqa: F401
+except ImportError:
+    _has_fastmcp = False
+
+
+@pytest.mark.skipif(not _has_fastmcp, reason="fastmcp not installed")
+class TestMCPWriteTools:
+    """Test new MCP server write tools."""
+
+    def test_mcp_has_submit_review_tool(self):
+        from multi_agent.mcp_server import mcp
+        tool_names = [t.name for t in mcp._tool_manager.list_tools()]
+        assert "submit_review" in tool_names
+
+    def test_mcp_has_memory_tools(self):
+        from multi_agent.mcp_server import mcp
+        tool_names = [t.name for t in mcp._tool_manager.list_tools()]
+        assert "memory_search" in tool_names
+        assert "memory_store" in tool_names
+        assert "memory_list" in tool_names
+
+    def test_mcp_has_finops_tool(self):
+        from multi_agent.mcp_server import mcp
+        tool_names = [t.name for t in mcp._tool_manager.list_tools()]
+        assert "finops_summary" in tool_names
+
+    def test_memory_store_via_mcp(self):
+        from multi_agent.mcp_server import memory_store
+        result = memory_store("Test MCP memory entry", category="convention", tags="mcp,test")
+        assert result["status"] == "stored"
+
+    def test_memory_search_via_mcp(self):
+        from multi_agent.mcp_server import memory_search, memory_store
+        memory_store("Use black formatter for Python", tags="python,formatting")
+        result = memory_search("python formatting")
+        assert result["count"] > 0
+
+    def test_memory_list_via_mcp(self):
+        from multi_agent.mcp_server import memory_list, memory_store
+        memory_store("Test entry for list", category="architecture")
+        result = memory_list()
+        assert result["count"] > 0
+        assert "stats" in result
+
+    def test_memory_store_empty_rejected(self):
+        from multi_agent.mcp_server import memory_store
+        result = memory_store("")
+        assert "error" in result
+
+    def test_submit_review_invalid_decision(self):
+        from multi_agent.mcp_server import submit_review
+        result = submit_review("invalid_decision")
+        assert "error" in result
+
+    def test_submit_review_no_active_task(self):
+        from multi_agent.mcp_server import submit_review
+        result = submit_review("approve")
+        assert "error" in result  # no active task

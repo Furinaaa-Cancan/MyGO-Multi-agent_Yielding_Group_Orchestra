@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.11.0] - 2026-03-09
+
+### Added
+- **Smart Retry with Memory** — retry prompts now inject relevant semantic memory context
+  - `graph.py` `plan_node`: on `retry_count > 0`, queries `semantic_memory.get_context()` with requirement + feedback
+  - Injects up to 1500 chars of past decisions, conventions, and bugfix patterns into builder prompt
+  - Wrapped in `contextlib.suppress(Exception)` — never blocks the retry pipeline
+- **MCP Server Write Tools** — full bidirectional control from any MCP client
+  - `submit_review(decision, feedback, summary)` — approve/reject/request_changes via outbox
+  - `memory_search(query, top_k)` — search semantic memory from IDE
+  - `memory_store(content, category, tags)` — store knowledge entries
+  - `memory_list(category, limit)` — list entries with stats
+  - `finops_summary()` — aggregated token usage and cost
+  - All tools have input validation and length caps
+- **12 new tests** — smart retry memory injection + MCP write tools (9 skip when fastmcp unavailable)
+
 ## [0.10.0] - 2026-03-09
 
 ### Added

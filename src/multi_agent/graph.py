@@ -302,6 +302,16 @@ def plan_node(state: WorkflowState) -> dict[str, Any]:
         previous_summary=previous_summary,
     )
 
+    # Smart Retry: inject relevant semantic memory on retries
+    if retry_count > 0:
+        with contextlib.suppress(Exception):
+            from multi_agent.semantic_memory import get_context
+            query = f"{state.get('requirement', '')} {retry_feedback}"
+            mem_ctx = get_context(query, top_k=3, max_chars=1500)
+            if mem_ctx:
+                prompt += f"\n\n{mem_ctx}"
+                _log.info("Smart retry: injected %d chars of memory context", len(mem_ctx))
+
     # Write to ROLE-based inbox (builder.md, not windsurf.md)
     clear_outbox("builder")
     write_inbox("builder", prompt)
