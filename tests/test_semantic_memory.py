@@ -490,3 +490,100 @@ class TestMCPWriteTools:
         from multi_agent.mcp_server import submit_review
         result = submit_review("approve")
         assert "error" in result  # no active task
+
+
+# ══════════════════════════════════════════════════════════
+# Feature C: Webhook Notification Formatters
+# ══════════════════════════════════════════════════════════
+
+
+class TestWebhookFormatters:
+    """Test Slack/Discord/Generic webhook payload formatters."""
+
+    def test_detect_slack_url(self):
+        from multi_agent.notify import _detect_webhook_format
+        assert _detect_webhook_format("https://hooks.slack.com/services/T00/B00/xxx") == "slack"
+
+    def test_detect_discord_url(self):
+        from multi_agent.notify import _detect_webhook_format
+        assert _detect_webhook_format("https://discord.com/api/webhooks/123/abc") == "discord"
+
+    def test_detect_generic_url(self):
+        from multi_agent.notify import _detect_webhook_format
+        assert _detect_webhook_format("https://example.com/webhook") == "generic"
+
+    def test_slack_payload_structure(self):
+        from multi_agent.notify import _format_slack_payload
+        p = _format_slack_payload("task_complete", "task-abc", "approved", "All good", 1)
+        assert "attachments" in p
+        assert len(p["attachments"]) == 1
+        att = p["attachments"][0]
+        assert att["color"] == "#36a64f"
+        assert any(f["title"] == "Retries" for f in att["fields"])
+
+    def test_discord_payload_structure(self):
+        from multi_agent.notify import _format_discord_payload
+        p = _format_discord_payload("task_complete", "task-abc", "failed", "Bug found", 0)
+        assert "embeds" in p
+        assert len(p["embeds"]) == 1
+        embed = p["embeds"][0]
+        assert embed["color"] == 0xDC3545
+        assert not any(f["name"] == "Retries" for f in embed["fields"])
+
+    def test_format_auto_selects_slack(self):
+        from multi_agent.notify import _format_webhook_payload
+        p = _format_webhook_payload("auto", "https://hooks.slack.com/x", "task_complete", "t", "approved", "", 0)
+        assert "attachments" in p
+
+    def test_format_generic_payload(self):
+        from multi_agent.notify import _format_webhook_payload
+        p = _format_webhook_payload("generic", "https://example.com", "task_complete", "t", "done", "ok", 0)
+        assert p == {"event": "task_complete", "task_id": "t", "status": "done", "summary": "ok", "retries": 0}
+
+    def test_notify_config_webhook_fields(self):
+        from multi_agent.notify import NotifyConfig
+        cfg = NotifyConfig(webhook_format="discord", webhook_retries=3)
+        assert cfg.webhook_format == "discord"
+        assert cfg.webhook_retries == 3
+
+    def test_decompose_notification(self):
+        from multi_agent.notify import NotifyConfig, notify_decompose_complete
+        cfg = NotifyConfig(enabled=True, macos=False, webhook_url="")
+        # Should not raise even with no webhook/macOS
+        notify_decompose_complete("task-parent", 5, 4, ["sub-3"], 120.0, config=cfg)
+
+
+# ══════════════════════════════════════════════════════════
+# Feature F: Enhanced Doctor Command
+# ══════════════════════════════════════════════════════════
+
+
+class TestDoctorCommand:
+    """Test enhanced my doctor command."""
+
+    def test_doctor_runs_without_error(self):
+        from click.testing import CliRunner
+        from multi_agent.cli import main
+        runner = CliRunner()
+        result = runner.invoke(main, ["doctor"])
+        assert result.exit_code == 0
+        assert "Workspace" in result.output
+        assert "结果:" in result.output
+
+    def test_doctor_checks_all_sections(self):
+        from click.testing import CliRunner
+        from multi_agent.cli import main
+        runner = CliRunner()
+        result = runner.invoke(main, ["doctor"])
+        assert "[1/5]" in result.output
+        assert "[2/5]" in result.output
+        assert "[3/5]" in result.output
+        assert "[4/5]" in result.output
+        assert "[5/5]" in result.output
+
+    def test_doctor_fix_flag(self):
+        from click.testing import CliRunner
+        from multi_agent.cli import main
+        runner = CliRunner()
+        result = runner.invoke(main, ["doctor", "--fix"])
+        assert result.exit_code == 0

@@ -307,7 +307,24 @@ def cosine_sim(a, b):
 
 ---
 
-## 九、Auth 系统设计检查清单
+## 九、Webhook 通知配置
+
+```yaml
+# .ma.yaml
+notify:
+  enabled: true
+  webhook_url: "https://hooks.slack.com/services/T00/B00/xxx"
+  webhook_format: auto    # auto | slack | discord | generic
+  webhook_retries: 2      # 0-5, exponential backoff (1s→2s→4s→8s)
+```
+
+- `auto` 自动从 URL 检测格式（`hooks.slack.com` → Slack，`discord.com/api/webhooks` → Discord）
+- Slack：带颜色标记的 attachment + Task/Status/Retries fields
+- Discord：embed + color + fields + description
+- Generic：原始 JSON `{event, task_id, status, summary, retries}`
+- Decompose 完成时发送摘要通知（总/完成/失败子任务数 + 耗时）
+
+## 十、Auth 系统设计检查清单
 
 1. ✅ login 端点必须在 auth 白名单中（否则用户无法登录）
 2. ✅ auth check 端点必须公开（前端需要知道是否需要认证）

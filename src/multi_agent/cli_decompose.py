@@ -524,6 +524,14 @@ def _finalize_decompose(
     release_lock_fn()
     clear_runtime_fn()
 
+    # Send decompose digest notification
+    with contextlib.suppress(Exception):
+        from multi_agent.notify import notify_decompose_complete
+        notify_decompose_complete(
+            parent_task_id, agg["total_sub_tasks"], agg["completed"],
+            agg.get("failed", []), duration_sec=total_elapsed,
+        )
+
 
 def _retry_sub_task(
     app: Any, st: Any, parent_task_id: str,

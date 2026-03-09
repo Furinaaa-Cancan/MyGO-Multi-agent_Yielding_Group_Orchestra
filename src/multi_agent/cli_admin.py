@@ -246,21 +246,154 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
     @handle_errors
     @click.option("--fix", is_flag=True, default=False, help="Attempt to auto-fix common state inconsistencies")
     def doctor(fix: bool) -> None:
-        """检查 workspace 健康状态."""
+        """检查 workspace 健康状态 + 配置验证 + agent 可用性."""
+        import contextlib
+
         from multi_agent.workspace import check_workspace_health, get_workspace_stats
+
+        total_checks = 0
+        total_ok = 0
+        all_issues: list[str] = []
+
+        # ── 1. Workspace Health ──
+        click.echo("🔍 [1/5] Workspace 检查…")
         issues = check_workspace_health()
         stats = get_workspace_stats()
-
-        click.echo(f"📊 Workspace: {stats['file_count']} 文件, {stats['total_size_mb']} MB")
+        click.echo(f"   📊 {stats['file_count']} 文件, {stats['total_size_mb']} MB")
         if stats["largest_file"]:
             click.echo(f"   最大文件: {stats['largest_file']}")
-
+        total_checks += 1
         if not issues:
-            click.echo("✅ 健康状态: 正常")
+            click.echo("   ✅ Workspace 正常")
+            total_ok += 1
         else:
-            click.echo(f"⚠️  发现 {len(issues)} 个问题:")
-            for issue in issues:
-                click.echo(f"   - {issue}")
+            click.echo(f"   ⚠️  {len(issues)} 个问题")
+            all_issues.extend(issues)
+
+        # ── 2. Config Validation ──
+        click.echo("🔍 [2/5] 配置文件验证…")
+        total_checks += 1
+        config_ok = True
+        try:
+            from multi_agent.config import load_project_config, VALID_CONFIG_KEYS
+            proj = load_project_config()
+            if not proj:
+                click.echo("   ⚠️  未找到 .ma.yaml 配置文件")
+                config_ok = False
+            else:
+                unknown_keys = set(proj.keys()) - set(VALID_CONFIG_KEYS)
+                if unknown_keys:
+                    click.echo(f"   ⚠️  未知配置键: {', '.join(sorted(unknown_keys))}")
+                    all_issues.append(f"Unknown config keys: {', '.join(sorted(unknown_keys))}")
+                    config_ok = False
+                # Validate skill contracts
+                skill_count = 0
+                skill_errors = 0
+                with contextlib.suppress(Exception):
+                    from multi_agent.config import root_dir
+                    skills_dir = root_dir() / "skills"
+                    if skills_dir.exists():
+                        for sd in skills_dir.iterdir():
+                            if sd.is_dir() and (sd / "contract.yaml").exists():
+                                skill_count += 1
+                                try:
+                                    from multi_agent.contract import load_contract
+                                    load_contract(sd.name)
+                                except Exception as e:
+                                    skill_errors += 1
+                                    all_issues.append(f"Skill '{sd.name}' contract error: {e}")
+                    click.echo(f"   📋 {skill_count} skills, {skill_errors} errors")
+                if config_ok and skill_errors == 0:
+                    click.echo("   ✅ 配置正常")
+                    total_ok += 1
+        except Exception as e:
+            click.echo(f"   ❌ 配置加载失败: {e}")
+            all_issues.append(f"Config load failed: {e}")
+
+        # ── 3. Agent Availability ──
+        click.echo("🔍 [3/5] Agent 可用性…")
+        total_checks += 1
+        agents_ok = True
+        try:
+            from multi_agent.router import load_agents
+            agents = load_agents()
+            if not agents:
+                click.echo("   ⚠️  未配置任何 agent")
+                all_issues.append("No agents configured")
+                agents_ok = False
+            else:
+                for ag in agents:
+                    driver_str = getattr(ag, "driver", "file")
+                    avail = "✅"
+                    if driver_str == "cli":
+                        cmd = getattr(ag, "command", None)
+                        if cmd:
+                            import shutil
+                            prog = cmd.split()[0] if isinstance(cmd, str) else cmd[0]
+                            if not shutil.which(prog):
+                                avail = "⚠️  CLI 不可用"
+                                all_issues.append(f"Agent '{ag.id}' CLI not found: {prog}")
+                                agents_ok = False
+                    click.echo(f"   {avail} {ag.id} (driver={driver_str})")
+            if agents_ok:
+                total_ok += 1
+        except Exception as e:
+            click.echo(f"   ❌ Agent 加载失败: {e}")
+            all_issues.append(f"Agent load failed: {e}")
+
+        # ── 4. Memory Integrity ──
+        click.echo("🔍 [4/5] 语义记忆完整性…")
+        total_checks += 1
+        try:
+            from multi_agent.semantic_memory import stats as mem_stats
+            ms = mem_stats()
+            total_mem = ms.get("total_entries", 0)
+            click.echo(f"   📝 {total_mem} entries, {ms.get('by_category', {})}")
+            if ms.get("file_exists") and total_mem == 0:
+                click.echo("   ⚠️  记忆文件存在但为空")
+                all_issues.append("Memory file exists but is empty")
+            else:
+                click.echo("   ✅ 记忆正常")
+                total_ok += 1
+        except Exception as e:
+            click.echo(f"   ❌ 记忆检查失败: {e}")
+            all_issues.append(f"Memory check failed: {e}")
+
+        # ── 5. Webhook Connectivity ──
+        click.echo("🔍 [5/5] Webhook 连通性…")
+        total_checks += 1
+        try:
+            from multi_agent.notify import load_notify_config
+            ncfg = load_notify_config()
+            if not ncfg.webhook_url:
+                click.echo("   ⏭️  未配置 webhook (跳过)")
+                total_ok += 1
+            else:
+                click.echo(f"   🔗 {ncfg.webhook_url[:60]}…")
+                click.echo(f"   格式: {ncfg.webhook_format}, 重试: {ncfg.webhook_retries}")
+                # Validate URL
+                from urllib.parse import urlparse
+                parsed = urlparse(ncfg.webhook_url)
+                if parsed.scheme not in ("http", "https"):
+                    click.echo("   ❌ URL scheme 必须是 http 或 https")
+                    all_issues.append(f"Webhook URL invalid scheme: {parsed.scheme}")
+                else:
+                    click.echo("   ✅ Webhook 配置正常 (连通性需 --fix 测试)")
+                    total_ok += 1
+        except Exception as e:
+            click.echo(f"   ❌ Webhook 检查失败: {e}")
+            all_issues.append(f"Webhook check failed: {e}")
+
+        # ── Summary ──
+        click.echo(f"\n{'='*40}")
+        click.echo(f"  结果: {total_ok}/{total_checks} 通过")
+        if all_issues:
+            click.echo(f"  ⚠️  {len(all_issues)} 个问题:")
+            for issue in all_issues:
+                click.echo(f"     - {issue}")
+        else:
+            click.echo("  ✅ 全部正常!")
+        click.echo()
 
         if fix:
             from multi_agent.cli import _auto_fix_runtime_consistency

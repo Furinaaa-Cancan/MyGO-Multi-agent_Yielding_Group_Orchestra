@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.12.0] - 2026-03-09
+
+### Added
+- **Webhook Notification Enhancement** — Slack/Discord native formatting + retry logic
+  - `notify.py`: auto-detect webhook format from URL (Slack/Discord/Generic)
+  - `_format_slack_payload()`: Slack attachment with color-coded status, fields, fallback text
+  - `_format_discord_payload()`: Discord embed with color, fields, description
+  - Exponential backoff retry (1s→2s→4s→8s) for failed webhook deliveries
+  - Config: `webhook_format: auto|slack|discord|generic`, `webhook_retries: 0-5`
+  - `notify_decompose_complete()`: digest notification for decompose task completion
+  - Wired into `cli_decompose.py` `_finalize_decompose()`
+- **Enhanced `my doctor` Command** — 5-check comprehensive system validation
+  - [1/5] Workspace health (files, sizes, orphan locks)
+  - [2/5] Config validation (.ma.yaml keys + skill contract parsing)
+  - [3/5] Agent availability (CLI binary existence via `shutil.which`)
+  - [4/5] Semantic memory integrity (entry count, empty file detection)
+  - [5/5] Webhook connectivity (URL scheme validation, format/retry config)
+  - Summary with pass/fail count and actionable issue list
+- **12 new tests** — webhook formatters (9) + doctor command (3)
+
 ## [0.11.0] - 2026-03-09
 
 ### Added
