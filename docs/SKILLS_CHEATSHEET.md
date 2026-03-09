@@ -214,3 +214,105 @@ import shlex
 cmd_list = shlex.split(cmd_str)  # 不用 shell=True
 subprocess.Popen(cmd_list, shell=False)
 ```
+
+---
+
+## 六、Express.js / Node.js 后端模式
+
+### 中间件挂载路径 — req.path 会被剥离前缀
+```javascript
+// app.use("/api", middleware) 挂载后，req.path 是相对路径
+// ❌ req.path === "/api/auth/check"  — 永远不匹配
+// ✅ req.path === "/auth/check"      — 正确
+app.use("/api", (req, res, next) => {
+  if (req.path === "/auth/check") return next();  // 白名单
+  // ... auth 检查
+});
+```
+
+### Timing-safe token 比较
+```javascript
+const crypto = require("crypto");
+function safeEqual(a, b) {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
+```
+
+### parseInt 始终指定基数
+```javascript
+parseInt(value, 10);  // ✅ 明确十进制
+parseInt(value);      // ❌ "08" 在旧引擎会被解析为八进制
+```
+
+---
+
+## 七、Windows 跨平台模式
+
+### .bat 文件安全 — 清理 shell 元字符
+```python
+import re
+safe_label = re.sub(r'[&|<>^()!%"]', "", label)[:60] or "Fallback"
+# 用在 title / start 命令中
+```
+
+### cmd.exe start 命令语法
+```batch
+:: start 第一个带引号的参数被视为窗口标题
+start "Window Title" myapp.bat
+:: 不加引号的标题含空格会出错
+```
+
+### fcntl 跨平台降级
+```python
+try:
+    import fcntl as _fcntl
+except ImportError:
+    _fcntl = None
+fcntl = _fcntl
+
+# 使用时检查
+if fcntl is not None:
+    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+```
+
+---
+
+## 八、TF-IDF 语义检索（零依赖）
+
+### 轻量级文本搜索（无需向量数据库）
+```python
+import math, re
+from collections import Counter
+
+def tokenize(text):
+    return [t for t in re.findall(r"[a-zA-Z0-9_\u4e00-\u9fff]+", text.lower()) if len(t) > 1]
+
+def build_idf(docs):
+    n = len(docs)
+    df = Counter()
+    for doc in docs: df.update(set(doc))
+    return {t: math.log((n+1)/(f+1))+1 for t, f in df.items()}
+
+def cosine_sim(a, b):
+    keys = set(a) & set(b)
+    if not keys: return 0.0
+    dot = sum(a[k]*b[k] for k in keys)
+    na = math.sqrt(sum(v*v for v in a.values()))
+    nb = math.sqrt(sum(v*v for v in b.values()))
+    return dot/(na*nb) if na and nb else 0.0
+```
+**适用**: 500-5000 条内存条目，响应 <50ms，无需安装任何依赖。
+
+---
+
+## 九、Auth 系统设计检查清单
+
+1. ✅ login 端点必须在 auth 白名单中（否则用户无法登录）
+2. ✅ auth check 端点必须公开（前端需要知道是否需要认证）
+3. ✅ SSE EventSource 不能设 header → 用 query param 传 token
+4. ✅ token 比较用 timing-safe 函数
+5. ✅ token 显示时掩码处理，考虑 len < 4 边界
+6. ✅ CORS 允许 Authorization header
+7. ✅ 静态文件无需 auth（否则 login 页面加载不了）

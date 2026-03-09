@@ -360,6 +360,55 @@ app.get("/api/tasks/:taskId/trace", (req, res) => {
   res.json({ task_id: taskId, events: readTraceEvents(taskId) });
 });
 
+// ── Semantic Memory API ──────────────────────────────────
+
+app.get("/api/memory", (req, res) => {
+  const memFile = path.join(wsDir, "memory", "semantic.jsonl");
+  if (!fs.existsSync(memFile)) return res.json({ entries: [], total: 0 });
+  try {
+    const stat = fs.statSync(memFile);
+    if (stat.size > 20 * 1024 * 1024) return res.status(413).json({ error: "Memory file too large" });
+  } catch { return res.json({ entries: [], total: 0 }); }
+
+  const entries = parseJsonlFile(memFile);
+  const cat = req.query.category;
+  const filtered = cat ? entries.filter(e => e.category === cat) : entries;
+  const byCat = {};
+  for (const e of entries) {
+    const c = e.category || "general";
+    byCat[c] = (byCat[c] || 0) + 1;
+  }
+  res.json({ entries: filtered.slice(-100), total: entries.length, by_category: byCat });
+});
+
+app.get("/api/memory/search", (req, res) => {
+  const q = (req.query.q || "").trim();
+  if (!q) return res.json({ results: [] });
+  const memFile = path.join(wsDir, "memory", "semantic.jsonl");
+  if (!fs.existsSync(memFile)) return res.json({ results: [] });
+
+  const entries = parseJsonlFile(memFile);
+  const qLower = q.toLowerCase();
+  const qTokens = qLower.split(/\s+/).filter(t => t.length > 1);
+
+  // Simple scoring: substring match + token overlap
+  const scored = entries.map(e => {
+    const content = (e.content || "").toLowerCase();
+    const tags = (e.tags || []).map(t => t.toLowerCase());
+    let score = 0;
+    if (content.includes(qLower)) score += 3;
+    for (const t of qTokens) {
+      if (content.includes(t)) score += 1;
+      if (tags.includes(t)) score += 1;
+    }
+    return { entry: e, score };
+  }).filter(r => r.score > 0);
+
+  scored.sort((a, b) => b.score - a.score);
+  const topK = parseInt(req.query.k || "5", 10);
+  res.json({ results: scored.slice(0, topK) });
+});
+
 // ── FinOps API ───────────────────────────────────────────
 
 app.get("/api/finops", (_req, res) => {
@@ -405,6 +454,87 @@ app.get("/api/finops", (_req, res) => {
   }
 
   res.json({ ...totals, task_count: taskIds.size, entry_count: entries.length, by_task: byTask, by_node: byNode, by_agent: byAgent });
+});
+
+// ── Task Actions API (Dashboard Bidirectional Control) ──
+
+app.post("/api/actions/cancel", (req, res) => {
+  const taskId = req.body.task_id || "";
+  if (!taskId || !isValidTaskId(taskId)) {
+    return res.status(400).json({ error: "invalid or missing task_id" });
+  }
+  const reason = req.body.reason || "cancelled from dashboard";
+
+  // Write cancel status to task YAML
+  const tasksDir = path.join(wsDir, "tasks");
+  if (!fs.existsSync(tasksDir)) fs.mkdirSync(tasksDir, { recursive: true });
+  const taskFile = path.join(tasksDir, `${taskId}.yaml`);
+  try {
+    let existing = {};
+    if (fs.existsSync(taskFile)) {
+      try { existing = yaml.load(fs.readFileSync(taskFile, "utf8")) || {}; } catch { existing = {}; }
+    }
+    existing.status = "cancelled";
+    existing.reason = reason;
+    existing.cancelled_at = new Date().toISOString();
+    fs.writeFileSync(taskFile, yaml.dump(existing), "utf8");
+  } catch (e) {
+    return res.status(500).json({ error: "failed to write task yaml", detail: String(e) });
+  }
+
+  // Release lock if it matches this task
+  const lockFile = path.join(wsDir, ".lock");
+  try {
+    if (fs.existsSync(lockFile)) {
+      const lockContent = fs.readFileSync(lockFile, "utf8").trim();
+      if (lockContent === taskId) fs.unlinkSync(lockFile);
+    }
+  } catch { /* best effort */ }
+
+  // Clear runtime files
+  for (const sub of ["outbox", "inbox"]) {
+    const dir = path.join(wsDir, sub);
+    if (fs.existsSync(dir)) {
+      for (const f of fs.readdirSync(dir)) {
+        try { fs.unlinkSync(path.join(dir, f)); } catch { /* skip */ }
+      }
+    }
+  }
+  for (const f of ["TASK.md", "DASHBOARD.md"]) {
+    try { fs.unlinkSync(path.join(wsDir, f)); } catch { /* skip */ }
+  }
+
+  res.json({ ok: true, task_id: taskId, action: "cancelled" });
+});
+
+app.post("/api/actions/review", (req, res) => {
+  const decision = req.body.decision; // "approve" or "reject"
+  const feedback = req.body.feedback || "";
+  const summary = req.body.summary || "";
+
+  if (!["approve", "reject", "request_changes"].includes(decision)) {
+    return res.status(400).json({ error: "decision must be approve, reject, or request_changes" });
+  }
+
+  // Write reviewer.json to outbox — the watcher will pick it up
+  const outboxDir = path.join(wsDir, "outbox");
+  if (!fs.existsSync(outboxDir)) fs.mkdirSync(outboxDir, { recursive: true });
+
+  const reviewerOutput = {
+    decision,
+    feedback: feedback || (decision === "approve" ? "Approved from Dashboard" : "Rejected from Dashboard"),
+    summary: summary || `Review ${decision} via Dashboard`,
+    source: "dashboard",
+    timestamp: new Date().toISOString(),
+  };
+
+  const outFile = path.join(outboxDir, "reviewer.json");
+  try {
+    fs.writeFileSync(outFile, JSON.stringify(reviewerOutput, null, 2), "utf8");
+    res.json({ ok: true, action: "review", decision, file: "outbox/reviewer.json" });
+  } catch (e) {
+    res.status(500).json({ error: "failed to write reviewer output", detail: String(e) });
+  }
 });
 
 // ── SSE Event Stream ────────────────────────────────────

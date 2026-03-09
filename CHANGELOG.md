@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.10.0] - 2026-03-09
+
+### Added
+- **Semantic Memory** — cross-task knowledge persistence with TF-IDF retrieval
+  - New module `semantic_memory.py`: store/search/delete/clear/stats operations
+  - TF-IDF cosine similarity engine (zero external dependencies, <50ms for 5000 entries)
+  - Categories: architecture, convention, pattern, bugfix, preference, context
+  - Auto-capture from review summaries in `graph.py` (extracts decisions/patterns)
+  - `cli_admin.py`: `my memory search|add|list|stats|delete|clear` CLI commands
+  - `app.js`: `/api/memory` + `/api/memory/search` endpoints
+  - `index.html`: Memory panel with search input and category stats
+  - `get_context()` helper for injecting relevant memories into LLM prompts
+  - Content-hash deduplication, fcntl file locking, 5000 entry cap
+- **Dashboard Bidirectional Control** — approve/reject/cancel from web UI
+  - `app.js`: `POST /api/actions/cancel` — cancels task, releases lock, clears runtime
+  - `app.js`: `POST /api/actions/review` — writes reviewer.json to outbox (watcher picks up)
+  - `index.html`: Action bar with Approve/Reject/Cancel buttons (auto-shows when task active)
+  - Reject requires feedback text; approve optional; cancel clears all runtime files
+- **Python FastAPI server alignment** — full parity with Node.js backend
+  - `server.py`: Auth middleware with `hmac.compare_digest` timing-safe comparison
+  - `server.py`: `/api/auth/check`, `/api/auth/login` endpoints
+  - `server.py`: `/api/finops` aggregated token usage endpoint
+  - `server.py`: `/api/memory`, `/api/memory/search` endpoints
+  - `server.py`: `/api/actions/cancel`, `/api/actions/review` endpoints
+  - `server.py`: CORS middleware with Authorization header support
+- **40 new tests** — semantic memory (store/search/delete/TF-IDF/auto-capture), dashboard actions, server parity, CLI memory commands
+- **Documentation** — updated `COMMON_ERRORS.md` (7 new entries E19-E25), `SKILLS_CHEATSHEET.md` (4 new sections)
+
+### Fixed
+- `cli_admin.py`: memory command used wrong decorator (`admin_group` → `main`)
+
 ## [0.9.2] - 2026-03-09
 
 ### Added

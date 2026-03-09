@@ -618,6 +618,17 @@ def review_node(state: WorkflowState) -> dict[str, Any]:
     # Enrich reviewer result: inject fallback feedback + rubber-stamp detection
     _enrich_reviewer_result(result, decision, state)
 
+    # Auto-capture insights from review summary into semantic memory
+    with contextlib.suppress(Exception):
+        from multi_agent.semantic_memory import capture_from_review
+        review_text = result.get("summary", "") or result.get("feedback", "")
+        if review_text:
+            capture_from_review(
+                task_id=state.get("task_id", ""),
+                review_summary=review_text,
+                agent_id=state.get("reviewer", ""),
+            )
+
     review_result = {
         "reviewer_output": result,
         "review_started_at": review_started,

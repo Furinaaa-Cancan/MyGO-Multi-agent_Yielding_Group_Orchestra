@@ -560,3 +560,120 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
         if budget["over_budget"]:
             for w in budget["warnings"]:
                 click.echo(f"  ⚠️  {w}", err=True)
+
+    # ── memory ───────────────────────────────────────────
+    @main.command("memory")
+    @click.argument("action", type=click.Choice(["search", "add", "list", "stats", "delete", "clear"]))
+    @click.argument("text", required=False, default="")
+    @click.option("--category", "-c", default="general", help="Memory category")
+    @click.option("--top-k", "-k", default=5, type=int, help="Max results for search")
+    @click.option("--tags", "-t", default="", help="Comma-separated tags")
+    @click.option("--json-output", "as_json", is_flag=True, help="Output as JSON")
+    @handle_errors
+    def memory_cmd(action: str, text: str, category: str, top_k: int, tags: str, as_json: bool) -> None:
+        """Semantic memory — store and retrieve cross-task knowledge.
+
+        Actions:
+          search  Search memories by natural language query
+          add     Store a new memory entry
+          list    List stored memories
+          stats   Show memory statistics
+          delete  Delete a memory entry by ID
+          clear   Clear all memories (or by category)
+
+        Examples:
+          my memory search "authentication pattern"
+          my memory add "Use JWT tokens for API auth" -c architecture -t auth,jwt
+          my memory list -c convention
+          my memory stats
+          my memory delete abc123def456
+          my memory clear -c bugfix
+        """
+        from multi_agent.semantic_memory import (
+            clear as mem_clear,
+            delete as mem_delete,
+            list_entries,
+            search as mem_search,
+            stats as mem_stats,
+            store as mem_store,
+        )
+
+        ensure_workspace()
+
+        if action == "search":
+            if not text:
+                click.echo("Usage: my memory search \"query text\"", err=True)
+                return
+            results = mem_search(text, top_k=top_k, category=category if category != "general" else None)
+            if as_json:
+                click.echo(json.dumps(results, indent=2, ensure_ascii=False))
+                return
+            if not results:
+                click.echo("  No matching memories found.")
+                return
+            click.echo(f"  Found {len(results)} result(s):\n")
+            for r in results:
+                e = r["entry"]
+                score = r["score"]
+                cat = e.get("category", "general")
+                tags_str = ", ".join(e.get("tags", []))
+                click.echo(f"  [{cat}] (score: {score:.2f}) {e['content']}")
+                if tags_str:
+                    click.echo(f"         tags: {tags_str}")
+                click.echo()
+
+        elif action == "add":
+            if not text:
+                click.echo("Usage: my memory add \"memory content\" [-c category] [-t tag1,tag2]", err=True)
+                return
+            tag_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+            result = mem_store(text, category=category, tags=tag_list, source="cli")
+            if as_json:
+                click.echo(json.dumps(result, indent=2))
+            else:
+                status = result.get("status", "error")
+                if status == "stored":
+                    click.echo(f"  ✅ Stored (id: {result['entry_id']}, total: {result['count']})")
+                elif status == "duplicate":
+                    click.echo(f"  ⚠️  Duplicate (id: {result['entry_id']})")
+                else:
+                    click.echo(f"  ❌ {result.get('reason', 'unknown error')}", err=True)
+
+        elif action == "list":
+            cat_filter = category if category != "general" else None
+            entries = list_entries(category=cat_filter)
+            if as_json:
+                click.echo(json.dumps(entries, indent=2, ensure_ascii=False))
+                return
+            if not entries:
+                click.echo("  No memories stored.")
+                return
+            click.echo(f"  {len(entries)} memorie(s):\n")
+            for e in entries:
+                cat = e.get("category", "general")
+                entry_id = e.get("id", "?")[:8]
+                click.echo(f"  {entry_id}  [{cat}] {e.get('content', '')[:80]}")
+
+        elif action == "stats":
+            s = mem_stats()
+            if as_json:
+                click.echo(json.dumps(s, indent=2))
+                return
+            click.echo(f"  Total entries: {s['total_entries']}")
+            for cat, count in sorted(s.get("by_category", {}).items()):
+                click.echo(f"    {cat}: {count}")
+
+        elif action == "delete":
+            if not text:
+                click.echo("Usage: my memory delete <entry_id>", err=True)
+                return
+            result = mem_delete(text)
+            if result["status"] == "deleted":
+                click.echo(f"  ✅ Deleted (remaining: {result['remaining']})")
+            else:
+                click.echo(f"  ❌ Not found: {text}", err=True)
+
+        elif action == "clear":
+            cat_filter = category if category != "general" else None
+            result = mem_clear(category=cat_filter)
+            click.echo(f"  🗑️  Cleared {result.get('removed', 0)} entries")

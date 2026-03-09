@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import hmac
 import json
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -19,6 +22,7 @@ from typing import Any
 
 import yaml
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from starlette.responses import StreamingResponse
 
@@ -33,7 +37,48 @@ _SAFE_TASK_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
 
 _log = logging.getLogger(__name__)
 
-app = FastAPI(title="MyGO Dashboard", version="0.9.0")
+app = FastAPI(title="MyGO Dashboard", version="0.10.0")
+
+# ── Auth ─────────────────────────────────────────────────
+
+_AUTH_TOKEN = os.environ.get("MYGO_AUTH_TOKEN", "")
+
+_AUTH_PUBLIC_PATHS = {"/api/auth/check", "/api/auth/login", "/", "/index.html"}
+
+
+def _safe_equal(a: str, b: str) -> bool:
+    """Timing-safe string comparison."""
+    return hmac.compare_digest(a.encode(), b.encode())
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    """Optional token-based auth middleware."""
+    path = request.url.path
+    if not _AUTH_TOKEN:
+        return await call_next(request)
+    # Public paths + static files
+    if path in _AUTH_PUBLIC_PATHS or not path.startswith("/api/"):
+        return await call_next(request)
+    # SSE: accept token via query param
+    if path == "/api/events":
+        qt = request.query_params.get("token", "")
+        if _safe_equal(qt, _AUTH_TOKEN):
+            return await call_next(request)
+    # Bearer token
+    auth_header = request.headers.get("authorization", "")
+    token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
+    if not _safe_equal(token, _AUTH_TOKEN):
+        return JSONResponse({"error": "Unauthorized", "auth_required": True}, status_code=401)
+    return await call_next(request)
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:*", "http://127.0.0.1:*"],
+    allow_methods=["*"],
+    allow_headers=["Content-Type", "Authorization"],
+)
 
 # ── Static HTML ──────────────────────────────────────────
 
@@ -52,6 +97,25 @@ def index() -> HTMLResponse:
     if not html_path.exists():
         return HTMLResponse("<h1>Dashboard HTML not found</h1>", status_code=500)
     return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
+
+# ── Auth Endpoints ───────────────────────────────────────
+
+
+@app.get("/api/auth/check")
+def api_auth_check() -> JSONResponse:
+    return JSONResponse({"auth_required": bool(_AUTH_TOKEN)})
+
+
+@app.post("/api/auth/login")
+async def api_auth_login(request: Request) -> JSONResponse:
+    if not _AUTH_TOKEN:
+        return JSONResponse({"ok": True})
+    body = await request.json()
+    token = body.get("token", "")
+    if _safe_equal(token, _AUTH_TOKEN):
+        return JSONResponse({"ok": True})
+    return JSONResponse({"ok": False, "error": "Invalid token"}, status_code=401)
 
 
 # ── REST API ─────────────────────────────────────────────
@@ -144,6 +208,174 @@ def api_task_trace(task_id: str) -> JSONResponse:
     if not _validate_web_task_id(task_id):
         return JSONResponse({"error": "invalid task_id"}, status_code=400)
     return JSONResponse({"task_id": task_id, "events": _read_trace_events(task_id)})
+
+
+# ── FinOps API ───────────────────────────────────────────
+
+
+@app.get("/api/finops")
+def api_finops() -> JSONResponse:
+    """Aggregated token usage stats."""
+    usage_file = workspace_dir() / "logs" / "token-usage.jsonl"
+    empty = {"total_tokens": 0, "input_tokens": 0, "output_tokens": 0, "total_cost": 0,
+             "task_count": 0, "entry_count": 0, "by_task": {}, "by_node": {}, "by_agent": {}}
+    if not usage_file.exists():
+        return JSONResponse(empty)
+    try:
+        if usage_file.stat().st_size > 10 * 1024 * 1024:
+            return JSONResponse({"error": "Usage log too large"}, status_code=413)
+    except OSError:
+        return JSONResponse(empty)
+
+    entries = _parse_jsonl_file(usage_file)
+    totals = {"total_tokens": 0, "input_tokens": 0, "output_tokens": 0, "total_cost": 0.0}
+    by_task: dict[str, dict] = {}
+    by_node: dict[str, dict] = {}
+    by_agent: dict[str, dict] = {}
+    task_ids: set[str] = set()
+
+    for e in entries:
+        inp = int(e.get("input_tokens", 0))
+        out = int(e.get("output_tokens", 0))
+        tot = int(e.get("total_tokens", 0)) or (inp + out)
+        cost = float(e.get("cost", 0.0))
+        tid = e.get("task_id", "unknown")
+        node = e.get("node", "unknown")
+        agent = e.get("agent_id", "unknown")
+        task_ids.add(tid)
+        totals["total_tokens"] += tot
+        totals["input_tokens"] += inp
+        totals["output_tokens"] += out
+        totals["total_cost"] += cost
+        for bucket, key in [(by_task, tid), (by_node, node), (by_agent, agent)]:
+            if key not in bucket:
+                bucket[key] = {"total_tokens": 0, "input_tokens": 0, "output_tokens": 0, "cost": 0.0, "count": 0}
+            b = bucket[key]
+            b["total_tokens"] += tot; b["input_tokens"] += inp; b["output_tokens"] += out
+            b["cost"] += cost; b["count"] += 1
+
+    totals["total_cost"] = round(totals["total_cost"], 6)
+    for bucket in (by_task, by_node, by_agent):
+        for v in bucket.values():
+            v["cost"] = round(v["cost"], 6)
+
+    return JSONResponse({**totals, "task_count": len(task_ids), "entry_count": len(entries),
+                         "by_task": by_task, "by_node": by_node, "by_agent": by_agent})
+
+
+# ── Memory API ───────────────────────────────────────────
+
+
+@app.get("/api/memory")
+def api_memory(category: str | None = None) -> JSONResponse:
+    mem_file = workspace_dir() / "memory" / "semantic.jsonl"
+    if not mem_file.exists():
+        return JSONResponse({"entries": [], "total": 0})
+    try:
+        if mem_file.stat().st_size > 20 * 1024 * 1024:
+            return JSONResponse({"error": "Memory file too large"}, status_code=413)
+    except OSError:
+        return JSONResponse({"entries": [], "total": 0})
+    entries = _parse_jsonl_file(mem_file)
+    filtered = [e for e in entries if e.get("category") == category] if category else entries
+    by_cat: dict[str, int] = {}
+    for e in entries:
+        c = e.get("category", "general")
+        by_cat[c] = by_cat.get(c, 0) + 1
+    return JSONResponse({"entries": filtered[-100:], "total": len(entries), "by_category": by_cat})
+
+
+@app.get("/api/memory/search")
+def api_memory_search(q: str = "", k: int = 5) -> JSONResponse:
+    if not q.strip():
+        return JSONResponse({"results": []})
+    mem_file = workspace_dir() / "memory" / "semantic.jsonl"
+    if not mem_file.exists():
+        return JSONResponse({"results": []})
+    entries = _parse_jsonl_file(mem_file)
+    q_lower = q.lower()
+    q_tokens = [t for t in q_lower.split() if len(t) > 1]
+    scored = []
+    for e in entries:
+        content = (e.get("content", "")).lower()
+        tags = [t.lower() for t in e.get("tags", [])]
+        score = 0
+        if q_lower in content:
+            score += 3
+        for t in q_tokens:
+            if t in content:
+                score += 1
+            if t in tags:
+                score += 1
+        if score > 0:
+            scored.append({"entry": e, "score": score})
+    scored.sort(key=lambda x: x["score"], reverse=True)
+    return JSONResponse({"results": scored[:k]})
+
+
+# ── Task Actions API ─────────────────────────────────────
+
+
+@app.post("/api/actions/cancel")
+async def api_action_cancel(request: Request) -> JSONResponse:
+    body = await request.json()
+    task_id = body.get("task_id", "")
+    if not task_id or not _validate_web_task_id(task_id):
+        return JSONResponse({"error": "invalid or missing task_id"}, status_code=400)
+    reason = body.get("reason", "cancelled from dashboard")
+    ws = workspace_dir()
+    tasks_path = ws / "tasks"
+    tasks_path.mkdir(parents=True, exist_ok=True)
+    task_file = tasks_path / f"{task_id}.yaml"
+    try:
+        existing = {}
+        if task_file.exists():
+            with contextlib.suppress(Exception):
+                existing = yaml.safe_load(task_file.read_text(encoding="utf-8")) or {}
+        existing["status"] = "cancelled"
+        existing["reason"] = reason
+        task_file.write_text(yaml.dump(existing), encoding="utf-8")
+    except OSError as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    # Release lock
+    lock_file = ws / ".lock"
+    with contextlib.suppress(OSError):
+        if lock_file.exists() and lock_file.read_text(encoding="utf-8").strip() == task_id:
+            lock_file.unlink()
+    # Clear runtime
+    for sub in ("outbox", "inbox"):
+        d = ws / sub
+        if d.exists():
+            for f in d.iterdir():
+                with contextlib.suppress(OSError):
+                    f.unlink()
+    for f in ("TASK.md", "DASHBOARD.md"):
+        with contextlib.suppress(OSError):
+            (ws / f).unlink()
+    return JSONResponse({"ok": True, "task_id": task_id, "action": "cancelled"})
+
+
+@app.post("/api/actions/review")
+async def api_action_review(request: Request) -> JSONResponse:
+    body = await request.json()
+    decision = body.get("decision", "")
+    if decision not in ("approve", "reject", "request_changes"):
+        return JSONResponse({"error": "decision must be approve, reject, or request_changes"}, status_code=400)
+    feedback = body.get("feedback", "") or ("Approved from Dashboard" if decision == "approve" else "Rejected from Dashboard")
+    summary = body.get("summary", "") or f"Review {decision} via Dashboard"
+    ws = workspace_dir()
+    outbox = ws / "outbox"
+    outbox.mkdir(parents=True, exist_ok=True)
+    reviewer_output = {
+        "decision": decision, "feedback": feedback, "summary": summary,
+        "source": "dashboard", "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    out_file = outbox / "reviewer.json"
+    try:
+        out_file.write_text(json.dumps(reviewer_output, indent=2), encoding="utf-8")
+        return JSONResponse({"ok": True, "action": "review", "decision": decision})
+    except OSError as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 # ── SSE Event Stream ────────────────────────────────────

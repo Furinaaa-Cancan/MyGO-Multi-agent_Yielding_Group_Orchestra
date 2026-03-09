@@ -194,5 +194,61 @@ for pattern in [
 ### D3: 为什么 Windows 上 trace 没有文件锁？
 `fcntl` 是 POSIX-only。Windows 可用 `msvcrt.locking` 替代，但当前用户全在 macOS。留作未来兼容性改进。
 
-### D4: 为什么 Dashboard 没有认证？
-默认绑定 `127.0.0.1`，只有本机可访问。加认证会增加使用复杂度（需要记 token/密码）。CLI 已有 non-localhost 警告。
+### D4: ~~为什么 Dashboard 没有认证？~~ (v0.9.2 已加)
+v0.9.2 新增可选 token 认证。`my dashboard --token auto` 自动生成 token。
+
+---
+
+## 八、v0.9.2 Code Review 发现的 Bug（7 个）
+
+### E19: Windows .bat 命令注入
+**文件**: `driver.py` `_open_terminal_window()`
+**原因**: `label` 参数直接拼入 `.bat` 文件的 `title` 命令，若含 `&|<>^()!%"` 等 shell 元字符可执行任意命令。
+**修复**: `re.sub(r'[&|<>^()!%"]', "", label)[:60] or "MyGO"` 过滤元字符。
+**教训**: **任何拼入 shell/bat 的字符串都必须清理元字符，即使看起来是"内部"变量。**
+
+### E20: cmd.exe `start` 第一个引号参数是窗口标题
+**文件**: `driver.py`
+**原因**: `start label bat_path` — 如果 `label` 含空格，`start` 会把它当命令而非标题。
+**修复**: `start "title" bat_path` — 第一个带引号的参数必须是窗口标题。
+**教训**: **Windows `start` 命令的参数语义和 Unix 完全不同，必须查文档。**
+
+### E21: Express 挂载路径剥离 — `req.path` 不含前缀
+**文件**: `app.js` auth 中间件
+**原因**: `app.use("/api", middleware)` 挂载后，`req.path` 是 `/auth/check` 而非 `/api/auth/check`。写成后者导致 auth check 被拦截返回 401。
+**修复**: 改为 `req.path === "/auth/check"`。
+**教训**: **Express 中间件挂载在子路径时，`req.path` 会被剥离挂载前缀。这是 Express 最常见的坑之一。**
+```javascript
+// ❌ 错误
+app.use("/api", (req, res, next) => {
+  if (req.path === "/api/auth/check") return next(); // 永远不会匹配！
+});
+// ✅ 正确
+app.use("/api", (req, res, next) => {
+  if (req.path === "/auth/check") return next();
+});
+```
+
+### E22: Login 端点被自己的 auth 中间件拦截
+**文件**: `app.js`
+**原因**: `/api/auth/login` 是 POST 端点（用户还没 token 才会调），但 auth 中间件只白名单了 `/auth/check`，没有白名单 `/auth/login`。
+**修复**: `if (req.path === "/auth/check" || req.path === "/auth/login") return next();`
+**教训**: **auth 系统的 login 端点必须在 auth 白名单中——这是逻辑循环，很容易遗漏。**
+
+### E23: JSONL 并发写入行交错
+**文件**: `finops.py` `record_task_usage()`
+**原因**: 多个并行 agent 进程同时 append 到同一 JSONL 文件，没有文件锁，可能导致行交错（两行混在一起）。
+**修复**: 加 `fcntl.flock(LOCK_EX)` / `LOCK_UN`，Windows 降级为无锁（`fcntl` 不可用时跳过）。
+**教训**: **任何多进程 append 文件都必须加锁。参考 `trace.py` 的已有模式。**
+
+### E24: Token 比较时序攻击
+**文件**: `app.js` auth 中间件
+**原因**: `token === AUTH_TOKEN` 使用 `===` 比较，字符串不等长时立即返回 false，可通过响应时间差逐字节猜测 token。
+**修复**: `crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b))` 恒定时间比较。
+**教训**: **密钥/token 比较永远用 timing-safe 函数，即使是本地工具。**
+
+### E25: Token 掩码溢出
+**文件**: `cli.py` `_launch_dashboard_node()`
+**原因**: `token[:4] + '*' * (len(token) - 4)` — 当 token 长度 < 4 时，负数乘法产生空字符串，直接暴露全部 token。
+**修复**: `if len(token) > 4 else "****"` — 短 token 全部掩码。
+**教训**: **字符串切片和掩码操作要考虑边界长度。**
