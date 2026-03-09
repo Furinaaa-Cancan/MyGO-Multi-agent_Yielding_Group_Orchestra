@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re as _re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -77,18 +78,33 @@ def outbox_dir() -> Path:
     return workspace_dir() / "outbox"
 
 
+_SAFE_SUBTASK_ID_RE = _re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
+
+
+def _validate_subtask_id(subtask_id: str) -> None:
+    """Validate subtask_id to prevent path traversal in subtask workspace paths."""
+    if not _SAFE_SUBTASK_ID_RE.match(subtask_id) or ".." in subtask_id:
+        raise ValueError(
+            f"invalid subtask_id: {subtask_id!r} — "
+            "must match [a-zA-Z0-9][a-zA-Z0-9._-]{0,127}"
+        )
+
+
 def subtask_workspace(subtask_id: str) -> Path:
     """Return isolated workspace dir for a parallel sub-task."""
+    _validate_subtask_id(subtask_id)
     return workspace_dir() / "subtasks" / subtask_id
 
 
 def subtask_task_file(subtask_id: str) -> Path:
     """Return TASK.md path for a parallel sub-task."""
+    _validate_subtask_id(subtask_id)
     return subtask_workspace(subtask_id) / "TASK.md"
 
 
 def subtask_outbox_dir(subtask_id: str) -> Path:
     """Return outbox dir for a parallel sub-task."""
+    _validate_subtask_id(subtask_id)
     return subtask_workspace(subtask_id) / "outbox"
 
 

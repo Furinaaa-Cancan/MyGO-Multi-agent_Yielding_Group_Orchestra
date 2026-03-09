@@ -13,7 +13,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -40,9 +42,27 @@ def save_checkpoint(parent_task_id: str, prior_results: list[dict[str, Any]],
         "completed_ids": completed_ids,
         "prior_results": prior_results,
     }
-    ckpt_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Atomic write: write to temp file then rename to prevent TOCTOU corruption
+    content = json.dumps(data, ensure_ascii=False, indent=2)
+    fd, tmp_path = tempfile.mkstemp(dir=str(ckpt_dir), suffix=".tmp")
+    closed = False
+    try:
+        os.write(fd, content.encode("utf-8"))
+        os.close(fd)
+        closed = True
+        os.replace(tmp_path, str(ckpt_path))
+    except Exception:
+        if not closed:
+            with __import__('contextlib').suppress(OSError):
+                os.close(fd)
+        with __import__('contextlib').suppress(OSError):
+            os.unlink(tmp_path)
+        raise
     _log.debug("Decompose checkpoint saved: %s (%d sub-tasks done)", ckpt_path, len(completed_ids))
     return ckpt_path
+
+
+_MAX_CHECKPOINT_SIZE = 10 * 1024 * 1024  # 10 MB cap
 
 
 def load_checkpoint(parent_task_id: str) -> dict[str, Any] | None:
@@ -53,6 +73,10 @@ def load_checkpoint(parent_task_id: str) -> dict[str, Any] | None:
     if not ckpt_path.exists():
         return None
     try:
+        fsize = ckpt_path.stat().st_size
+        if fsize > _MAX_CHECKPOINT_SIZE:
+            _log.warning("Checkpoint too large: %d bytes > %d limit", fsize, _MAX_CHECKPOINT_SIZE)
+            return None
         data = json.loads(ckpt_path.read_text(encoding="utf-8"))
         if isinstance(data, dict) and "completed_ids" in data and "prior_results" in data:
             _log.info("Decompose checkpoint loaded: %d sub-tasks already done", len(data["completed_ids"]))

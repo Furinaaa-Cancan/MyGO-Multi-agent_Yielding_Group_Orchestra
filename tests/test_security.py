@@ -239,6 +239,75 @@ class TestNotifyAppleScriptEscape:
         assert "\\\\" in result
 
 
+class TestSubtaskIdValidation:
+    """Verify subtask_id validation prevents path traversal."""
+
+    def test_valid_subtask_ids(self):
+        from multi_agent.config import _validate_subtask_id
+        for sid in ["task-abc-auth", "subtask.1", "A-B_C"]:
+            _validate_subtask_id(sid)  # should not raise
+
+    def test_path_traversal_rejected(self):
+        from multi_agent.config import _validate_subtask_id
+        for sid in ["../etc/passwd", "../../root", "foo/bar"]:
+            with pytest.raises(ValueError, match="invalid subtask_id"):
+                _validate_subtask_id(sid)
+
+    def test_empty_rejected(self):
+        from multi_agent.config import _validate_subtask_id
+        with pytest.raises(ValueError):
+            _validate_subtask_id("")
+
+    def test_shell_metachar_rejected(self):
+        from multi_agent.config import _validate_subtask_id
+        for sid in ["sub;ls", "sub|cat", "sub$x"]:
+            with pytest.raises(ValueError):
+                _validate_subtask_id(sid)
+
+
+class TestCheckpointSizeLimit:
+    """Verify checkpoint load rejects oversized files."""
+
+    def test_oversized_checkpoint_returns_none(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MA_ROOT", str(tmp_path))
+        from multi_agent.config import root_dir
+        root_dir.cache_clear()
+        try:
+            ckpt_dir = tmp_path / ".multi-agent" / "checkpoints"
+            ckpt_dir.mkdir(parents=True, exist_ok=True)
+            ckpt = ckpt_dir / "decompose-task-test123.json"
+            # Write a file larger than 10 MB limit
+            ckpt.write_text("x" * (11 * 1024 * 1024))
+            from multi_agent.meta_graph import load_checkpoint
+            result = load_checkpoint("task-test123")
+            assert result is None
+        finally:
+            root_dir.cache_clear()
+
+
+class TestLogTimingSanitization:
+    """Verify log_timing sanitizes task_id in file paths."""
+
+    def test_traversal_in_task_id_sanitized(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MA_ROOT", str(tmp_path))
+        from multi_agent.config import root_dir
+        root_dir.cache_clear()
+        try:
+            from multi_agent.graph_infra import log_timing
+            # task_id with path traversal characters
+            log_timing("../../etc/passwd", "build", 1.0, 2.0)
+            logs_dir = tmp_path / ".multi-agent" / "logs"
+            # File must be created inside logs_dir, not traverse out
+            files = list(logs_dir.glob("timing-*.jsonl"))
+            assert len(files) == 1
+            # Key: slashes are removed, file stays within logs_dir
+            assert "/" not in files[0].name
+            # Verify the file is actually inside the logs dir
+            assert files[0].parent == logs_dir
+        finally:
+            root_dir.cache_clear()
+
+
 class TestGraphSnapshotSanitization:
     """Verify graph.py sanitizes task_id/node_name in snapshot paths."""
 

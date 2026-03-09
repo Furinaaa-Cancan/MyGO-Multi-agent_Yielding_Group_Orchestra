@@ -234,6 +234,9 @@ def write_decompose_prompt(requirement: str, *, lang: str = "zh", project_contex
     return p
 
 
+_MAX_DECOMPOSE_OUTBOX_SIZE = 5 * 1024 * 1024  # 5 MB cap
+
+
 def read_decompose_result(*, validate: bool = True) -> DecomposeResult | None:
     """Read decomposition result from outbox/decompose.json.
 
@@ -246,6 +249,13 @@ def read_decompose_result(*, validate: bool = True) -> DecomposeResult | None:
         return None
 
     try:
+        fsize = outbox_file.stat().st_size
+        if fsize > _MAX_DECOMPOSE_OUTBOX_SIZE:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Decompose outbox too large: %d bytes > %d limit", fsize, _MAX_DECOMPOSE_OUTBOX_SIZE
+            )
+            return None
         text = outbox_file.read_text(encoding="utf-8")
     except OSError:
         return None

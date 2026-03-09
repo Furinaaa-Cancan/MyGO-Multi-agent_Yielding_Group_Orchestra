@@ -21,6 +21,8 @@ from typing import Any
 
 import click
 
+_MAX_DECOMPOSE_FILE_SIZE = 5 * 1024 * 1024  # 5 MB cap
+
 
 def _read_decompose_file(decompose_file: str) -> Any:
     """Read decompose result from a JSON/YAML file. Exits on error."""
@@ -29,7 +31,16 @@ def _read_decompose_file(decompose_file: str) -> Any:
     from multi_agent.schema import DecomposeResult
     from multi_agent.workspace import release_lock
     try:
-        raw = Path(decompose_file).read_text(encoding="utf-8")
+        fp = Path(decompose_file)
+        try:
+            fsize = fp.stat().st_size
+        except OSError:
+            fsize = 0
+        if fsize > _MAX_DECOMPOSE_FILE_SIZE:
+            click.echo(f"❌ 分解文件过大: {fsize} bytes > {_MAX_DECOMPOSE_FILE_SIZE}", err=True)
+            release_lock()
+            sys.exit(1)
+        raw = fp.read_text(encoding="utf-8")
         if decompose_file.endswith((".yaml", ".yml")):
             import yaml as _yaml
             data = _yaml.safe_load(raw)

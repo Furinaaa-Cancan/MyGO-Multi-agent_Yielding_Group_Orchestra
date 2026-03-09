@@ -150,7 +150,9 @@ def log_timing(task_id: str, node: str, start: float, end: float) -> None:
         "end": end,
         "duration_ms": int((end - start) * 1000),
     }
-    path = logs_dir / f"timing-{task_id}.jsonl"
+    # Sanitize task_id for path safety (defense-in-depth, same as save_state_snapshot)
+    safe_tid = re.sub(r"[^a-zA-Z0-9._-]", "_", task_id)[:64]
+    path = logs_dir / f"timing-{safe_tid}.jsonl"
     try:
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
