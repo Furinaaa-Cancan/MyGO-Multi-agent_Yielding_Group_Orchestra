@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.13.0] - 2026-03-09
+
+### Added
+- **OpenAI Embeddings Backend** — optional upgrade path for semantic memory search
+  - `semantic_memory.py`: dual-backend search — TF-IDF (default) or OpenAI embeddings
+  - Config via `.ma.yaml`: `memory.backend: openai`, `memory.openai_model: text-embedding-3-small`
+  - Requires `OPENAI_API_KEY` env var; auto-falls back to TF-IDF on failure
+  - Embeddings cache at `.multi-agent/memory/embeddings_cache.json` — avoids re-embedding unchanged entries
+  - Dense cosine similarity via `_cosine_sim_vectors()` for OpenAI vectors
+  - `_get_backend()` auto-detects: needs both config + API key to activate
+- `config.py`: added `memory` and `notify` to `VALID_CONFIG_KEYS`
+- **10 new tests** — backend selection, cache roundtrip, cosine similarity, fallback, mocked search
+
 ## [0.12.0] - 2026-03-09
 
 ### Added

@@ -587,3 +587,88 @@ class TestDoctorCommand:
         runner = CliRunner()
         result = runner.invoke(main, ["doctor", "--fix"])
         assert result.exit_code == 0
+
+
+# ══════════════════════════════════════════════════════════
+# Feature G: OpenAI Embeddings Backend
+# ══════════════════════════════════════════════════════════
+
+
+class TestOpenAIEmbeddingsBackend:
+    """Test OpenAI embeddings backend (mock-based, no real API calls)."""
+
+    def test_get_backend_defaults_to_tfidf(self):
+        from multi_agent.semantic_memory import _get_backend
+        assert _get_backend() == "tfidf"
+
+    def test_get_backend_requires_api_key(self, monkeypatch):
+        from multi_agent.semantic_memory import _get_backend
+        monkeypatch.setattr("multi_agent.semantic_memory._get_memory_config",
+                            lambda: {"backend": "openai"})
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        assert _get_backend() == "tfidf"
+
+    def test_get_backend_openai_with_key(self, monkeypatch):
+        from multi_agent.semantic_memory import _get_backend
+        monkeypatch.setattr("multi_agent.semantic_memory._get_memory_config",
+                            lambda: {"backend": "openai"})
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-key")
+        assert _get_backend() == "openai"
+
+    def test_embeddings_cache_roundtrip(self):
+        from multi_agent.semantic_memory import (
+            _load_embeddings_cache, _save_embeddings_cache,
+        )
+        cache = {"abc123": [0.1, 0.2, 0.3], "def456": [0.4, 0.5, 0.6]}
+        _save_embeddings_cache(cache)
+        loaded = _load_embeddings_cache()
+        assert loaded == cache
+
+    def test_cosine_sim_vectors(self):
+        from multi_agent.semantic_memory import _cosine_sim_vectors
+        a = [1.0, 0.0, 0.0]
+        b = [1.0, 0.0, 0.0]
+        assert abs(_cosine_sim_vectors(a, b) - 1.0) < 1e-6
+
+    def test_cosine_sim_vectors_orthogonal(self):
+        from multi_agent.semantic_memory import _cosine_sim_vectors
+        a = [1.0, 0.0]
+        b = [0.0, 1.0]
+        assert abs(_cosine_sim_vectors(a, b)) < 1e-6
+
+    def test_cosine_sim_vectors_zero(self):
+        from multi_agent.semantic_memory import _cosine_sim_vectors
+        assert _cosine_sim_vectors([0.0, 0.0], [1.0, 1.0]) == 0.0
+
+    def test_search_falls_back_on_openai_failure(self, monkeypatch):
+        """When OpenAI fails, search should fall back to TF-IDF."""
+        from multi_agent.semantic_memory import search, store
+        store("Use pytest for testing Python code", category="convention")
+        monkeypatch.setattr("multi_agent.semantic_memory._get_backend", lambda: "openai")
+        monkeypatch.setattr("multi_agent.semantic_memory._openai_embed",
+                            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("API down")))
+        results = search("pytest testing")
+        assert len(results) > 0  # fell back to TF-IDF
+
+    def test_search_openai_with_mocked_embeddings(self, monkeypatch):
+        """Test the full OpenAI search path with mocked embed function."""
+        from multi_agent.semantic_memory import search, store
+        store("Always use type hints in Python functions", category="convention")
+        store("React components should use functional style", category="convention")
+
+        call_count = [0]
+        def mock_embed(texts, model="text-embedding-3-small"):
+            call_count[0] += 1
+            # Return simple vectors: each text gets a unique-ish vector
+            return [[float(i + j) for j in range(8)] for i in range(len(texts))]
+
+        monkeypatch.setattr("multi_agent.semantic_memory._get_backend", lambda: "openai")
+        monkeypatch.setattr("multi_agent.semantic_memory._openai_embed", mock_embed)
+        results = search("type hints Python")
+        assert call_count[0] > 0  # API was called
+        assert isinstance(results, list)
+
+    def test_memory_config_returns_empty_on_missing(self):
+        from multi_agent.semantic_memory import _get_memory_config
+        cfg = _get_memory_config()
+        assert isinstance(cfg, dict)

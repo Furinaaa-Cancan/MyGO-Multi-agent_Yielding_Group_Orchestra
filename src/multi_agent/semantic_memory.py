@@ -1,9 +1,15 @@
 """Semantic Memory — cross-task knowledge persistence with retrieval.
 
 Stores structured memory entries (architectural decisions, code patterns,
-conventions, preferences) and retrieves them via TF-IDF cosine similarity.
+conventions, preferences) and retrieves them via TF-IDF cosine similarity
+or optional OpenAI embeddings.
 
 Storage: ``.multi-agent/memory/semantic.jsonl``
+
+Configuration (.ma.yaml):
+    memory:
+      backend: tfidf          # tfidf (default) or openai
+      openai_model: text-embedding-3-small
 """
 
 from __future__ import annotations
@@ -12,6 +18,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import re
 import time
 from collections import Counter
@@ -212,7 +219,180 @@ def _cosine_similarity(a: dict[str, float], b: dict[str, float]) -> float:
     return dot / (norm_a * norm_b)
 
 
+# ── OpenAI Embeddings Backend (optional) ─────────────────
+
+
+def _get_memory_config() -> dict[str, Any]:
+    """Load memory config from .ma.yaml memory: section."""
+    try:
+        from multi_agent.config import load_project_config
+        proj = load_project_config()
+        raw = proj.get("memory")
+        return raw if isinstance(raw, dict) else {}
+    except Exception:
+        return {}
+
+
+def _get_backend() -> str:
+    """Determine which search backend to use: 'openai' or 'tfidf'."""
+    cfg = _get_memory_config()
+    backend = cfg.get("backend", "tfidf")
+    if backend == "openai" and os.environ.get("OPENAI_API_KEY"):
+        return "openai"
+    return "tfidf"
+
+
+_EMBED_CACHE_FILE = "embeddings_cache.json"
+
+
+def _embeddings_cache_path() -> Path:
+    return _memory_dir() / _EMBED_CACHE_FILE
+
+
+def _load_embeddings_cache() -> dict[str, list[float]]:
+    """Load cached embeddings from disk. Key = content hash, value = vector."""
+    path = _embeddings_cache_path()
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_embeddings_cache(cache: dict[str, list[float]]) -> None:
+    """Save embeddings cache to disk."""
+    path = _embeddings_cache_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+    except OSError as e:
+        _log.warning("Failed to save embeddings cache: %s", e)
+
+
+def _openai_embed(texts: list[str], model: str = "text-embedding-3-small") -> list[list[float]]:
+    """Call OpenAI embeddings API. Returns list of vectors."""
+    import urllib.request
+
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY not set")
+
+    payload = json.dumps({"input": texts, "model": model}).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.openai.com/v1/embeddings",
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        body = json.loads(resp.read().decode("utf-8"))
+    return [item["embedding"] for item in body["data"]]
+
+
+def _cosine_sim_vectors(a: list[float], b: list[float]) -> float:
+    """Cosine similarity between two dense vectors."""
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(x * x for x in b))
+    if na == 0 or nb == 0:
+        return 0.0
+    return dot / (na * nb)
+
+
+def _search_openai(
+    query: str, entries: list[dict[str, Any]], top_k: int, min_score: float,
+) -> list[dict[str, Any]]:
+    """Search using OpenAI embeddings with caching."""
+    cfg = _get_memory_config()
+    model = cfg.get("openai_model", "text-embedding-3-small")
+
+    cache = _load_embeddings_cache()
+    texts_to_embed: list[str] = []
+    idx_to_hash: dict[int, str] = {}
+
+    # Prepare: find entries without cached embeddings
+    entry_hashes: list[str] = []
+    for e in entries:
+        h = _content_hash(e.get("content", ""))
+        entry_hashes.append(h)
+        if h not in cache:
+            texts_to_embed.append(e.get("content", ""))
+            idx_to_hash[len(texts_to_embed) - 1] = h
+
+    # Embed missing entries + query
+    all_texts = texts_to_embed + [query]
+    if all_texts:
+        try:
+            vectors = _openai_embed(all_texts, model=model)
+        except Exception as e:
+            _log.warning("OpenAI embeddings failed, falling back to TF-IDF: %s", e)
+            return _search_tfidf(query, entries, top_k, min_score)
+
+        # Cache new entry embeddings
+        for i, h in idx_to_hash.items():
+            cache[h] = vectors[i]
+        _save_embeddings_cache(cache)
+        query_vec = vectors[-1]
+    else:
+        query_vec = _openai_embed([query], model=model)[0]
+
+    # Score entries
+    results: list[dict[str, Any]] = []
+    for entry, h in zip(entries, entry_hashes):
+        evec = cache.get(h)
+        if evec is None:
+            continue
+        score = _cosine_sim_vectors(query_vec, evec)
+        if score >= min_score:
+            results.append({"entry": entry, "score": round(score, 4)})
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results[:top_k]
+
+
 # ── Search / Retrieval ───────────────────────────────────
+
+
+def _search_tfidf(
+    query: str, entries: list[dict[str, Any]], top_k: int, min_score: float,
+) -> list[dict[str, Any]]:
+    """TF-IDF based search (default backend)."""
+    doc_tokens = [_tokenize(e.get("content", "") + " " + " ".join(e.get("tags", []))) for e in entries]
+    query_tokens = _tokenize(query)
+
+    if not query_tokens:
+        return []
+
+    all_docs = doc_tokens + [query_tokens]
+    idf = _build_idf(all_docs)
+    query_vec = _tfidf_vector(query_tokens, idf)
+    doc_vecs = [_tfidf_vector(dt, idf) for dt in doc_tokens]
+
+    results: list[dict[str, Any]] = []
+    for entry, doc_vec in zip(entries, doc_vecs):
+        score = _cosine_similarity(query_vec, doc_vec)
+
+        content_lower = entry.get("content", "").lower()
+        query_lower = query.lower()
+        if query_lower in content_lower:
+            score += 0.3
+
+        entry_tags = {t.lower() for t in entry.get("tags", [])}
+        for qt in query_tokens:
+            if qt in entry_tags:
+                score += 0.1
+
+        if score >= min_score:
+            results.append({"entry": entry, "score": round(score, 4)})
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results[:top_k]
+
 
 def search(
     query: str,
@@ -222,6 +402,9 @@ def search(
     min_score: float = 0.05,
 ) -> list[dict[str, Any]]:
     """Search memory entries by semantic similarity.
+
+    Uses OpenAI embeddings when configured (memory.backend=openai + OPENAI_API_KEY),
+    otherwise falls back to TF-IDF cosine similarity.
 
     Args:
         query: Natural language query.
@@ -242,43 +425,10 @@ def search(
     if not entries:
         return []
 
-    # Tokenize all entries and query
-    doc_tokens = [_tokenize(e.get("content", "") + " " + " ".join(e.get("tags", []))) for e in entries]
-    query_tokens = _tokenize(query)
-
-    if not query_tokens:
-        return []
-
-    # Build IDF from corpus + query
-    all_docs = doc_tokens + [query_tokens]
-    idf = _build_idf(all_docs)
-
-    # Compute TF-IDF vectors
-    query_vec = _tfidf_vector(query_tokens, idf)
-    doc_vecs = [_tfidf_vector(dt, idf) for dt in doc_tokens]
-
-    # Score and rank
-    results: list[dict[str, Any]] = []
-    for i, (entry, doc_vec) in enumerate(zip(entries, doc_vecs)):
-        score = _cosine_similarity(query_vec, doc_vec)
-
-        # Boost: exact substring match
-        content_lower = entry.get("content", "").lower()
-        query_lower = query.lower()
-        if query_lower in content_lower:
-            score += 0.3
-
-        # Boost: tag match
-        entry_tags = {t.lower() for t in entry.get("tags", [])}
-        for qt in query_tokens:
-            if qt in entry_tags:
-                score += 0.1
-
-        if score >= min_score:
-            results.append({"entry": entry, "score": round(score, 4)})
-
-    results.sort(key=lambda x: x["score"], reverse=True)
-    return results[:top_k]
+    backend = _get_backend()
+    if backend == "openai":
+        return _search_openai(query, entries, top_k, min_score)
+    return _search_tfidf(query, entries, top_k, min_score)
 
 
 def get_context(
