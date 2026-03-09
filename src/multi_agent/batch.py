@@ -21,14 +21,10 @@ Manifest format (tasks.yaml)::
 
 from __future__ import annotations
 
-import logging
-import time
 from pathlib import Path
 from typing import Any
 
 import yaml
-
-_log = logging.getLogger(__name__)
 
 _MAX_BATCH_FILE_SIZE = 256 * 1024  # 256 KB
 _MAX_TASKS_PER_BATCH = 50

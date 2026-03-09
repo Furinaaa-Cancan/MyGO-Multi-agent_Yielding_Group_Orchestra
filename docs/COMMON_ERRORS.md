@@ -346,3 +346,19 @@ app.use("/api", (req, res, next) => {
 **原因**: cache 会随 entry 增长无限膨胀，占用磁盘空间。
 **修复**: `_MAX_EMBED_CACHE_ENTRIES = 10000`，超过时按 key 排序裁剪最旧的。
 **教训**: **所有持久化缓存都要有大小上限和淘汰策略。**
+
+---
+
+## 十三、v0.14.0 Code Review 发现的 Bug（2 个）
+
+### E39: batch.py 未使用的 import
+**文件**: `batch.py`
+**原因**: `import logging` / `import time` 和 `_log = logging.getLogger(__name__)` 定义后从未使用。
+**修复**: 删除未使用的 import 和变量。
+**教训**: **新建模块时不要从模板复制 import，只导入实际使用的。**
+
+### E40: batch_cmd 未使用的 load_project_config import
+**文件**: `cli_admin.py` `batch_cmd()`
+**原因**: `from multi_agent.config import load_project_config` 导入后未使用。
+**修复**: 删除。
+**教训**: **每次写完函数后检查 unused imports。**

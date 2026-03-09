@@ -869,7 +869,6 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
             click.echo("✅ Dry-run 验证通过，未执行任何任务。")
             return
 
-        from multi_agent.config import load_project_config
         from multi_agent.graph import compile_graph
 
         results: list[dict[str, Any]] = []
