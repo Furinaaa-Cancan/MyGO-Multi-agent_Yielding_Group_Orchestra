@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.1] - 2026-03-09
+
+### Security
+- **Enterprise-grade security hardening** — full-codebase audit (31 files, 22 fixes)
+  - `app.js`: `yaml.load()` → `JSON_SCHEMA` (prevents `!!js/function` code execution)
+  - `app.js`: CORS middleware restricts origins to localhost only (CSRF prevention)
+  - `app.js`: SSE connection limit (max 10), YAML file size cap (5MB), JSON body limit (1MB)
+  - `app.js`: task_id regex tightened to match Python side, absolute path leakage removed
+  - `index.html`: XSS prevention — HTML-escape before `innerHTML` rendering
+  - `git_ops.py`: `--` separator in `git add`/`git checkout -b` (flag injection prevention)
+  - `git_ops.py`: `branch_prefix` regex validation with safe fallback
+  - `session.py`: 10MB file size cap on `session_push` reads
+  - `workspace.py`: symlink protection in `_find_oversized_files` and `cleanup_old_files`
+  - `cli_decompose.py`: 5MB cap on decompose file reads
+  - `decompose.py`: 5MB cap on decompose outbox reads
+  - `meta_graph.py`: 10MB checkpoint size cap + atomic write via `tempfile`+`os.replace`
+  - `config.py`: `subtask_id` path traversal validation on all subtask workspace functions
+  - `graph_infra.py`: `task_id` path sanitization in `log_timing`
+- **23 new security regression tests** covering all fixes
+- **Full audit report**: `docs/SECURITY_AUDIT.md`
+
 ## [0.9.0] - 2026-03-08
 
 ### Added
