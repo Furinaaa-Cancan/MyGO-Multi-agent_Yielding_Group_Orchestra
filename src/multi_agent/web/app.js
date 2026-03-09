@@ -57,8 +57,14 @@ function switchProject(rootDir) {
   return true;
 }
 
+// ── Security Constants ──────────────────────────────────
+const MAX_YAML_FILE_SIZE = 5 * 1024 * 1024; // 5 MB cap for YAML reads
+const MAX_SSE_CONNECTIONS = 10; // prevent resource exhaustion
+let activeSSEConnections = 0;
+
 // ── Validation ──────────────────────────────────────────
-const SAFE_TASK_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+// Match Python side: [a-z0-9][a-z0-9-]{2,63} for task IDs
+const SAFE_TASK_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 
 function isValidTaskId(id) {
   return SAFE_TASK_ID_RE.test(id) && !id.includes("..");
@@ -84,10 +90,15 @@ function readDashboardMd() {
 }
 
 function readYamlFile(filepath) {
+  try {
+    const stat = fs.statSync(filepath);
+    if (stat.size > MAX_YAML_FILE_SIZE) return null;
+  } catch { return null; }
   const text = readFileSafe(filepath);
   if (!text) return null;
   try {
-    return yaml.load(text) || {};
+    // SECURITY: Use JSON_SCHEMA to prevent !!js/function and other unsafe YAML tags
+    return yaml.load(text, { schema: yaml.JSON_SCHEMA }) || {};
   } catch {
     return null;
   }
@@ -163,12 +174,28 @@ function listTasks() {
 
 const app = express();
 
+// ── CORS — restrict to localhost origins only ───────────
+app.use((req, res, next) => {
+  const origin = req.headers.origin || "";
+  // Only allow requests from localhost origins (prevent CSRF from external sites)
+  if (origin && !/^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin)) {
+    return res.status(403).json({ error: "CORS: origin not allowed" });
+  }
+  if (origin) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  }
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
+
 // Serve static files (index.html)
 app.use(express.static(path.join(__dirname, "static")));
 
 // ── REST API ────────────────────────────────────────────
 
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
 
 // ── Multi-project API ──────────────────────────────────
 
@@ -179,7 +206,8 @@ app.get("/api/projects", (_req, res) => {
     const lockPath = path.join(ws, ".lock");
     let active = null;
     try { active = fs.readFileSync(lockPath, "utf-8").trim() || null; } catch { /* no lock */ }
-    projects.push({ name, root: rootDir, active_task: active, current: rootDir === currentRootDir });
+    // Don't leak absolute paths — show relative or basename only
+    projects.push({ name, active_task: active, current: rootDir === currentRootDir });
   }
   res.json({ projects, count: projects.length });
 });
@@ -291,6 +319,12 @@ function sseFormat(event, data) {
 }
 
 app.get("/api/events", (req, res) => {
+  // SSE connection limit to prevent resource exhaustion
+  if (activeSSEConnections >= MAX_SSE_CONNECTIONS) {
+    return res.status(503).json({ error: "Too many SSE connections" });
+  }
+  activeSSEConnections++;
+
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -383,6 +417,7 @@ app.get("/api/events", (req, res) => {
 
   // Cleanup on disconnect
   req.on("close", () => {
+    activeSSEConnections--;
     clearInterval(heartbeat);
     watcher.close();
   });

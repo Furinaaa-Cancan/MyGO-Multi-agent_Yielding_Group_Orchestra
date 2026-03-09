@@ -613,6 +613,9 @@
 
     function renderMarkdown(md) {
       const c = document.getElementById('dashboard-content');
+      // SECURITY: HTML-escape input FIRST to prevent stored XSS from dashboard.md content
+      // Then apply markdown-to-HTML conversions on the escaped text
+      md = esc(md);
       // Parse tables first (before line-level replacements)
       let h = md.replace(/^(\|.+\|)\n(\|[-| :]+\|)\n((?:\|.+\|\n?)+)/gm, (_, hdr, sep, body) => {
         const thCells = hdr.split('|').filter(c=>c.trim()).map(c =>

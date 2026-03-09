@@ -329,13 +329,18 @@ def _find_oversized_files(ws: Path) -> list[str]:
     if not ws.exists():
         return found
     for f in ws.rglob("*"):
-        if f.is_file():
-            try:
-                size_mb = f.stat().st_size / (1024 * 1024)
-                if size_mb > MAX_FILE_SIZE_MB:
-                    found.append(f"Oversized file ({size_mb:.1f}MB): {f.relative_to(ws)}")
-            except OSError:
-                pass
+        if not f.is_file() or f.is_symlink():
+            continue
+        # Prevent symlink escape: resolved path must stay within workspace
+        try:
+            if not str(f.resolve()).startswith(str(ws.resolve())):
+                found.append(f"Symlink escape detected: {f.relative_to(ws)}")
+                continue
+            size_mb = f.stat().st_size / (1024 * 1024)
+            if size_mb > MAX_FILE_SIZE_MB:
+                found.append(f"Oversized file ({size_mb:.1f}MB): {f.relative_to(ws)}")
+        except OSError:
+            pass
     return found
 
 
@@ -395,7 +400,13 @@ def cleanup_old_files(max_age_days: int = 7) -> int:
         if not d.exists():
             continue
         for f in d.iterdir():
-            if not f.is_file():
+            if not f.is_file() or f.is_symlink():
+                continue
+            # Prevent symlink escape: resolved path must stay within workspace
+            try:
+                if not str(f.resolve()).startswith(str(ws.resolve())):
+                    continue
+            except OSError:
                 continue
             # Don't delete active task files
             if active_task and active_task in f.name:

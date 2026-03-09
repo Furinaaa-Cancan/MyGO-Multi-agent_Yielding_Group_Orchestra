@@ -230,8 +230,8 @@ class TestGitOperations:
 
         monkeypatch.setattr("multi_agent.git_ops._git", mock_git)
         auto_commit("fix", changed=["a.py", "b.py"])
-        assert ("add", "a.py") in calls
-        assert ("add", "b.py") in calls
+        assert ("add", "--", "a.py") in calls
+        assert ("add", "--", "b.py") in calls
 
     def test_create_branch_new(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("multi_agent.git_ops.current_branch", lambda: "main")
@@ -443,3 +443,55 @@ class TestRegisterHooks:
         # Second call is no-op
         register_git_hooks()
         assert len(mock_hooks._enter.get("plan", [])) == 1
+
+
+# ── Security Tests ──────────────────────────────────────────
+
+
+class TestSecurityHardening:
+    """Tests for security fixes in git_ops module."""
+
+    def test_branch_prefix_validation_rejects_flag_injection(self) -> None:
+        """branch_prefix starting with -- must be rejected."""
+        cfg = GitConfig.from_dict({"branch_prefix": "--exec=evil"})
+        assert cfg.branch_prefix == "task/"  # falls back to default
+
+    def test_branch_prefix_validation_accepts_valid(self) -> None:
+        """Valid prefixes like 'feature/' should pass."""
+        cfg = GitConfig.from_dict({"branch_prefix": "feature/"})
+        assert cfg.branch_prefix == "feature/"
+
+    def test_branch_prefix_validation_rejects_empty(self) -> None:
+        """Empty string prefix must be rejected."""
+        cfg = GitConfig.from_dict({"branch_prefix": ""})
+        assert cfg.branch_prefix == "task/"
+
+    def test_git_add_uses_double_dash_separator(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """git add must use -- to prevent filenames like -p being treated as flags."""
+        monkeypatch.setattr("multi_agent.git_ops.has_git", lambda: True)
+        monkeypatch.setattr("multi_agent.git_ops.has_changes", lambda: True)
+        calls: list[tuple[str, ...]] = []
+
+        def mock_git(*args: str, **kw: Any) -> subprocess.CompletedProcess[str]:
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 0, stdout="abc1234\n", stderr="")
+
+        monkeypatch.setattr("multi_agent.git_ops._git", mock_git)
+        auto_commit("test", changed=["-p", "--staged"])
+        # Both filenames must be preceded by --
+        assert ("add", "--", "-p") in calls
+        assert ("add", "--", "--staged") in calls
+
+    def test_create_branch_uses_double_dash(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """create_branch must use -- separator to prevent flag injection."""
+        monkeypatch.setattr("multi_agent.git_ops.current_branch", lambda: "main")
+        calls: list[tuple[str, ...]] = []
+
+        def mock_git(*args: str, **kw: Any) -> subprocess.CompletedProcess[str]:
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        monkeypatch.setattr("multi_agent.git_ops._git", mock_git)
+        create_branch("my-task")
+        # checkout -b must end with --
+        assert calls[0] == ("checkout", "-b", "task/my-task", "--")

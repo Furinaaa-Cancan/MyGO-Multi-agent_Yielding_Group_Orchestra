@@ -142,6 +142,103 @@ class TestWorkspaceAgentValidation:
             root_dir.cache_clear()
 
 
+class TestWorkspaceSymlinkProtection:
+    """Verify workspace scans skip symlinks to prevent escape attacks."""
+
+    def test_find_oversized_skips_symlinks(self, tmp_path):
+        """Symlinked files should not be followed during oversized scan."""
+        from multi_agent.workspace import _find_oversized_files
+
+        # Create a real file and a symlink pointing outside workspace
+        real = tmp_path / "real.txt"
+        real.write_text("ok")
+        outside = tmp_path.parent / "outside_secret.txt"
+        outside.write_text("x" * 100)
+        link = tmp_path / "escape.txt"
+        try:
+            link.symlink_to(outside)
+        except OSError:
+            pytest.skip("Cannot create symlinks on this filesystem")
+
+        issues = _find_oversized_files(tmp_path)
+        # Should not report the symlinked file as oversized (it's skipped)
+        assert not any("escape.txt" in i and "Oversized" in i for i in issues)
+        # Cleanup
+        outside.unlink(missing_ok=True)
+
+    def test_cleanup_old_files_skips_symlinks(self, tmp_path, monkeypatch):
+        """cleanup_old_files must not follow symlinks outside workspace."""
+        import time
+
+        monkeypatch.setenv("MA_ROOT", str(tmp_path))
+        from multi_agent.config import root_dir
+        root_dir.cache_clear()
+        try:
+            ws = tmp_path / ".multi-agent"
+            tasks = ws / "tasks"
+            tasks.mkdir(parents=True, exist_ok=True)
+            # Create a file outside workspace
+            outside = tmp_path / "precious.txt"
+            outside.write_text("do not delete")
+            # Create symlink inside workspace pointing outside
+            link = tasks / "evil-link.yaml"
+            try:
+                link.symlink_to(outside)
+            except OSError:
+                pytest.skip("Cannot create symlinks")
+            # Set old mtime on the symlink
+            import os
+            old_time = time.time() - 30 * 86400
+            os.utime(str(link), (old_time, old_time), follow_symlinks=False)
+
+            from multi_agent.workspace import cleanup_old_files
+            cleanup_old_files(max_age_days=7)
+            # The outside file must still exist
+            assert outside.exists(), "Symlinked target was deleted!"
+        finally:
+            root_dir.cache_clear()
+            outside.unlink(missing_ok=True)
+
+
+class TestNotifyWebhookSSRF:
+    """Verify webhook URL scheme validation prevents SSRF."""
+
+    def test_file_scheme_rejected(self):
+        from multi_agent.notify import _send_webhook
+        assert _send_webhook("file:///etc/passwd", {"test": 1}) is False
+
+    def test_ftp_scheme_rejected(self):
+        from multi_agent.notify import _send_webhook
+        assert _send_webhook("ftp://evil.com/data", {"test": 1}) is False
+
+    def test_empty_url_rejected(self):
+        from multi_agent.notify import _send_webhook
+        assert _send_webhook("", {"test": 1}) is False
+
+    def test_no_scheme_rejected(self):
+        from multi_agent.notify import _send_webhook
+        assert _send_webhook("evil.com/hook", {"test": 1}) is False
+
+
+class TestNotifyAppleScriptEscape:
+    """Verify AppleScript string escaping handles injection vectors."""
+
+    def test_newline_stripped(self):
+        from multi_agent.notify import _escape_applescript
+        assert "\n" not in _escape_applescript("line1\nline2")
+        assert "\r" not in _escape_applescript("line1\rline2")
+
+    def test_quotes_escaped(self):
+        from multi_agent.notify import _escape_applescript
+        result = _escape_applescript('say "hello"')
+        assert '\\"' in result
+
+    def test_backslash_escaped(self):
+        from multi_agent.notify import _escape_applescript
+        result = _escape_applescript("path\\to\\file")
+        assert "\\\\" in result
+
+
 class TestGraphSnapshotSanitization:
     """Verify graph.py sanitizes task_id/node_name in snapshot paths."""
 

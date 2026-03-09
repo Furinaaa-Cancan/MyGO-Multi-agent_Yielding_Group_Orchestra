@@ -42,10 +42,15 @@ class GitConfig:
         commit_on = data.get("commit_on", ["build", "approve"])
         if isinstance(commit_on, str):
             commit_on = [commit_on]
+        prefix = str(data.get("branch_prefix", "task/"))
+        # Validate branch_prefix: must be safe for git branch names
+        if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9/_.-]{0,30}$', prefix):
+            _log.warning("Invalid branch_prefix '%s', falling back to 'task/'", prefix)
+            prefix = "task/"
         return cls(
             auto_commit=bool(data.get("auto_commit", False)),
             auto_branch=bool(data.get("auto_branch", False)),
-            branch_prefix=str(data.get("branch_prefix", "task/")),
+            branch_prefix=prefix,
             commit_on=tuple(commit_on),
             auto_tag=bool(data.get("auto_tag", False)),
         )
@@ -156,10 +161,11 @@ def create_branch(task_id: str, prefix: str = "task/") -> str:
         _log.info("Already on branch %s", branch_name)
         return branch_name
 
-    result = _git("checkout", "-b", branch_name)
+    # Use -- to prevent branch_name from being interpreted as a git flag
+    result = _git("checkout", "-b", branch_name, "--")
     if result.returncode != 0:
         # Branch might already exist — try switching
-        result = _git("checkout", branch_name)
+        result = _git("checkout", branch_name, "--")
         if result.returncode != 0:
             _log.error("Failed to create/switch to branch %s: %s", branch_name, result.stderr)
             raise RuntimeError(f"git branch failed: {result.stderr.strip()}")
@@ -184,9 +190,11 @@ def auto_commit(
         return None
 
     # Stage specific files if provided, otherwise stage all
+    # Use -- separator to prevent filenames starting with - from being
+    # interpreted as git flags (defense against malicious builder output)
     if changed:
         for f in changed:
-            _git("add", f)
+            _git("add", "--", f)
     else:
         _git("add", "-A")
 

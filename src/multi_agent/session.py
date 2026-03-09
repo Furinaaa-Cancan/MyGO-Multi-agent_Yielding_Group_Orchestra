@@ -981,7 +981,18 @@ def session_push(task_id: str, agent: str, file_path: str) -> dict[str, Any]:
     if current_role not in {"builder", "reviewer"}:
         raise ValueError(f"unsupported current role for push: {current_role}")
 
-    raw = Path(file_path).read_text(encoding="utf-8")
+    # Cap file size to prevent OOM from malicious/accidental huge files
+    _max_push_file = 10 * 1024 * 1024  # 10 MB
+    fp = Path(file_path)
+    try:
+        fsize = fp.stat().st_size
+    except OSError as e:
+        raise ValueError(f"Cannot read file: {e}") from e
+    if fsize > _max_push_file:
+        raise ValueError(
+            f"Push file too large: {fsize} bytes > {_max_push_file} limit"
+        )
+    raw = fp.read_text(encoding="utf-8")
     raw_obj = _parse_json_payload(raw)
     envelope = _normalize_envelope(
         raw_obj,
