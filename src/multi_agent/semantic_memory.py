@@ -271,6 +271,10 @@ def _save_embeddings_cache(cache: dict[str, list[float]]) -> None:
         _log.warning("Failed to save embeddings cache: %s", e)
 
 
+_MAX_EMBED_CHARS = 8000  # conservative limit for embedding input text
+_MAX_EMBED_CACHE_ENTRIES = 10000
+
+
 def _openai_embed(texts: list[str], model: str = "text-embedding-3-small") -> list[list[float]]:
     """Call OpenAI embeddings API. Returns list of vectors."""
     import urllib.request
@@ -279,7 +283,8 @@ def _openai_embed(texts: list[str], model: str = "text-embedding-3-small") -> li
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY not set")
 
-    payload = json.dumps({"input": texts, "model": model}).encode("utf-8")
+    capped = [t[:_MAX_EMBED_CHARS] for t in texts]
+    payload = json.dumps({"input": capped, "model": model}).encode("utf-8")
     req = urllib.request.Request(
         "https://api.openai.com/v1/embeddings",
         data=payload,
@@ -336,10 +341,19 @@ def _search_openai(
         # Cache new entry embeddings
         for i, h in idx_to_hash.items():
             cache[h] = vectors[i]
+        # Prune cache if too large
+        if len(cache) > _MAX_EMBED_CACHE_ENTRIES:
+            keys = sorted(cache.keys())
+            for k in keys[:len(cache) - _MAX_EMBED_CACHE_ENTRIES]:
+                del cache[k]
         _save_embeddings_cache(cache)
         query_vec = vectors[-1]
     else:
-        query_vec = _openai_embed([query], model=model)[0]
+        try:
+            query_vec = _openai_embed([query], model=model)[0]
+        except Exception as e:
+            _log.warning("OpenAI query embed failed, falling back to TF-IDF: %s", e)
+            return _search_tfidf(query, entries, top_k, min_score)
 
     # Score entries
     results: list[dict[str, Any]] = []

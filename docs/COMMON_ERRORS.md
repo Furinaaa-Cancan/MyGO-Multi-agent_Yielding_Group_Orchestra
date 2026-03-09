@@ -324,3 +324,25 @@ app.use("/api", (req, res, next) => {
 **原因**: `"slack" in url_lower` 会匹配任何包含 "slack" 的 URL（如 `example.com/slack-alternative`），导致误判。
 **修复**: 只匹配 `hooks.slack.com` 和 `discord.com/api/webhooks`。
 **教训**: **URL 格式检测要匹配具体域名，不要用通用子串匹配。**
+
+---
+
+## 十二、v0.13.0 Code Review 发现的 Bug（3 个）
+
+### E36: OpenAI embed 输入无长度限制
+**文件**: `semantic_memory.py` `_openai_embed()`
+**原因**: 直接传入用户内容到 OpenAI API，text-embedding-3-small 有 ~8191 token 限制，长文本会失败或浪费 token。
+**修复**: `capped = [t[:_MAX_EMBED_CHARS] for t in texts]`，`_MAX_EMBED_CHARS = 8000`。
+**教训**: **调用外部 API 前必须截断输入到 API 限制范围内。**
+
+### E37: _search_openai else 分支未包裹 try/except
+**文件**: `semantic_memory.py` `_search_openai()`
+**原因**: 当所有 entry 已缓存但 query 需要新 embed 时，`_openai_embed([query])` 在 try/except 外，失败会直接 crash 而非 fallback。
+**修复**: 将 else 分支的 `_openai_embed` 调用也包裹在 try/except 中。
+**教训**: **所有外部 API 调用都必须有异常处理，特别是有 fallback 路径时。**
+
+### E38: Embeddings cache 无大小限制
+**文件**: `semantic_memory.py` embeddings cache
+**原因**: cache 会随 entry 增长无限膨胀，占用磁盘空间。
+**修复**: `_MAX_EMBED_CACHE_ENTRIES = 10000`，超过时按 key 排序裁剪最旧的。
+**教训**: **所有持久化缓存都要有大小上限和淘汰策略。**
