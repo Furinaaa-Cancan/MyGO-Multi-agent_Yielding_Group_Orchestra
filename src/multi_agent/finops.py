@@ -17,6 +17,12 @@ from typing import Any
 
 from multi_agent.config import workspace_dir
 
+try:
+    import fcntl as _fcntl
+except ImportError:  # pragma: no cover - non-POSIX fallback
+    _fcntl = None  # type: ignore[assignment]
+fcntl = _fcntl
+
 _log = logging.getLogger(__name__)
 
 # ── Default Model Pricing (USD per 1M tokens) ────────────
@@ -75,7 +81,13 @@ def record_task_usage(
 
     try:
         with path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            if fcntl is not None:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     except OSError as e:
         _log.warning("Failed to write token usage: %s", e)
 

@@ -16,6 +16,7 @@
  *   MYGO_AUTH_TOKEN     — optional Bearer token for API authentication
  */
 
+const crypto = require("crypto");
 const express = require("express");
 const path = require("path");
 const fs = require("fs");
@@ -196,6 +197,13 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname, "static")));
 
 // ── Authentication ──────────────────────────────────────
+// Timing-safe string comparison to prevent timing attacks on token
+function safeEqual(a, b) {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
+
 // If AUTH_TOKEN is set, require Bearer token on all /api/* routes.
 // Static files are served without auth so the login UI can load.
 function authMiddleware(req, res, next) {
@@ -205,11 +213,11 @@ function authMiddleware(req, res, next) {
   if (req.path === "/api/auth/check") return next();
 
   // SSE: accept token via query param (?token=xxx) since EventSource can't set headers
-  if (req.path === "/api/events" && req.query.token === AUTH_TOKEN) return next();
+  if (req.path === "/api/events" && safeEqual(req.query.token || "", AUTH_TOKEN)) return next();
 
   const authHeader = req.headers.authorization || "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
-  if (token !== AUTH_TOKEN) {
+  if (!safeEqual(token, AUTH_TOKEN)) {
     return res.status(401).json({ error: "Unauthorized", auth_required: true });
   }
   next();
@@ -229,7 +237,7 @@ app.get("/api/auth/check", (_req, res) => {
 app.post("/api/auth/login", (req, res) => {
   if (!AUTH_TOKEN) return res.json({ ok: true });
   const { token } = req.body || {};
-  if (token === AUTH_TOKEN) {
+  if (safeEqual(token || "", AUTH_TOKEN)) {
     res.json({ ok: true });
   } else {
     res.status(401).json({ ok: false, error: "Invalid token" });
@@ -369,9 +377,9 @@ app.get("/api/finops", (_req, res) => {
   const taskIds = new Set();
 
   for (const e of entries) {
-    const inp = parseInt(e.input_tokens || 0);
-    const out = parseInt(e.output_tokens || 0);
-    const tot = parseInt(e.total_tokens || 0) || (inp + out);
+    const inp = parseInt(e.input_tokens || 0, 10);
+    const out = parseInt(e.output_tokens || 0, 10);
+    const tot = parseInt(e.total_tokens || 0, 10) || (inp + out);
     const cost = parseFloat(e.cost || 0);
     const tid = e.task_id || "unknown";
     const node = e.node || "unknown";

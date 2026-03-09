@@ -420,27 +420,31 @@ end tell
         if sys.platform == "win32":
             # Windows: create a .bat wrapper that calls bash/WSL
             bat_path = script_path + ".bat"
+            # Sanitize label for .bat title command (strip shell metacharacters)
+            import re
+            safe_label = re.sub(r'[&|<>^()!%"]', "", label)[:60] or "MyGO"
             bash_bin = shutil.which("bash")
             if bash_bin:
                 # Git Bash or WSL available — run bash script through it
                 Path(bat_path).write_text(
-                    f'@echo off\ntitle {label}\n"{bash_bin}" "{script_path}"\n',
+                    f'@echo off\ntitle {safe_label}\n"{bash_bin}" "{script_path}"\n',
                     encoding="utf-8",
                 )
             else:
                 # No bash — unlikely but write a stub
                 Path(bat_path).write_text(
-                    f'@echo off\ntitle {label}\necho No bash found. Install Git for Windows or WSL.\npause\n',
+                    f'@echo off\ntitle {safe_label}\necho No bash found. Install Git for Windows or WSL.\npause\n',
                     encoding="utf-8",
                 )
             if name == "Windows Terminal":
                 subprocess.run(
-                    ["wt.exe", "new-tab", "--title", label, "cmd", "/c", bat_path],
+                    ["wt.exe", "new-tab", "--title", safe_label, "cmd", "/c", bat_path],
                     capture_output=True, timeout=10,
                 )
             else:
+                # start requires first quoted arg as window title
                 subprocess.run(
-                    ["cmd.exe", "/c", "start", label, bat_path],
+                    ["cmd.exe", "/c", "start", f'"{safe_label}"', bat_path],
                     capture_output=True, timeout=10,
                 )
             return True

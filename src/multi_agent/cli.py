@@ -1019,7 +1019,8 @@ def _launch_dashboard_node(host: str, port: int, url: str, *, token: str = "") -
 
         click.echo(f"🎸 MyGO Dashboard (Node.js): {url}")
         if token:
-            click.echo(f"   🔒 Auth enabled (token: {token[:4]}{'*' * (len(token) - 4)})")
+            masked = token[:4] + "*" * max(0, len(token) - 4) if len(token) > 4 else "****"
+            click.echo(f"   🔒 Auth enabled (token: {masked})")
         click.echo("   Press Ctrl+C to stop\n")
 
         env = {
