@@ -1002,6 +1002,16 @@ def session_next_action(task_id: str, *, agent: str | None = None) -> dict[str, 
     else:
         ide_message = f"当前轮到 {current_agent or 'unknown'}/{current_role or 'unknown'}，你先待命。"
 
+    if actionable:
+        outbox_path = _outbox_abs_path(effective_role)
+        outbox_rel_path = _outbox_rel_path(effective_role)
+    elif current_role in {"builder", "reviewer"}:
+        outbox_path = _outbox_abs_path(current_role)
+        outbox_rel_path = _outbox_rel_path(current_role)
+    else:
+        outbox_path = None
+        outbox_rel_path = None
+
     return {
         "task_id": task_id,
         "agent": selected_agent,
@@ -1016,8 +1026,8 @@ def session_next_action(task_id: str, *, agent: str | None = None) -> dict[str, 
         "current_role": current_role or None,
         "agent_role": agent_role,
         "task_md_path": str(_task_md_path().resolve()),
-        "outbox_path": _outbox_abs_path(effective_role),
-        "outbox_rel_path": _outbox_rel_path(effective_role),
+        "outbox_path": outbox_path,
+        "outbox_rel_path": outbox_rel_path,
         "ide_message": ide_message,
         "final_status": final_status,
     }
