@@ -327,6 +327,24 @@ class TestAgentHealthCheck:
         assert results[0]["status"] == "healthy"
         assert results[0].get("auth_status") == "ready"
 
+    def test_cli_binary_missing_has_default_login_hint(self, monkeypatch):
+        from multi_agent.router import check_agent_health
+
+        agents = [
+            AgentProfile(
+                id="aider-agent",
+                driver="cli",
+                command="aider --message test",
+                capabilities=["implementation"],
+            )
+        ]
+        monkeypatch.setattr("multi_agent.router._check_cli_available", lambda _cmd: (False, "aider"))
+        results = check_agent_health(agents)
+        assert results[0]["status"] == "degraded"
+        readiness = results[0].get("readiness", {})
+        assert isinstance(readiness, dict)
+        assert "Configure OPENAI_API_KEY" in readiness.get("login_hint", "")
+
 
 class TestLoadAgentsWarning:
     """R13 F1: load_agents should log warning for malformed entries."""

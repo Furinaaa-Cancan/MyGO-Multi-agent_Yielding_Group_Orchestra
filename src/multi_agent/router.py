@@ -235,6 +235,21 @@ def _missing_required_env(agent: AgentProfile) -> list[str]:
     return missing
 
 
+def _default_login_hint_for_binary(binary: str) -> str:
+    b = binary.strip().lower()
+    if not b:
+        return ""
+    if b == "claude":
+        return "Run: claude auth login (or configure ANTHROPIC_API_KEY)"
+    if b == "aider":
+        return "Configure OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY, then retry"
+    if b == "codex":
+        return "Run: codex login (or configure OPENAI_API_KEY)"
+    if b == "gemini":
+        return "Configure GEMINI_API_KEY (or run provider login flow)"
+    return f"Check '{binary}' CLI authentication setup"
+
+
 def _run_auth_check(cmd: str, *, timeout_sec: int = 6) -> tuple[str, str]:
     """Run auth check command. Returns (status, detail).
 
@@ -278,6 +293,7 @@ def probe_agent_readiness(agent: AgentProfile, *, timeout_sec: int = 6) -> dict[
 
     Designed for UX diagnostics and fail-fast routing decisions.
     """
+    login_hint = str(agent.login_hint or "").strip()
     result: dict[str, Any] = {
         "id": agent.id,
         "driver": agent.driver,
@@ -285,7 +301,7 @@ def probe_agent_readiness(agent: AgentProfile, *, timeout_sec: int = 6) -> dict[
         "status": "ready",
         "issues": [],
         "warnings": [],
-        "login_hint": agent.login_hint or "",
+        "login_hint": login_hint,
     }
 
     if agent.driver == "file":
@@ -316,6 +332,8 @@ def probe_agent_readiness(agent: AgentProfile, *, timeout_sec: int = 6) -> dict[
     available, binary = _check_cli_available(agent.command)
     result["cli_binary"] = binary
     result["cli_available"] = available
+    if not result["login_hint"]:
+        result["login_hint"] = _default_login_hint_for_binary(binary)
     if not available:
         result["ready"] = False
         result["status"] = "binary_missing"
@@ -375,19 +393,15 @@ def _check_single_agent(agent: AgentProfile) -> dict[str, Any]:
             issues.append("CLI driver but no command configured")
             info["cli_available"] = False
         else:
-            available, binary = _check_cli_available(agent.command)
-            info["cli_available"] = available
-            info["cli_binary"] = binary
-            if not available:
-                issues.append(f"CLI binary '{binary}' not found on PATH")
-            else:
-                readiness = probe_agent_readiness(agent)
-                info["readiness"] = readiness
-                info["auth_status"] = readiness.get("status")
-                for warn in readiness.get("warnings", []):
-                    warnings.append(str(warn))
-                for issue in readiness.get("issues", []):
-                    issues.append(str(issue))
+            readiness = probe_agent_readiness(agent)
+            info["readiness"] = readiness
+            info["auth_status"] = readiness.get("status")
+            info["cli_available"] = bool(readiness.get("cli_available", False))
+            info["cli_binary"] = readiness.get("cli_binary", "")
+            for warn in readiness.get("warnings", []):
+                warnings.append(str(warn))
+            for issue in readiness.get("issues", []):
+                issues.append(str(issue))
     elif agent.driver == "gui":
         if not agent.app_name:
             issues.append("GUI driver but no app_name configured")

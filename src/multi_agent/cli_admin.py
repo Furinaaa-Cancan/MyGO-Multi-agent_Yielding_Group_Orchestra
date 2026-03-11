@@ -483,6 +483,11 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
                 click.echo(f"      {issue}")
             for warning in h.get("warnings", []):
                 click.echo(f"      warning: {warning}")
+            readiness = h.get("readiness")
+            if isinstance(readiness, dict):
+                hint = str(readiness.get("login_hint", "")).strip()
+                if hint and h["status"] != "healthy":
+                    click.echo(f"      login_hint: {hint}")
 
     # ── auth doctor ─────────────────────────────────────
 

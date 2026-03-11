@@ -159,6 +159,21 @@ class TestAgentsCommand:
         assert result.exit_code == 0
         assert "no CLI binary" in result.output
 
+    def test_agents_with_login_hint(self, runner, workspace):
+        with patch("multi_agent.router.load_agents", return_value=[MagicMock(id="claude")]), \
+             patch("multi_agent.router.check_agent_health", return_value=[
+                 {
+                     "id": "claude",
+                     "status": "degraded",
+                     "issues": ["auth_check failed: not logged in"],
+                     "warnings": [],
+                     "readiness": {"login_hint": "Run: claude auth login"},
+                 },
+             ]):
+            result = runner.invoke(main, ["agents"])
+        assert result.exit_code == 0
+        assert "Run: claude auth login" in result.output
+
 
 # ── auth doctor command ──────────────────────────────────
 
