@@ -256,6 +256,22 @@ def session_pull_cmd(task_id: str, agent: str, out: str | None, json_meta: bool)
     click.echo(prompt_text.rstrip("\n"))
 
 
+@session.command("next")
+@click.option("--task-id", required=True, help="Task ID")
+@click.option("--agent", default=None, help="Agent ID（默认当前 owner）")
+@handle_errors
+def session_next_cmd(task_id: str, agent: str | None) -> None:
+    """输出某个 agent 的下一步执行动作（含 IDE 可复制消息）."""
+    from multi_agent.session import session_next_action
+
+    _validate_task_id(task_id)
+    if agent:
+        from multi_agent._utils import validate_agent_id as _validate_agent_id_core
+        _validate_agent_id_core(agent)
+    payload = session_next_action(task_id, agent=agent)
+    click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
 @session.command("push")
 @click.option("--task-id", required=True, help="Task ID")
 @click.option("--agent", required=True, help="Agent ID")

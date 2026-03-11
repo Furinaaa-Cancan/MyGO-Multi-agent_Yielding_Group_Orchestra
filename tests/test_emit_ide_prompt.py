@@ -86,3 +86,30 @@ def test_emit_ide_prompt_has_no_terminal_commands(emit_root):
     assert "python3" not in out
     assert "ide_hub submit" not in out
     assert "outbox" in out
+
+
+def test_emit_ide_prompt_json_meta_contains_next_action(emit_root):
+    repo_root = Path(__file__).resolve().parents[1]
+    script = repo_root / "scripts" / "emit_ide_prompt.py"
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(repo_root / "src")
+    res = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--task",
+            str(emit_root["task_file"]),
+            "--agent",
+            "windsurf",
+            "--json-meta",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    payload = json.loads(res.stdout)
+    assert "session" in payload
+    assert "next_action" in payload
+    assert payload["next_action"]["agent"] == "windsurf"
+    assert payload["next_action"]["actionable"] is True

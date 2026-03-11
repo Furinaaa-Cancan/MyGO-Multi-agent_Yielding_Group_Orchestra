@@ -61,9 +61,11 @@ my go "修复 bug" --builder claude --reviewer codex
 
 ```bash
 my session start --task task.json --mode strict
-my session pull --task-id <task_id> --agent windsurf     # Windsurf 写代码
+my session next --task-id <task_id> --agent windsurf     # 看 Windsurf 当前是否可执行
+my session pull --task-id <task_id> --agent windsurf     # 拉取 Windsurf prompt
 my session push --task-id <task_id> --agent windsurf --file builder.json
-my session pull --task-id <task_id> --agent cursor       # Cursor 审查
+my session next --task-id <task_id> --agent cursor       # 看 Cursor 当前是否可执行
+my session pull --task-id <task_id> --agent cursor       # 拉取 Cursor prompt
 my session push --task-id <task_id> --agent cursor --file reviewer.json
 ```
 
@@ -126,9 +128,15 @@ my go --template crud --var model=User --var endpoint=users
 | 命令 | 作用 |
 |---|---|
 | `my session start --task <json> --mode strict` | 初始化会话 |
+| `my session next --task-id <id> --agent <agent>` | 获取该 agent 下一步动作（含 checklist + IDE 可复制消息） |
 | `my session pull --task-id <id> --agent <agent>` | 为指定 IDE 生成 prompt |
 | `my session push --task-id <id> --agent <agent> --file <json>` | 提交该 IDE 的结果 |
 | `my session status --task-id <id>` | 查看会话状态 |
+
+IDE 手动协作建议固定 3 步循环：
+1. `my session next`：确认是不是当前 owner（避免误做）。
+2. `my session pull`：把 prompt 丢给对应 IDE。
+3. IDE 回写 JSON 到 outbox 后执行 `my session push` 推进到下一角色。
 
 ---
 

@@ -185,6 +185,86 @@ def test_session_cli_flow_done(runner: CliRunner, session_root):
     assert "POST /users contract validated in reviewer stage" in memory_text
 
 
+def test_session_next_reports_actionability_and_ide_message(runner: CliRunner, session_root):
+    task_file = str(session_root["task_file"])
+    res = runner.invoke(main, ["session", "start", "--task", task_file, "--mode", "strict"])
+    assert res.exit_code == 0
+
+    res = runner.invoke(
+        main,
+        ["session", "next", "--task-id", "task-session-abc", "--agent", "windsurf"],
+    )
+    assert res.exit_code == 0
+    payload = json.loads(res.output)
+    assert payload["actionable"] is True
+    assert payload["state"] == "RUNNING"
+    assert payload["event_hint"] == "builder_done"
+    assert payload["outbox_rel_path"] == ".multi-agent/outbox/builder.json"
+    assert "@.multi-agent/TASK.md" in payload["ide_message"]
+
+    res = runner.invoke(
+        main,
+        ["session", "next", "--task-id", "task-session-abc", "--agent", "antigravity"],
+    )
+    assert res.exit_code == 0
+    standby = json.loads(res.output)
+    assert standby["actionable"] is False
+    assert "current owner is windsurf/builder" in standby["reason"]
+
+    builder_env = {
+        "protocol_version": "1.0",
+        "task_id": "task-session-abc",
+        "lane_id": "main",
+        "agent": "windsurf",
+        "role": "builder",
+        "state_seen": "RUNNING",
+        "result": {
+            "status": "completed",
+            "summary": "implemented endpoint",
+            "changed_files": ["/tmp/app/main.py"],
+            "check_results": {"lint": "pass", "unit_test": "pass"},
+        },
+        "recommended_event": "builder_done",
+        "evidence_files": [],
+        "created_at": "2026-03-02T00:00:00Z",
+    }
+    builder_path = _write_json(session_root["root"] / "builder-next.json", builder_env)
+    res = runner.invoke(
+        main,
+        ["session", "push", "--task-id", "task-session-abc", "--agent", "windsurf", "--file", str(builder_path)],
+    )
+    assert res.exit_code == 0
+
+    res = runner.invoke(
+        main,
+        ["session", "next", "--task-id", "task-session-abc", "--agent", "antigravity"],
+    )
+    assert res.exit_code == 0
+    reviewer_turn = json.loads(res.output)
+    assert reviewer_turn["actionable"] is True
+    assert reviewer_turn["state"] == "VERIFYING"
+    assert reviewer_turn["event_hint"] == "review_pass|review_fail"
+    assert reviewer_turn["outbox_rel_path"] == ".multi-agent/outbox/reviewer.json"
+
+
+def test_session_pull_json_meta_contains_ide_paths_and_template(runner: CliRunner, session_root):
+    task_file = str(session_root["task_file"])
+    res = runner.invoke(main, ["session", "start", "--task", task_file, "--mode", "strict"])
+    assert res.exit_code == 0
+
+    res = runner.invoke(
+        main,
+        ["session", "pull", "--task-id", "task-session-abc", "--agent", "windsurf", "--json-meta"],
+    )
+    assert res.exit_code == 0
+    payload = json.loads(res.output)
+    assert payload["actionable"] is True
+    assert payload["outbox_rel_path"] == ".multi-agent/outbox/builder.json"
+    assert payload["task_md_path"].endswith("/.multi-agent/TASK.md")
+    assert isinstance(payload["result_template"], dict)
+    assert payload["result_template"]["status"] == "completed|blocked"
+
+
 def test_session_start_failure_releases_lock_and_marks_failed(runner: CliRunner, session_root):
     task_file = str(session_root["task_file"])
     bad_config = session_root["root"] / "config" / "workmode-bad.yaml"

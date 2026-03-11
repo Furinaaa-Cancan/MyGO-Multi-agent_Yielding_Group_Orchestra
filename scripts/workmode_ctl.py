@@ -87,24 +87,11 @@ def command_init_session(args: argparse.Namespace) -> int:
 
 
 def command_next_action(args: argparse.Namespace) -> int:
-    from multi_agent.session import session_status
+    from multi_agent.session import session_next_action
 
     task_id = _load_task_id(pathlib.Path(args.task))
-    status = session_status(task_id)
-    owner = status.get("current_agent")
-    role = status.get("current_role")
-    state = status.get("state")
-    actionable = owner == args.agent and state not in {"DONE", "FAILED", "ESCALATED", "CANCELLED"}
-    payload = {
-        "task_id": task_id,
-        "agent": args.agent,
-        "role": role,
-        "state": state,
-        "actionable": actionable,
-        "reason": "compat mode from session status",
-        "next_owner_agent": owner,
-        "deprecated_note": "Use `my session status/pull` instead.",
-    }
+    payload = session_next_action(task_id, agent=args.agent)
+    payload["deprecated_note"] = "Use `my session next --task-id ... --agent ...` instead."
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 

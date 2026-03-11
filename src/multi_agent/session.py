@@ -340,6 +340,21 @@ def _role_for_agent(roles: SessionRoles, agent: str) -> str:
     return "observer"
 
 
+def _outbox_rel_path(role: str | None) -> str:
+    if role not in {"builder", "reviewer"}:
+        return ".multi-agent/outbox/builder.json"
+    return f".multi-agent/outbox/{role}.json"
+
+
+def _outbox_abs_path(role: str | None) -> str:
+    return str((outbox_dir() / f"{role if role in {'builder', 'reviewer'} else 'builder'}.json").resolve())
+
+
+def _ide_message_for_role(role: str | None) -> str:
+    rel = _outbox_rel_path(role)
+    return f"帮我完成 @.multi-agent/TASK.md 里的任务，完成后将 JSON 输出保存到 @{rel}"
+
+
 def _result_template(role: str) -> dict[str, Any]:
     if role == "builder":
         return {
@@ -673,11 +688,17 @@ def _build_task_status(task_id: str, roles: SessionRoles | None = None) -> dict[
     for a in {roles_obj.builder, roles_obj.reviewer, roles_obj.orchestrator}:
         prompts[a] = str(_prompt_path(a))
 
+    active_role = role if role in {"builder", "reviewer"} else None
+
     return {
         "task_id": task_id,
         "state": state,
         "current_role": role,
         "current_agent": agent,
+        "task_md_path": str(_task_md_path().resolve()),
+        "active_outbox_path": _outbox_abs_path(active_role) if active_role else None,
+        "active_outbox_rel_path": _outbox_rel_path(active_role) if active_role else None,
+        "ide_message": _ide_message_for_role(active_role) if active_role else None,
         "roles": roles_obj.as_dict(),
         "final_status": (str(vals.get("final_status", "")).lower() or None),
         "retry_count": int(vals.get("retry_count", 0) or 0),
@@ -886,14 +907,119 @@ def session_pull(task_id: str, agent: str, *, out: str | None = None) -> dict[st
         lane_id="main",
     )
 
+    owner_role = str(meta.get("current_role") or "")
+    agent_role = str(meta.get("agent_role") or "observer")
+    effective_role = owner_role if owner_role in {"builder", "reviewer"} else (
+        agent_role if agent_role in {"builder", "reviewer"} else "builder"
+    )
+
     return {
         "task_id": task_id,
         "agent": agent,
+        "agent_role": agent_role,
         "prompt_path": str(out_path),
         "actionable": bool(meta.get("actionable")),
         "state": meta.get("state"),
         "current_agent": meta.get("current_agent"),
         "current_role": meta.get("current_role"),
+        "task_md_path": str(_task_md_path().resolve()),
+        "outbox_path": _outbox_abs_path(effective_role),
+        "outbox_rel_path": _outbox_rel_path(effective_role),
+        "ide_message": _ide_message_for_role(effective_role),
+        "result_template": _result_template(effective_role),
+    }
+
+
+def session_next_action(task_id: str, *, agent: str | None = None) -> dict[str, Any]:
+    """Return the next actionable guidance for an agent in IDE-first workflow."""
+    _validate_task_id(task_id)
+    status = _build_task_status(task_id)
+
+    roles_map = status.get("roles", {})
+    roles = SessionRoles(
+        orchestrator=str(roles_map.get("orchestrator", "codex")) or "codex",
+        builder=str(roles_map.get("builder", "builder")) or "builder",
+        reviewer=str(roles_map.get("reviewer", "reviewer")) or "reviewer",
+    )
+
+    current_agent = str(status.get("current_agent") or "")
+    current_role = str(status.get("current_role") or "")
+    state = str(status.get("state") or "UNKNOWN")
+    final_status = status.get("final_status")
+
+    selected_agent = str(agent or current_agent or roles.builder).strip()
+    _validate_agent_id(selected_agent)
+    agent_role = _role_for_agent(roles, selected_agent)
+
+    actionable = (
+        state not in TERMINAL_STATES
+        and selected_agent == current_agent
+        and current_role in {"builder", "reviewer"}
+    )
+    effective_role = (
+        current_role
+        if current_role in {"builder", "reviewer"}
+        else (agent_role if agent_role in {"builder", "reviewer"} else "builder")
+    )
+
+    if actionable and effective_role == "builder":
+        checklist = [
+            "读取并执行 .multi-agent/TASK.md 中的 Builder 要求",
+            "完成 done_criteria 并提交结构化 JSON（envelope）",
+            "将结果保存到 .multi-agent/outbox/builder.json",
+        ]
+    elif actionable and effective_role == "reviewer":
+        checklist = [
+            "读取并执行 .multi-agent/TASK.md 中的 Reviewer 要求",
+            "独立验证 builder 结果并给出 decision",
+            "将结果保存到 .multi-agent/outbox/reviewer.json",
+        ]
+    elif state in TERMINAL_STATES:
+        checklist = ["任务已到终态，无需继续执行。"]
+    elif current_agent and current_role:
+        checklist = [
+            f"当前 owner 是 {current_agent}/{current_role}，本 agent 暂不可执行。",
+            "等待 owner 提交后再拉取下一轮动作。",
+        ]
+    else:
+        checklist = ["当前没有可执行 owner，请检查会话状态。"]
+
+    if state in TERMINAL_STATES:
+        reason = f"task is terminal ({state.lower()})"
+    elif actionable:
+        reason = "you are current owner"
+    elif current_agent and current_role:
+        reason = f"current owner is {current_agent}/{current_role}"
+    else:
+        reason = "no active owner"
+
+    event_hint = _recommended_event(effective_role) if actionable else "none"
+
+    if actionable:
+        ide_message = _ide_message_for_role(effective_role)
+    elif state in TERMINAL_STATES:
+        ide_message = f"任务 {task_id} 已结束（{state.lower()}），无需继续提交。"
+    else:
+        ide_message = f"当前轮到 {current_agent or 'unknown'}/{current_role or 'unknown'}，你先待命。"
+
+    return {
+        "task_id": task_id,
+        "agent": selected_agent,
+        "role": current_role or None,
+        "state": state,
+        "actionable": actionable,
+        "checklist": checklist,
+        "event_hint": event_hint,
+        "reason": reason,
+        "next_owner_agent": current_agent or None,
+        "current_agent": current_agent or None,
+        "current_role": current_role or None,
+        "agent_role": agent_role,
+        "task_md_path": str(_task_md_path().resolve()),
+        "outbox_path": _outbox_abs_path(effective_role),
+        "outbox_rel_path": _outbox_rel_path(effective_role),
+        "ide_message": ide_message,
+        "final_status": final_status,
     }
 
 

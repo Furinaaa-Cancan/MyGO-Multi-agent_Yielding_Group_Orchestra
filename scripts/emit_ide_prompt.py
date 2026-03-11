@@ -16,6 +16,7 @@ if str(SRC_DIR) not in sys.path:
 
 from multi_agent.session import (
     activate_project_root_for_task_file,
+    session_next_action,
     session_pull,
     session_status,
 )
@@ -53,7 +54,9 @@ def main() -> int:
     if args.json_meta:
         # Add current session status for compatibility tooling.
         status = session_status(task_id)
+        next_action = session_next_action(task_id, agent=args.agent)
         payload["session"] = status
+        payload["next_action"] = next_action
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
 

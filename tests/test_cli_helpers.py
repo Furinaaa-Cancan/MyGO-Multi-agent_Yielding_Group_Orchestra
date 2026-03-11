@@ -438,6 +438,39 @@ class TestSessionPullCmd:
         assert "Hello builder prompt" in result.output
 
 
+class TestSessionNextCmd:
+    def test_next_outputs_json(self):
+        """session next should print JSON payload from session_next_action."""
+        from click.testing import CliRunner
+
+        runner = CliRunner()
+        payload = {
+            "task_id": "task-next",
+            "agent": "windsurf",
+            "actionable": True,
+            "checklist": ["step1"],
+        }
+        with patch("multi_agent.session.session_next_action", return_value=payload):
+            result = runner.invoke(
+                main,
+                ["session", "next", "--task-id", "task-next", "--agent", "windsurf"],
+            )
+        assert result.exit_code == 0
+        assert "\"actionable\": true" in result.output
+
+    def test_next_invalid_agent_id_fails(self):
+        """session next validates agent id when provided."""
+        from click.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["session", "next", "--task-id", "task-next", "--agent", "../evil"],
+        )
+        assert result.exit_code != 0
+        assert "invalid agent_id" in result.output
+
+
 class TestGoCommandLockRelease:
     """Regression: P1 — go command must release lock on unexpected errors."""
 
