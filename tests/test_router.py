@@ -272,6 +272,61 @@ class TestAgentHealthCheck:
         results = check_agent_health(agents)
         assert any("no capabilities" in i for i in results[0]["issues"])
 
+    def test_cli_missing_required_env_degraded(self, monkeypatch):
+        from multi_agent.router import check_agent_health
+
+        monkeypatch.delenv("TEST_NEED_KEY", raising=False)
+        agents = [
+            AgentProfile(
+                id="cli-auth",
+                driver="cli",
+                command="echo ok",
+                required_env=["TEST_NEED_KEY"],
+                capabilities=["implementation"],
+            )
+        ]
+        results = check_agent_health(agents)
+        assert results[0]["status"] == "degraded"
+        assert any("missing required env" in i for i in results[0]["issues"])
+
+    def test_cli_auth_check_failure_degraded(self, monkeypatch):
+        from multi_agent.router import check_agent_health
+        import sys
+
+        monkeypatch.setenv("TEST_NEED_KEY", "1")
+        agents = [
+            AgentProfile(
+                id="cli-auth",
+                driver="cli",
+                command="echo ok",
+                auth_check=f"{sys.executable} -c 'import sys; sys.exit(2)'",
+                required_env=["TEST_NEED_KEY"],
+                capabilities=["implementation"],
+            )
+        ]
+        results = check_agent_health(agents)
+        assert results[0]["status"] == "degraded"
+        assert any("auth_check failed" in i for i in results[0]["issues"])
+
+    def test_cli_auth_check_success_healthy(self, monkeypatch):
+        from multi_agent.router import check_agent_health
+        import sys
+
+        monkeypatch.setenv("TEST_NEED_KEY", "1")
+        agents = [
+            AgentProfile(
+                id="cli-auth",
+                driver="cli",
+                command="echo ok",
+                auth_check=f"{sys.executable} -c 'import sys; sys.exit(0)'",
+                required_env=["TEST_NEED_KEY"],
+                capabilities=["implementation"],
+            )
+        ]
+        results = check_agent_health(agents)
+        assert results[0]["status"] == "healthy"
+        assert results[0].get("auth_status") == "ready"
+
 
 class TestLoadAgentsWarning:
     """R13 F1: load_agents should log warning for malformed entries."""

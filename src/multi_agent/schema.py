@@ -256,6 +256,9 @@ class AgentProfile(BaseModel):
     driver: str = "file"  # "file" (IDE, manual) | "cli" (auto-spawn) | "gui" (macOS AppleScript)
     command: str = ""      # CLI command template (for driver="cli")
     app_name: str = ""     # macOS app name (for driver="gui", e.g. "Codex")
+    auth_check: str = ""   # Optional CLI command to verify login/session status (exit 0 = ready)
+    login_hint: str = ""   # Optional human hint shown when auth_check fails
+    required_env: list[str] = Field(default_factory=list)  # Required env vars for this agent
     capabilities: list[str] = Field(default_factory=list)
     reliability: float = 0.9
     queue_health: float = 0.9

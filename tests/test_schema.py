@@ -126,6 +126,19 @@ class TestAgentProfile:
         assert p.driver == "cli"
         assert "{task_file}" in p.command
 
+    def test_cli_auth_fields(self):
+        p = AgentProfile(
+            id="claude",
+            driver="cli",
+            command="claude -p '{task_file}'",
+            required_env=["ANTHROPIC_API_KEY"],
+            auth_check="claude auth status",
+            login_hint="Run: claude auth login",
+        )
+        assert p.required_env == ["ANTHROPIC_API_KEY"]
+        assert p.auth_check == "claude auth status"
+        assert "auth login" in p.login_hint
+
 
 class TestSubTask:
     """Task 5: Verify SubTask new fields."""

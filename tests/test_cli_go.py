@@ -233,6 +233,14 @@ class TestGoCommand:
         assert result.exit_code == 0
         rwl.assert_not_called()
 
+    def test_go_fails_fast_when_agent_not_ready(self, runner):
+        with patch("multi_agent.graph.compile_graph", return_value=_mock_app()), \
+             patch("multi_agent.cli.ensure_workspace"), \
+             patch("multi_agent.cli._resolve_and_validate_agents_for_run", side_effect=Exception("builder not ready")):
+            result = runner.invoke(main, ["go", "test"])
+        assert result.exit_code != 0
+        assert "builder not ready" in result.output
+
     def test_decompose_flag(self, runner):
         with patch("multi_agent.graph.compile_graph", return_value=_mock_app()), \
              patch("multi_agent.cli.ensure_workspace"), \

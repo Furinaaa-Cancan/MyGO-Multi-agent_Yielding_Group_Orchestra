@@ -89,6 +89,7 @@ pip install -e ".[dev]"
 ```bash
 my init          # 创建 skills/ + agents/ + .multi-agent/
 my agents        # 检查 agent 健康状态
+my auth doctor   # 检查 CLI/GUI agent 登录与认证就绪状态
 my list-skills   # 查看可用技能
 ```
 
@@ -157,6 +158,9 @@ agents:
   - id: claude
     driver: cli                     # CLI 全自动模式
     command: "claude -p '...' --allowedTools Read,Edit,Bash,Write"
+    required_env: ["ANTHROPIC_API_KEY"]
+    auth_check: "claude auth status"
+    login_hint: "Run: claude auth login"
     capabilities: [planning, implementation, testing, review, docs, security]
 
 role_strategy: manual
@@ -367,6 +371,7 @@ skills/                    # 技能定义 (contract.yaml)
 | `my trace --task-id <id>` | 事件轨迹 (tree/mermaid) |
 | `my doctor` | 工作空间健康检查 |
 | `my agents` | Agent 状态 |
+| `my auth doctor` | Agent 登录/认证就绪检查 |
 | `my list-skills` | 可用技能 |
 | `my render "<需求>"` | 预览 prompt |
 | `my schema` | 导出 JSON Schema |

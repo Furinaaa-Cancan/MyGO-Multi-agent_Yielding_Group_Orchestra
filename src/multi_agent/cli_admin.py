@@ -2,7 +2,7 @@
 
 These commands handle introspection, maintenance, and diagnostics:
   history, init, render, cache-stats, schema, cleanup, doctor,
-  agents, list-skills, export, replay, version, trace.
+  agents, auth doctor, list-skills, export, replay, version, trace.
 
 Registered onto the main Click group via register_admin_commands().
 """
@@ -481,6 +481,80 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
             click.echo(f"  {status_icon} {h['id']} — {h['status']}")
             for issue in h["issues"]:
                 click.echo(f"      {issue}")
+            for warning in h.get("warnings", []):
+                click.echo(f"      warning: {warning}")
+
+    # ── auth doctor ─────────────────────────────────────
+
+    @main.group("auth")
+    def auth_group() -> None:
+        """认证与登录状态诊断命令."""
+
+    @auth_group.command("doctor")
+    @handle_errors
+    @click.option("--agent", "agent_id", default=None, help="仅检查指定 agent")
+    @click.option("--timeout", "timeout_sec", default=6, type=int, help="auth_check 超时时间（秒）")
+    @click.option("--json", "as_json", is_flag=True, default=False, help="JSON 输出")
+    @click.option("--strict", is_flag=True, default=False, help="若存在 not-ready agent 则返回非零退出码")
+    def auth_doctor(agent_id: str | None, timeout_sec: int, as_json: bool, strict: bool) -> None:
+        """检查 CLI/GUI agent 的运行就绪与登录状态."""
+        import json as _json
+
+        from multi_agent.router import load_agents, probe_agent_readiness
+
+        agent_list = load_agents()
+        if agent_id:
+            agent_list = [a for a in agent_list if a.id == agent_id]
+            if not agent_list:
+                click.echo(f"❌ 未找到 agent: {agent_id}", err=True)
+                raise click.exceptions.Exit(1)
+        if not agent_list:
+            click.echo("暂无配置的 agent")
+            return
+
+        checks = [probe_agent_readiness(a, timeout_sec=timeout_sec) for a in agent_list]
+        not_ready = [c for c in checks if not bool(c.get("ready", False))]
+
+        if as_json:
+            click.echo(
+                _json.dumps(
+                    {
+                        "checked": len(checks),
+                        "not_ready": len(not_ready),
+                        "agents": checks,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            if strict and not_ready:
+                raise click.exceptions.Exit(1)
+            return
+
+        for item in checks:
+            status = str(item.get("status", "unknown"))
+            ready = bool(item.get("ready", False))
+            icon = "✅" if ready else ("⚪" if status in {"manual", "gui_ready", "ready_unverified"} else "❌")
+            click.echo(f"  {icon} {item.get('id')} [{item.get('driver')}] — {status}")
+
+            if item.get("cli_binary"):
+                click.echo(f"      binary: {item['cli_binary']}")
+            if item.get("missing_env"):
+                click.echo(f"      missing_env: {', '.join(item['missing_env'])}")
+            for warn in item.get("warnings", []):
+                click.echo(f"      warning: {warn}")
+            for issue in item.get("issues", []):
+                click.echo(f"      issue: {issue}")
+            hint = str(item.get("login_hint", "")).strip()
+            if hint and not ready:
+                click.echo(f"      login_hint: {hint}")
+
+        if not_ready:
+            click.echo(f"\n⚠️  not ready: {len(not_ready)}/{len(checks)}")
+            if strict:
+                raise click.exceptions.Exit(1)
+        else:
+            click.echo(f"\n✅ all ready: {len(checks)}/{len(checks)}")
 
     # ── list-skills ─────────────────────────────────────
 

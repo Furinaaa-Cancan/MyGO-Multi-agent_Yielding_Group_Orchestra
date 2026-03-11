@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import shlex
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +64,9 @@ def load_agents(path: Path | None = None) -> list[AgentProfile]:
                 driver=a.get("driver", "file"),
                 command=a.get("command", ""),
                 app_name=a.get("app_name", ""),
+                auth_check=a.get("auth_check", ""),
+                login_hint=a.get("login_hint", ""),
+                required_env=a.get("required_env", []),
                 capabilities=a.get("capabilities", []),
                 reliability=a.get("reliability", 0.9),
                 queue_health=a.get("queue_health", 0.9),
@@ -216,9 +222,145 @@ def _check_cli_available(command: str) -> tuple[bool, str]:
     return shutil.which(binary) is not None, binary
 
 
+def _missing_required_env(agent: AgentProfile) -> list[str]:
+    missing: list[str] = []
+    for key in agent.required_env:
+        if not isinstance(key, str):
+            continue
+        env_key = key.strip()
+        if not env_key:
+            continue
+        if not os.environ.get(env_key):
+            missing.append(env_key)
+    return missing
+
+
+def _run_auth_check(cmd: str, *, timeout_sec: int = 6) -> tuple[str, str]:
+    """Run auth check command. Returns (status, detail).
+
+    status:
+      - ready: check command exited 0
+      - failed: check command exited non-zero
+      - timeout: command timed out
+      - invalid: command parse failed
+      - error: command execution failed
+    """
+    try:
+        cmd_list = shlex.split(cmd)
+    except ValueError as exc:
+        return "invalid", f"invalid auth_check command: {exc}"
+    if not cmd_list:
+        return "invalid", "empty auth_check command"
+
+    try:
+        proc = subprocess.run(
+            cmd_list,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return "timeout", f"auth_check timed out after {timeout_sec}s"
+    except OSError as exc:
+        return "error", f"auth_check execution error: {exc}"
+
+    if proc.returncode == 0:
+        return "ready", "auth_check passed"
+    stderr = (proc.stderr or "").strip()
+    stdout = (proc.stdout or "").strip()
+    detail = stderr or stdout or f"auth_check exited {proc.returncode}"
+    return "failed", detail[:300]
+
+
+def probe_agent_readiness(agent: AgentProfile, *, timeout_sec: int = 6) -> dict[str, Any]:
+    """Probe runtime readiness for a single agent.
+
+    Designed for UX diagnostics and fail-fast routing decisions.
+    """
+    result: dict[str, Any] = {
+        "id": agent.id,
+        "driver": agent.driver,
+        "ready": True,
+        "status": "ready",
+        "issues": [],
+        "warnings": [],
+        "login_hint": agent.login_hint or "",
+    }
+
+    if agent.driver == "file":
+        result["status"] = "manual"
+        return result
+
+    if agent.driver == "gui":
+        if not agent.app_name:
+            result["ready"] = False
+            result["status"] = "misconfigured"
+            result["issues"].append("GUI driver but no app_name configured")
+        else:
+            result["status"] = "gui_ready"
+        return result
+
+    if agent.driver != "cli":
+        result["ready"] = False
+        result["status"] = "misconfigured"
+        result["issues"].append(f"unknown driver: {agent.driver}")
+        return result
+
+    if not agent.command:
+        result["ready"] = False
+        result["status"] = "misconfigured"
+        result["issues"].append("CLI driver but no command configured")
+        return result
+
+    available, binary = _check_cli_available(agent.command)
+    result["cli_binary"] = binary
+    result["cli_available"] = available
+    if not available:
+        result["ready"] = False
+        result["status"] = "binary_missing"
+        result["issues"].append(f"CLI binary '{binary}' not found on PATH")
+        return result
+
+    missing_env = _missing_required_env(agent)
+    result["missing_env"] = missing_env
+    if missing_env:
+        result["ready"] = False
+        result["status"] = "missing_env"
+        result["issues"].append(f"missing required env: {', '.join(missing_env)}")
+        return result
+
+    auth_check = agent.auth_check.strip()
+    if not auth_check:
+        result["status"] = "ready_unverified"
+        result["warnings"].append("auth_check not configured; login status not verified")
+        return result
+
+    auth_status, detail = _run_auth_check(auth_check, timeout_sec=timeout_sec)
+    result["auth_check"] = auth_check
+    result["auth_check_status"] = auth_status
+    result["auth_check_detail"] = detail
+    if auth_status == "ready":
+        result["status"] = "ready"
+        return result
+
+    result["ready"] = False
+    result["status"] = "auth_failed"
+    result["issues"].append(f"auth_check failed: {detail}")
+    return result
+
+
+def get_agent_profile(agent_id: str, path: Path | None = None) -> AgentProfile | None:
+    for agent in load_agents(path):
+        if agent.id == agent_id:
+            return agent
+    return None
+
+
 def _check_single_agent(agent: AgentProfile) -> dict[str, Any]:
     """Check health of a single agent. Returns info dict with status and issues."""
     issues: list[str] = []
+    warnings: list[str] = []
     info: dict[str, Any] = {"id": agent.id, "driver": agent.driver, "capabilities": agent.capabilities}
 
     if agent.reliability < 0.5:
@@ -238,6 +380,14 @@ def _check_single_agent(agent: AgentProfile) -> dict[str, Any]:
             info["cli_binary"] = binary
             if not available:
                 issues.append(f"CLI binary '{binary}' not found on PATH")
+            else:
+                readiness = probe_agent_readiness(agent)
+                info["readiness"] = readiness
+                info["auth_status"] = readiness.get("status")
+                for warn in readiness.get("warnings", []):
+                    warnings.append(str(warn))
+                for issue in readiness.get("issues", []):
+                    issues.append(str(issue))
     elif agent.driver == "gui":
         if not agent.app_name:
             issues.append("GUI driver but no app_name configured")
@@ -247,6 +397,7 @@ def _check_single_agent(agent: AgentProfile) -> dict[str, Any]:
 
     info["status"] = "healthy" if not issues else "degraded"
     info["issues"] = issues
+    info["warnings"] = warnings
     return info
 
 

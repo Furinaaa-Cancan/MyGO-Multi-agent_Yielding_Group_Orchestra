@@ -160,6 +160,73 @@ class TestAgentsCommand:
         assert "no CLI binary" in result.output
 
 
+# ── auth doctor command ──────────────────────────────────
+
+
+class TestAuthDoctorCommand:
+    def test_auth_doctor_human_output(self, runner, workspace):
+        fake_agents = [MagicMock(id="claude"), MagicMock(id="windsurf")]
+        with patch("multi_agent.router.load_agents", return_value=fake_agents), \
+             patch("multi_agent.router.probe_agent_readiness", side_effect=[
+                 {
+                     "id": "claude",
+                     "driver": "cli",
+                     "ready": False,
+                     "status": "auth_failed",
+                     "issues": ["auth_check failed: not logged in"],
+                     "warnings": [],
+                     "login_hint": "Run claude login",
+                 },
+                 {
+                     "id": "windsurf",
+                     "driver": "file",
+                     "ready": True,
+                     "status": "manual",
+                     "issues": [],
+                     "warnings": [],
+                     "login_hint": "",
+                 },
+             ]):
+            result = runner.invoke(main, ["auth", "doctor"])
+        assert result.exit_code == 0
+        assert "auth_failed" in result.output
+        assert "Run claude login" in result.output
+
+    def test_auth_doctor_strict_fails_when_not_ready(self, runner, workspace):
+        fake_agents = [MagicMock(id="claude")]
+        with patch("multi_agent.router.load_agents", return_value=fake_agents), \
+             patch("multi_agent.router.probe_agent_readiness", return_value={
+                 "id": "claude",
+                 "driver": "cli",
+                 "ready": False,
+                 "status": "missing_env",
+                 "issues": ["missing required env: OPENAI_API_KEY"],
+                 "warnings": [],
+                 "login_hint": "",
+             }):
+            result = runner.invoke(main, ["auth", "doctor", "--strict"])
+        assert result.exit_code != 0
+        assert "not ready" in result.output
+
+    def test_auth_doctor_json_output(self, runner, workspace):
+        fake_agents = [MagicMock(id="windsurf")]
+        with patch("multi_agent.router.load_agents", return_value=fake_agents), \
+             patch("multi_agent.router.probe_agent_readiness", return_value={
+                 "id": "windsurf",
+                 "driver": "file",
+                 "ready": True,
+                 "status": "manual",
+                 "issues": [],
+                 "warnings": [],
+                 "login_hint": "",
+             }):
+            result = runner.invoke(main, ["auth", "doctor", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["checked"] == 1
+        assert payload["not_ready"] == 0
+
+
 # ── list-skills command (lines 302-303, 308, 320-321) ────
 
 

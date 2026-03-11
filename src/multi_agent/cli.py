@@ -349,6 +349,63 @@ def _ensure_no_active_task(app: Any) -> None:
             sys.exit(1)
 
 
+def _resolve_and_validate_agents_for_run(
+    *,
+    skill: str,
+    builder: str,
+    reviewer: str,
+) -> tuple[str, str]:
+    """Resolve effective builder/reviewer and fail-fast on not-ready agents."""
+    from multi_agent.contract import load_contract
+    from multi_agent.router import (
+        get_agent_profile,
+        load_agents,
+        probe_agent_readiness,
+        resolve_builder,
+        resolve_reviewer,
+    )
+
+    agents = load_agents()
+    contract = load_contract(skill)
+
+    effective_builder = resolve_builder(agents, contract, explicit=builder or None)
+    effective_reviewer = resolve_reviewer(
+        agents,
+        contract,
+        builder_id=effective_builder,
+        explicit=reviewer or None,
+    )
+
+    for role_name, agent_id in (("builder", effective_builder), ("reviewer", effective_reviewer)):
+        profile = get_agent_profile(agent_id)
+        if profile is None:
+            # Keep backward compatibility for unknown explicit IDs:
+            # route warnings are already emitted by router; do not hard-fail here.
+            continue
+        readiness = probe_agent_readiness(profile)
+        status = str(readiness.get("status", "unknown"))
+        ready = bool(readiness.get("ready", False))
+        if ready:
+            if profile.driver == "cli" and status == "ready_unverified":
+                click.echo(
+                    f"⚠️  {role_name} '{agent_id}' 未配置 auth_check，登录状态未验证。"
+                    f" 可运行: my auth doctor --agent {agent_id}",
+                    err=True,
+                )
+            continue
+
+        issues = readiness.get("issues", [])
+        issue_text = "; ".join(str(i) for i in issues if str(i).strip()) or status
+        hint = str(readiness.get("login_hint", "")).strip()
+        hint_line = f"\nlogin_hint: {hint}" if hint else ""
+        raise click.ClickException(
+            f"{role_name} agent '{agent_id}' not ready ({status}): {issue_text}\n"
+            f"run: my auth doctor --agent {agent_id}{hint_line}"
+        )
+
+    return effective_builder, effective_reviewer
+
+
 @main.command()
 @click.argument("requirement", required=False, default=None)
 @click.option("--template", "template_id", default=None, help="Task template ID (e.g. auth, crud, bugfix)")
@@ -514,6 +571,13 @@ def go(requirement: str | None, template_id: str | None, var_args: tuple[str, ..
 
     from multi_agent.session import _resolve_review_policy
     review_policy = _resolve_review_policy(mode, mode_config_path)
+
+    # Resolve effective agents now and fail fast on missing auth/env/binary.
+    builder, reviewer = _resolve_and_validate_agents_for_run(
+        skill=skill,
+        builder=builder,
+        reviewer=reviewer,
+    )
 
     # Task 16: Suggest decompose for complex requirements
     if not decompose:

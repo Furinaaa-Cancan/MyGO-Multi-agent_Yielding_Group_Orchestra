@@ -38,6 +38,9 @@ agents:
 | `driver` | string | `"file"` | `"file"` (IDE) / `"cli"` (auto-spawn) / `"gui"` (macOS auto) |
 | `command` | string | `""` | CLI command template (for `driver: cli`) |
 | `app_name` | string | `""` | macOS app name (for `driver: gui`, e.g. `"Codex"`) |
+| `required_env` | list | `[]` | Required env vars for this agent |
+| `auth_check` | string | `""` | Optional command to verify login state (`exit 0` = ready) |
+| `login_hint` | string | `""` | Optional hint displayed when auth check fails |
 | `capabilities` | list | `[]` | Agent capabilities |
 | `reliability` | float | `0.9` | Historical success rate (0-1) |
 | `queue_health` | float | `0.9` | Current availability (0-1) |
@@ -117,6 +120,9 @@ Usage: Tell Cursor AI — `"帮我完成 @.multi-agent/TASK.md 里的任务，�
 - id: claude
   driver: cli
   command: "claude -p 'Read {task_file} and complete the task. Save JSON result to {outbox_file}' --allowedTools Read,Edit,Bash,Write"
+  required_env: ["ANTHROPIC_API_KEY"]
+  auth_check: "claude auth status"
+  login_hint: "Run: claude auth login"
   capabilities: [planning, implementation, testing, review, docs]
 ```
 
@@ -150,6 +156,20 @@ Warning: Binary 'claude' not found on PATH, degrading to file mode
 ```
 
 Ensure the CLI tool is installed and available on your `PATH`.
+
+### CLI installed but auth not ready
+
+```bash
+my auth doctor
+my auth doctor --agent claude --strict
+```
+
+`my auth doctor` 会检查：
+- binary 是否存在
+- `required_env` 是否齐全
+- `auth_check` 是否通过（如果配置）
+
+失败时会输出 `login_hint` 作为修复建议。
 
 ### Same builder and reviewer
 

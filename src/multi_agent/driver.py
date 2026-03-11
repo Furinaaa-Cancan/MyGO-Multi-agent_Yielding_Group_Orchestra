@@ -66,8 +66,22 @@ def get_agent_driver(agent_id: str) -> dict[str, Any]:
 
     for agent in load_agents():
         if agent.id == agent_id:
-            return {"driver": agent.driver, "command": agent.command, "app_name": agent.app_name}
-    return {"driver": "file", "command": "", "app_name": ""}
+            return {
+                "driver": agent.driver,
+                "command": agent.command,
+                "app_name": agent.app_name,
+                "auth_check": agent.auth_check,
+                "login_hint": agent.login_hint,
+                "required_env": list(agent.required_env),
+            }
+    return {
+        "driver": "file",
+        "command": "",
+        "app_name": "",
+        "auth_check": "",
+        "login_hint": "",
+        "required_env": [],
+    }
 
 
 def get_latest_log(agent_id: str) -> Path | None:
@@ -926,7 +940,15 @@ def dispatch_agent(
     """
     drv = get_agent_driver(agent_id)
     step_label = "Build" if role == "builder" else "Review"
-    task_path = subtask_task_file(subtask_id) if subtask_id else workspace_dir() / "TASK.md"
+    if subtask_id:
+        task_rel = f".multi-agent/subtasks/{subtask_id}/TASK.md"
+        outbox_rel = f".multi-agent/subtasks/{subtask_id}/outbox/{role}.json"
+    else:
+        task_rel = ".multi-agent/TASK.md"
+        outbox_rel = f".multi-agent/outbox/{role}.json"
+    manual_instruction = (
+        f'   "帮我完成 @{task_rel} 里的任务，完成后将 JSON 输出保存到 @{outbox_rel}"'
+    )
 
     if drv["driver"] == "cli" and drv["command"]:
         if can_use_cli(drv["command"]):
@@ -945,13 +967,16 @@ def dispatch_agent(
             )
         # CLI configured but binary not installed → degrade gracefully
         binary = drv["command"].split()[0]
+        login_hint = str(drv.get("login_hint", "")).strip()
+        hint_line = f"\n💡 登录提示: {login_hint}" if login_hint else ""
         return DispatchResult(
             mode="degraded",
             thread=None,
             message=(
                 f"⚠️  {agent_id} 配置为 CLI 模式但 `{binary}` 未安装，降级为手动模式\n"
                 f"📋 [{step_label}] 在 {agent_id} IDE 里对 AI 说:\n"
-                f'   "请完成 {task_path} 里的任务"'
+                f"{manual_instruction}\n"
+                f"🔎 可先运行: my auth doctor --agent {agent_id}{hint_line}"
             ),
         )
 
@@ -971,7 +996,7 @@ def dispatch_agent(
             message=(
                 f"⚠️  {agent_id} 配置为 GUI 模式但 osascript 不可用，降级为手动模式\n"
                 f"📋 [{step_label}] 在 {agent_id} IDE 里对 AI 说:\n"
-                f'   "请完成 {task_path} 里的任务"'
+                f"{manual_instruction}"
             ),
         )
 
@@ -981,6 +1006,6 @@ def dispatch_agent(
         thread=None,
         message=(
             f"📋 [{step_label}] 在 {agent_id} IDE 里对 AI 说:\n"
-            f'   "请完成 {task_path} 里的任务"'
+            f"{manual_instruction}"
         ),
     )
