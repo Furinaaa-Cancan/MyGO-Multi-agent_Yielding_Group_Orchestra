@@ -12,7 +12,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import platform
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -250,6 +252,14 @@ def _default_login_hint_for_binary(binary: str) -> str:
     return f"Check '{binary}' CLI authentication setup"
 
 
+def _default_login_hint_for_gui(app_name: str) -> str:
+    target = app_name.strip() or "GUI agent"
+    return (
+        f"Ensure '{target}' is installed and grant Accessibility permission to your terminal "
+        "(System Settings → Privacy & Security → Accessibility)"
+    )
+
+
 def _run_auth_check(cmd: str, *, timeout_sec: int = 6) -> tuple[str, str]:
     """Run auth check command. Returns (status, detail).
 
@@ -313,8 +323,20 @@ def probe_agent_readiness(agent: AgentProfile, *, timeout_sec: int = 6) -> dict[
             result["ready"] = False
             result["status"] = "misconfigured"
             result["issues"].append("GUI driver but no app_name configured")
+            result["login_hint"] = result["login_hint"] or _default_login_hint_for_gui(agent.app_name)
         else:
-            result["status"] = "gui_ready"
+            if platform.system() != "Darwin":
+                result["ready"] = False
+                result["status"] = "gui_unavailable"
+                result["issues"].append("GUI driver requires macOS (osascript)")
+                result["login_hint"] = result["login_hint"] or _default_login_hint_for_gui(agent.app_name)
+            elif shutil.which("osascript") is None:
+                result["ready"] = False
+                result["status"] = "gui_unavailable"
+                result["issues"].append("osascript not found on PATH")
+                result["login_hint"] = result["login_hint"] or _default_login_hint_for_gui(agent.app_name)
+            else:
+                result["status"] = "gui_ready"
         return result
 
     if agent.driver != "cli":

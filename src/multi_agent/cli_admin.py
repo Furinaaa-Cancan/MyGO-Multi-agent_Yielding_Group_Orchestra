@@ -518,7 +518,12 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
             return
 
         checks = [probe_agent_readiness(a, timeout_sec=timeout_sec) for a in agent_list]
+        strict_bad_status = {"ready_unverified"}
         not_ready = [c for c in checks if not bool(c.get("ready", False))]
+        strict_fail = [
+            c for c in checks
+            if (not bool(c.get("ready", False))) or (str(c.get("status", "")) in strict_bad_status)
+        ]
 
         if as_json:
             click.echo(
@@ -526,13 +531,14 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
                     {
                         "checked": len(checks),
                         "not_ready": len(not_ready),
+                        "strict_fail": len(strict_fail),
                         "agents": checks,
                     },
                     ensure_ascii=False,
                     indent=2,
                 )
             )
-            if strict and not_ready:
+            if strict and strict_fail:
                 raise click.exceptions.Exit(1)
             return
 
@@ -556,10 +562,11 @@ def register_admin_commands(main: click.Group) -> None:  # noqa: C901
 
         if not_ready:
             click.echo(f"\n⚠️  not ready: {len(not_ready)}/{len(checks)}")
-            if strict:
-                raise click.exceptions.Exit(1)
         else:
             click.echo(f"\n✅ all ready: {len(checks)}/{len(checks)}")
+        if strict and strict_fail:
+            click.echo(f"❌ strict gate failed: {len(strict_fail)}/{len(checks)}", err=True)
+            raise click.exceptions.Exit(1)
 
     # ── list-skills ─────────────────────────────────────
 

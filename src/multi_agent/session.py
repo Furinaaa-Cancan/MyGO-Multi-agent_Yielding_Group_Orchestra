@@ -269,6 +269,32 @@ def _resolve_roles(mode: str, config_path: str | None) -> SessionRoles:
     return SessionRoles(orchestrator=orchestrator, builder=builder, reviewer=reviewer)
 
 
+def _validate_session_roles_ready(roles: SessionRoles) -> None:
+    """Fail fast when configured builder/reviewer agents are not runnable."""
+    from multi_agent.router import get_agent_profile, probe_agent_readiness
+
+    for role_name, agent_id in (
+        ("builder", roles.builder),
+        ("reviewer", roles.reviewer),
+    ):
+        profile = get_agent_profile(agent_id)
+        if profile is None:
+            raise ValueError(
+                f"{role_name} agent '{agent_id}' not found in agents/agents.yaml"
+            )
+        readiness = probe_agent_readiness(profile)
+        if bool(readiness.get("ready", False)):
+            continue
+        status = str(readiness.get("status", "unknown"))
+        issues = readiness.get("issues", [])
+        issue_text = "; ".join(str(i) for i in issues if str(i).strip()) or status
+        hint = str(readiness.get("login_hint", "")).strip()
+        hint_line = f"; login_hint={hint}" if hint else ""
+        raise ValueError(
+            f"{role_name} agent '{agent_id}' not ready ({status}): {issue_text}{hint_line}"
+        )
+
+
 def _config(task_id: str) -> dict[str, Any]:
     from multi_agent.orchestrator import make_config
     return make_config(task_id)
@@ -828,6 +854,7 @@ def start_session(
     _validate_task_id(task_id)
 
     roles = _resolve_roles(mode, config_path)
+    _validate_session_roles_ready(roles)
     review_policy = _resolve_review_policy(mode, config_path)
     app = _compile_graph_app()
     cfg = _config(task_id)

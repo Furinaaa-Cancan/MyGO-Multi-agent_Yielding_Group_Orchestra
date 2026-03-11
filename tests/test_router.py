@@ -345,6 +345,21 @@ class TestAgentHealthCheck:
         assert isinstance(readiness, dict)
         assert "Configure OPENAI_API_KEY" in readiness.get("login_hint", "")
 
+    def test_gui_unavailable_off_macos(self, monkeypatch):
+        from multi_agent.router import probe_agent_readiness
+
+        agent = AgentProfile(
+            id="codex-gui",
+            driver="gui",
+            app_name="Codex",
+            capabilities=["review"],
+        )
+        monkeypatch.setattr("multi_agent.router.platform.system", lambda: "Linux")
+        readiness = probe_agent_readiness(agent)
+        assert readiness["ready"] is False
+        assert readiness["status"] == "gui_unavailable"
+        assert "requires macOS" in " ".join(readiness.get("issues", []))
+
 
 class TestLoadAgentsWarning:
     """R13 F1: load_agents should log warning for malformed entries."""

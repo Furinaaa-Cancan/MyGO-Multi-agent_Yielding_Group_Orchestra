@@ -241,6 +241,22 @@ class TestAuthDoctorCommand:
         assert payload["checked"] == 1
         assert payload["not_ready"] == 0
 
+    def test_auth_doctor_strict_fails_on_ready_unverified(self, runner, workspace):
+        fake_agents = [MagicMock(id="claude")]
+        with patch("multi_agent.router.load_agents", return_value=fake_agents), \
+             patch("multi_agent.router.probe_agent_readiness", return_value={
+                 "id": "claude",
+                 "driver": "cli",
+                 "ready": True,
+                 "status": "ready_unverified",
+                 "issues": [],
+                 "warnings": ["auth_check not configured; login status not verified"],
+                 "login_hint": "",
+             }):
+            result = runner.invoke(main, ["auth", "doctor", "--strict"])
+        assert result.exit_code != 0
+        assert "strict gate failed" in result.output
+
 
 # ── list-skills command (lines 302-303, 308, 320-321) ────
 

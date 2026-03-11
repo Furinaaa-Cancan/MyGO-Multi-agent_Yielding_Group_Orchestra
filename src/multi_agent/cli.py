@@ -379,9 +379,9 @@ def _resolve_and_validate_agents_for_run(
     for role_name, agent_id in (("builder", effective_builder), ("reviewer", effective_reviewer)):
         profile = get_agent_profile(agent_id)
         if profile is None:
-            # Keep backward compatibility for unknown explicit IDs:
-            # route warnings are already emitted by router; do not hard-fail here.
-            continue
+            raise click.ClickException(
+                f"{role_name} agent '{agent_id}' not found in agents/agents.yaml"
+            )
         readiness = probe_agent_readiness(profile)
         status = str(readiness.get("status", "unknown"))
         ready = bool(readiness.get("ready", False))
