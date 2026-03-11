@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import asyncio
 from pathlib import Path
 from unittest import mock
 
@@ -441,21 +442,24 @@ except ImportError:
 class TestMCPWriteTools:
     """Test new MCP server write tools."""
 
-    def test_mcp_has_submit_review_tool(self):
+    @staticmethod
+    def _tool_names() -> list[str]:
         from multi_agent.mcp_server import mcp
-        tool_names = [t.name for t in mcp._tool_manager.list_tools()]
+        tools = asyncio.run(mcp.list_tools())
+        return [str(getattr(t, "name", "")) for t in tools]
+
+    def test_mcp_has_submit_review_tool(self):
+        tool_names = self._tool_names()
         assert "submit_review" in tool_names
 
     def test_mcp_has_memory_tools(self):
-        from multi_agent.mcp_server import mcp
-        tool_names = [t.name for t in mcp._tool_manager.list_tools()]
+        tool_names = self._tool_names()
         assert "memory_search" in tool_names
         assert "memory_store" in tool_names
         assert "memory_list" in tool_names
 
     def test_mcp_has_finops_tool(self):
-        from multi_agent.mcp_server import mcp
-        tool_names = [t.name for t in mcp._tool_manager.list_tools()]
+        tool_names = self._tool_names()
         assert "finops_summary" in tool_names
 
     def test_memory_store_via_mcp(self):
