@@ -406,6 +406,35 @@ def test_session_push_rejects_missing_required_fields(runner: CliRunner, session
     assert read_lock() == "task-session-abc"
 
 
+def test_session_push_rejects_invalid_builder_status_enum(runner: CliRunner, session_root):
+    task_file = str(session_root["task_file"])
+    res = runner.invoke(main, ["session", "start", "--task", task_file, "--mode", "strict"])
+    assert res.exit_code == 0
+
+    bad_builder_env = {
+        "protocol_version": "1.0",
+        "task_id": "task-session-abc",
+        "lane_id": "main",
+        "agent": "windsurf",
+        "role": "builder",
+        "state_seen": "RUNNING",
+        "result": {
+            "status": "completeeed",
+            "summary": "typo status should fail",
+        },
+        "recommended_event": "builder_done",
+        "evidence_files": [],
+        "created_at": "2026-03-02T00:00:00Z",
+    }
+    bad_path = _write_json(session_root["root"] / "bad-builder-status.json", bad_builder_env)
+    res = runner.invoke(
+        main,
+        ["session", "push", "--task-id", "task-session-abc", "--agent", "windsurf", "--file", str(bad_path)],
+    )
+    assert res.exit_code != 0
+    assert "builder.status invalid" in res.output
+
+
 def test_session_push_rejects_state_seen_mismatch_and_keeps_lock(runner: CliRunner, session_root):
     task_file = str(session_root["task_file"])
     res = runner.invoke(main, ["session", "start", "--task", task_file, "--mode", "strict"])
@@ -437,6 +466,61 @@ def test_session_push_rejects_state_seen_mismatch_and_keeps_lock(runner: CliRunn
     from multi_agent.workspace import read_lock
 
     assert read_lock() == "task-session-abc"
+
+
+def test_session_push_rejects_invalid_reviewer_decision_enum(runner: CliRunner, session_root):
+    task_file = str(session_root["task_file"])
+    res = runner.invoke(main, ["session", "start", "--task", task_file, "--mode", "strict"])
+    assert res.exit_code == 0
+
+    builder_env = {
+        "protocol_version": "1.0",
+        "task_id": "task-session-abc",
+        "lane_id": "main",
+        "agent": "windsurf",
+        "role": "builder",
+        "state_seen": "RUNNING",
+        "result": {
+            "status": "completed",
+            "summary": "implemented endpoint",
+            "changed_files": ["/tmp/app/main.py"],
+            "check_results": {"lint": "pass", "unit_test": "pass"},
+        },
+        "recommended_event": "builder_done",
+        "evidence_files": [],
+        "created_at": "2026-03-02T00:00:00Z",
+    }
+    builder_path = _write_json(session_root["root"] / "builder-for-invalid-decision.json", builder_env)
+    res = runner.invoke(
+        main,
+        ["session", "push", "--task-id", "task-session-abc", "--agent", "windsurf", "--file", str(builder_path)],
+    )
+    assert res.exit_code == 0
+    assert json.loads(res.output)["state"] == "VERIFYING"
+
+    reviewer_env = {
+        "protocol_version": "1.0",
+        "task_id": "task-session-abc",
+        "lane_id": "main",
+        "agent": "antigravity",
+        "role": "reviewer",
+        "state_seen": "VERIFYING",
+        "result": {
+            "decision": "maybe",
+            "summary": "invalid decision should fail",
+            "feedback": "not allowed",
+        },
+        "recommended_event": "review_pass",
+        "evidence_files": [],
+        "created_at": "2026-03-02T00:00:00Z",
+    }
+    reviewer_path = _write_json(session_root["root"] / "reviewer-invalid-decision.json", reviewer_env)
+    res = runner.invoke(
+        main,
+        ["session", "push", "--task-id", "task-session-abc", "--agent", "antigravity", "--file", str(reviewer_path)],
+    )
+    assert res.exit_code != 0
+    assert "reviewer.decision invalid" in res.output
 
 
 def test_session_push_reviewer_approve_requires_evidence_in_strict(runner: CliRunner, session_root):

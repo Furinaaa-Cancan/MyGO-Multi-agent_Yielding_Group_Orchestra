@@ -648,6 +648,22 @@ def _normalize_envelope(
     errors = validate_outbox_data(current_role, result)
     if errors:
         raise ValueError("; ".join(errors))
+    if current_role == "builder":
+        status = str(result.get("status", "")).lower().strip()
+        allowed_status = {"completed", "blocked", "success", "done", "error"}
+        if status not in allowed_status:
+            allowed_display = ", ".join(sorted(allowed_status))
+            raise ValueError(
+                f"builder.status invalid: {status!r}; allowed: {allowed_display}"
+            )
+    elif current_role == "reviewer":
+        decision = str(result.get("decision", "")).lower().strip()
+        allowed_decisions = {"approve", "reject", "request_changes"}
+        if decision not in allowed_decisions:
+            allowed_display = ", ".join(sorted(allowed_decisions))
+            raise ValueError(
+                f"reviewer.decision invalid: {decision!r}; allowed: {allowed_display}"
+            )
 
     # Backward compatibility: some IDE outputs place memory candidates under result.
     top_candidates = env.get("memory_candidates")
