@@ -346,7 +346,7 @@ class TestAgentHealthCheck:
         assert "Configure OPENAI_API_KEY" in readiness.get("login_hint", "")
 
     def test_gui_unavailable_off_macos(self, monkeypatch):
-        from multi_agent.router import probe_agent_readiness
+        from multi_agent.router import check_agent_health, probe_agent_readiness
 
         agent = AgentProfile(
             id="codex-gui",
@@ -359,6 +359,10 @@ class TestAgentHealthCheck:
         assert readiness["ready"] is False
         assert readiness["status"] == "gui_unavailable"
         assert "requires macOS" in " ".join(readiness.get("issues", []))
+
+        health = check_agent_health([agent])
+        assert health[0]["status"] == "degraded"
+        assert any("requires macOS" in msg for msg in health[0]["issues"])
 
 
 class TestLoadAgentsWarning:

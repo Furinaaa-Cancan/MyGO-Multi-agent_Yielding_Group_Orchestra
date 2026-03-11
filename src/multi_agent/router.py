@@ -425,9 +425,14 @@ def _check_single_agent(agent: AgentProfile) -> dict[str, Any]:
             for issue in readiness.get("issues", []):
                 issues.append(str(issue))
     elif agent.driver == "gui":
-        if not agent.app_name:
-            issues.append("GUI driver but no app_name configured")
+        readiness = probe_agent_readiness(agent)
+        info["readiness"] = readiness
+        info["auth_status"] = readiness.get("status")
         info["app_name"] = agent.app_name
+        for warn in readiness.get("warnings", []):
+            warnings.append(str(warn))
+        for issue in readiness.get("issues", []):
+            issues.append(str(issue))
     elif agent.driver == "file":
         info["mode"] = "manual"
 
