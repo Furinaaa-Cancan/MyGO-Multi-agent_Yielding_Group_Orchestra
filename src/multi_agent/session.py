@@ -269,8 +269,11 @@ def _resolve_roles(mode: str, config_path: str | None) -> SessionRoles:
     return SessionRoles(orchestrator=orchestrator, builder=builder, reviewer=reviewer)
 
 
-def _validate_session_roles_ready(roles: SessionRoles) -> None:
-    """Fail fast when configured builder/reviewer agents are not runnable."""
+def _validate_session_roles_ready(roles: SessionRoles, *, strict_auth: bool) -> None:
+    """Fail fast when configured builder/reviewer agents are not runnable.
+
+    In strict mode, CLI agents with `ready_unverified` are also rejected.
+    """
     from multi_agent.router import get_agent_profile, probe_agent_readiness
 
     for role_name, agent_id in (
@@ -283,9 +286,15 @@ def _validate_session_roles_ready(roles: SessionRoles) -> None:
                 f"{role_name} agent '{agent_id}' not found in agents/agents.yaml"
             )
         readiness = probe_agent_readiness(profile)
-        if bool(readiness.get("ready", False)):
-            continue
         status = str(readiness.get("status", "unknown"))
+        if bool(readiness.get("ready", False)):
+            if strict_auth and status == "ready_unverified":
+                hint = str(readiness.get("login_hint", "")).strip()
+                hint_line = f"; login_hint={hint}" if hint else ""
+                raise ValueError(
+                    f"{role_name} agent '{agent_id}' auth status not verified ({status}){hint_line}"
+                )
+            continue
         issues = readiness.get("issues", [])
         issue_text = "; ".join(str(i) for i in issues if str(i).strip()) or status
         hint = str(readiness.get("login_hint", "")).strip()
@@ -870,7 +879,8 @@ def start_session(
     _validate_task_id(task_id)
 
     roles = _resolve_roles(mode, config_path)
-    _validate_session_roles_ready(roles)
+    strict_auth = mode.strip().lower() == "strict"
+    _validate_session_roles_ready(roles, strict_auth=strict_auth)
     review_policy = _resolve_review_policy(mode, config_path)
     app = _compile_graph_app()
     cfg = _config(task_id)

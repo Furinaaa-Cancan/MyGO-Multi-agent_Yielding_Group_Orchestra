@@ -240,6 +240,24 @@ class TestAuthDoctorCommand:
         payload = json.loads(result.output)
         assert payload["checked"] == 1
         assert payload["not_ready"] == 0
+        assert payload["unverified"] == 0
+
+    def test_auth_doctor_json_reports_unverified_count(self, runner, workspace):
+        fake_agents = [MagicMock(id="claude")]
+        with patch("multi_agent.router.load_agents", return_value=fake_agents), \
+             patch("multi_agent.router.probe_agent_readiness", return_value={
+                 "id": "claude",
+                 "driver": "cli",
+                 "ready": True,
+                 "status": "ready_unverified",
+                 "issues": [],
+                 "warnings": ["auth_check not configured; login status not verified"],
+                 "login_hint": "",
+             }):
+            result = runner.invoke(main, ["auth", "doctor", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload["unverified"] == 1
 
     def test_auth_doctor_strict_fails_on_ready_unverified(self, runner, workspace):
         fake_agents = [MagicMock(id="claude")]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -323,6 +324,67 @@ def test_session_start_failure_releases_lock_and_marks_failed(runner: CliRunner,
         main,
         ["session", "start", "--task", task_file, "--mode", "strict", "--config", str(good_config)],
     )
+    assert res.exit_code == 0
+    payload = json.loads(res.output)
+    assert payload["state"] == "RUNNING"
+
+
+def test_session_start_strict_rejects_ready_unverified_auth(runner: CliRunner, session_root):
+    task_file = str(session_root["task_file"])
+
+    def _fake_probe(profile, timeout_sec=6):
+        if profile.id == "windsurf":
+            return {
+                "id": "windsurf",
+                "driver": "cli",
+                "ready": True,
+                "status": "ready_unverified",
+                "issues": [],
+                "warnings": ["auth_check not configured; login status not verified"],
+                "login_hint": "Run login first",
+            }
+        return {
+            "id": profile.id,
+            "driver": profile.driver,
+            "ready": True,
+            "status": "manual",
+            "issues": [],
+            "warnings": [],
+            "login_hint": "",
+        }
+
+    with patch("multi_agent.router.probe_agent_readiness", side_effect=_fake_probe):
+        res = runner.invoke(main, ["session", "start", "--task", task_file, "--mode", "strict", "--reset"])
+    assert res.exit_code != 0
+    assert "auth status not verified" in res.output
+
+
+def test_session_start_normal_allows_ready_unverified_auth(runner: CliRunner, session_root):
+    task_file = str(session_root["task_file"])
+
+    def _fake_probe(profile, timeout_sec=6):
+        if profile.id == "windsurf":
+            return {
+                "id": "windsurf",
+                "driver": "cli",
+                "ready": True,
+                "status": "ready_unverified",
+                "issues": [],
+                "warnings": ["auth_check not configured; login status not verified"],
+                "login_hint": "Run login first",
+            }
+        return {
+            "id": profile.id,
+            "driver": profile.driver,
+            "ready": True,
+            "status": "manual",
+            "issues": [],
+            "warnings": [],
+            "login_hint": "",
+        }
+
+    with patch("multi_agent.router.probe_agent_readiness", side_effect=_fake_probe):
+        res = runner.invoke(main, ["session", "start", "--task", task_file, "--mode", "normal", "--reset"])
     assert res.exit_code == 0
     payload = json.loads(res.output)
     assert payload["state"] == "RUNNING"
