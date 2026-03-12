@@ -202,6 +202,10 @@ class TestEstimateComplexity:
     def test_complex_english_verbs(self):
         assert estimate_complexity("implement auth, create users, add tests, modify config") == "complex"
 
+    def test_complex_chinese_order_payment_audit(self):
+        text = "实现一个中型复杂项目：电商订单服务，含认证、库存扣减、支付回调、审计日志与测试骨架"
+        assert estimate_complexity(text) == "complex"
+
     def test_whitespace_only(self):
         assert estimate_complexity("   ") == "simple"
 

@@ -411,6 +411,8 @@ def estimate_complexity(requirement: str) -> str:
         "数据库", "database", "认证", "auth", "API", "微服务", "microservice",
         "分布式", "distributed", "缓存", "cache", "队列", "queue",
         "websocket", "GraphQL", "OAuth", "JWT", "RBAC",
+        "订单", "order", "支付", "payment", "回调", "callback",
+        "审计", "audit", "库存", "inventory",
     ]
     struct_count = sum(1 for s in complex_signals if s.lower() in text.lower())
 
