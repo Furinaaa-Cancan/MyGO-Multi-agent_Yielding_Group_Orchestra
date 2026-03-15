@@ -418,13 +418,72 @@ Layer 5: cli, cli_*                     (入口层)
 
 ### 2.8 安全与对齐
 
-#### [P26] Multi-Agent Safety: A Survey
-- **来源**: 多篇综述 (2024-2025)
-- **核心议题**:
-  - Agent 间的 prompt injection 传播
-  - 协作中的对齐漂移（alignment drift）
-  - Rubber-stamp 问题（reviewer 无脑批准）
-- **对 MyGO 的启示**: MyGO 已实现 rubber-stamp 检测（领先大多数框架），可进一步加入 prompt injection 检测
+#### [P26] AgentHarm: A Benchmark for Measuring Harmfulness of LLM Agents
+- **会议**: ICLR 2025
+- **核心贡献**: 证明单轮对话的安全对齐不能迁移到多步 agent 场景。随着 agent 能力增强，恶意使用风险增大。
+- **对 MyGO 的启示**: MyGO 编排多个自主 agent 执行实际操作（写代码、跑测试），需要设计多步安全护栏
+
+#### [P27] Adversarial Robustness of LLM-Based Multi-Agent Systems
+- **来源**: OpenReview 2025
+- **核心贡献**: LLM 多 agent 系统对对抗性影响高度敏感（0-100% 误导率）。Leader agent 角色和知识显著影响系统鲁棒性。
+- **对 MyGO 的启示**: MyGO 的 decide 节点是 leader agent，需要加强其对抗性鲁棒性
+
+#### [P28] A Multi-Agent LLM Defense Pipeline Against Prompt Injection
+- **来源**: arXiv 2025
+- **核心贡献**: 分层防御——analyzer + sanitizer + validator 三 agent 检测并阻断 prompt injection。
+- **对 MyGO 的启示**: 可在 builder 提交后加入 sanitizer agent 验证输出
+
+---
+
+### 2.9 动态角色分配与路由
+
+#### [P29] Dynamic Role Assignment for Multi-Agent Debate (Meta-Debate)
+- **作者**: Miao Zhang et al.
+- **来源**: arXiv 2026
+- **核心贡献**: 通过 proposal + peer review 阶段匹配模型专长到辩论角色。超越均匀分配 **+74.8%**，超越随机分配 **+29.7%**。
+- **对 MyGO 的启示**: 当前 MyGO 固定分配 agent 角色，动态分配可显著提升性能
+
+#### [P30] DyLAN: Dynamic LLM Agent Network
+- **来源**: arXiv 2024
+- **核心贡献**: Agent 按任务自适应组队。动态任务路由器根据 agent 置信度和负载分配子任务。
+- **对 MyGO 的启示**: 从固定 "Codex x 4" → 动态选择几个什么类型的 agent
+
+#### [P31] MasRouter: Multi-Agent System Routing
+- **来源**: 2025
+- **核心贡献**: 三层决策——协作模式判定 → 角色分配 → LLM 路由。使用强化学习优化路由。
+- **对 MyGO 的启示**: 可替代手动 `--builder`/`--reviewer` 标志选择
+
+---
+
+### 2.10 成本优化（补充）
+
+#### [P32] AgentDiet: Trajectory Reduction for LLM Agent Efficiency
+- **来源**: arXiv 2025
+- **核心贡献**: 发现 agent 轨迹中 **99% 是输入 token**（累积上下文）。通过移除无用、冗余、过期信息，减少 **39.9-59.7%** 输入 token，降低 **21.1-35.9%** 成本，性能无损。
+- **对 MyGO 的启示**:
+  - **直接可用**: MyGO 多轮 retry 累积大量上下文，AgentDiet 式裁剪可大幅降低成本
+  - **关键**: 对 conversation 列表做"垃圾回收"——移除过期的中间状态
+
+#### [P33] Self-Organized Agents (SoA): Ultra Large-Scale Code Generation
+- **作者**: Yoichi Ishibashi et al.
+- **来源**: arXiv 2024
+- **核心贡献**: 根据问题复杂度自动增减 agent 数量，实现动态可扩展的大规模代码生成。
+- **对 MyGO 的启示**: MyGO 的并行 agent 数量可从配置固定 → 自适应动态调整
+
+---
+
+### 2.11 综述论文索引
+
+| 编号 | 论文 | 会议/来源 | 年份 |
+|------|------|----------|------|
+| S1 | Large Language Model based Multi-Agents: A Survey of Progress and Challenges | IJCAI 2024 | 2024 |
+| S2 | A Survey on LLM-based Multi-Agent System: Recent Advances and New Frontiers | arXiv | 2024 |
+| S3 | Agentic Large Language Models: A Survey | arXiv | 2025 |
+| S4 | LLM-Based Multi-Agent Systems for Software Engineering: Literature Review | ACM TOSEM | 2025 |
+| S5 | Understanding the Planning of LLM Agents: A Survey | arXiv | 2024 |
+| S6 | Beyond Self-Talk: Communication-Centric Survey of LLM Multi-Agent Systems | arXiv | 2025 |
+| S7 | Evaluation and Benchmarking of LLM Agents: A Survey | KDD 2025 | 2025 |
+| S8 | Survey on Evaluation of LLM-based Agents | arXiv | 2025 |
 
 ---
 
@@ -726,15 +785,18 @@ prompt_variants:
 
 | 关键词 | 相关论文 |
 |--------|---------|
-| 多 agent 协作 | P01 MetaGPT, P02 ChatDev, P03 AutoGen, P04 CAMEL |
-| 代码生成 | P06 MASAI, P07 SWE-agent, P08 Agentless, P10 MapCoder |
+| 多 agent 协作 | P01 MetaGPT, P02 ChatDev, P03 AutoGen, P04 CAMEL, P05 CrewAI |
+| 代码生成 | P06 MASAI, P07 SWE-agent, P08 Agentless, P10 MapCoder, P12 AgentCoder, P33 SoA |
 | 自我反思 | P13 Reflexion, P14 Self-Refine |
 | 记忆系统 | P17 MemGPT, P18 Generative Agents |
-| 成本优化 | P19 FrugalGPT, P20 RouteLLM |
+| 成本优化 | P19 FrugalGPT, P20 RouteLLM, P32 AgentDiet |
 | 推理规划 | P15 ToT, P16 GoT, P21 DSPy |
-| 辩论审查 | P09 SWE-Debate, P12 AgentCoder |
+| 辩论审查 | P09 SWE-Debate, P12 AgentCoder, P29 Meta-Debate |
 | 评测基准 | P22 SWE-bench, P23 GAIA |
 | 通信协议 | P24 A2A, P25 MCP |
+| 动态路由 | P29 Meta-Debate, P30 DyLAN, P31 MasRouter, P20 RouteLLM |
+| 安全对齐 | P26 AgentHarm, P27 Adversarial Robustness, P28 Prompt Injection Defense |
+| 综述 | S1-S8 (见 2.11 节) |
 
 ## 附录 B: 竞品框架对比
 
