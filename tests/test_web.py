@@ -9,7 +9,9 @@ from unittest.mock import patch
 
 import pytest
 
-from multi_agent.web.server import (
+pytest.importorskip("fastapi", reason="fastapi not installed")
+
+from multi_agent.web.server import (  # noqa: E402
     _parse_jsonl_file,
     _read_trace_events,
     _sse_format,

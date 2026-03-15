@@ -315,6 +315,9 @@ class TestDashboardActions:
 # ══════════════════════════════════════════════════════════
 
 
+fastapi = pytest.importorskip("fastapi", reason="fastapi not installed")
+
+
 class TestPythonServerAlignment:
     """Test that Python FastAPI server has parity with Node.js."""
 

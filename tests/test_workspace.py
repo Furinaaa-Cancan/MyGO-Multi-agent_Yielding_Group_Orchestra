@@ -519,7 +519,8 @@ class TestCheckWorkspaceHealthStoreDb:
                 raise OSError("read-only fs")
             return original_open(self_path, *args, **kwargs)
 
-        with patch.object(Path, "open", fail_on_db):
+        with patch.object(Path, "open", fail_on_db), \
+             patch("multi_agent.config.workspace_dir", return_value=tmp_workspace):
             issues = workspace.check_workspace_health()
         assert any("writable" in i for i in issues)
 

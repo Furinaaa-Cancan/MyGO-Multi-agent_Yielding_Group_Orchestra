@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 def _load_module():
-    path = Path("/Volumes/Seagate/Multi-Agent/scripts/codex_exec_agent.py")
+    path = Path(__file__).resolve().parent.parent / "scripts" / "codex_exec_agent.py"
     spec = importlib.util.spec_from_file_location("codex_exec_agent", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
