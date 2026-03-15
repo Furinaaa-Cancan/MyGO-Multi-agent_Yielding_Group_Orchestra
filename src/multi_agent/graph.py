@@ -931,12 +931,10 @@ def _approve_hard_gate_violations(
     if not isinstance(check_results, dict):
         violations.append("builder check_results missing")
     else:
-        required_gates: list[str]
+        required_gates = ["lint", "unit_test", "artifact_checksum"]
         with contextlib.suppress(Exception):
             contract = load_contract(state.get("skill_id", "code-implement"))
             required_gates = list(contract.quality_gates)  # type: ignore[assignment]
-        if "required_gates" not in locals():
-            required_gates = ["lint", "unit_test", "artifact_checksum"]
 
         for gate in required_gates:
             gate_value = check_results.get(gate)
