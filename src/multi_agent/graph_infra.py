@@ -14,6 +14,8 @@ import time
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from multi_agent.schema import make_event
+
 _log = logging.getLogger(__name__)
 
 MAX_SNAPSHOTS = 10
@@ -192,12 +194,11 @@ def trim_conversation(conversation: list[dict[str, Any]]) -> list[dict[str, Any]
         if fb and isinstance(fb, str) and a in ("retry", "request_changes"):
             feedback_snippets.append(fb[:120])
     summary_parts = [f"{a}×{c}" for a, c in action_counts.items()]
-    trimmed_marker = {
-        "role": "system", "action": "trimmed",
-        "details": f"Removed {len(removed)} entries: {', '.join(summary_parts)}",
-        "key_feedback": feedback_snippets,
-        "t": time.time(),
-    }
+    trimmed_marker = make_event(
+        "system", action="trimmed",
+        details=f"Removed {len(removed)} entries: {', '.join(summary_parts)}",
+        key_feedback=feedback_snippets,
+    )
     return [*conversation[:keep_head], trimmed_marker, *conversation[-keep_tail:]]
 
 
