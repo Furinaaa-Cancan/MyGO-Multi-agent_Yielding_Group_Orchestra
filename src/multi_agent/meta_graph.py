@@ -48,6 +48,7 @@ def save_checkpoint(parent_task_id: str, prior_results: list[dict[str, Any]],
     closed = False
     try:
         os.write(fd, content.encode("utf-8"))
+        os.fsync(fd)
         os.close(fd)
         closed = True
         os.replace(tmp_path, str(ckpt_path))

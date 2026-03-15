@@ -28,6 +28,12 @@ _F = TypeVar("_F", bound=Callable[..., Any])
 
 _log = logging.getLogger(__name__)
 
+
+def _fsync_file(fd: int) -> None:
+    """Flush file data to disk before atomic rename (crash safety)."""
+    os.fsync(fd)
+
+
 FILE_OP_RETRIES = 3
 FILE_OP_DELAY = 0.1
 
@@ -149,6 +155,8 @@ def write_outbox(agent_id: str, data: dict[str, Any]) -> Path:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
             f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
         Path(tmp).replace(path)  # atomic on POSIX
     except BaseException:
         with contextlib.suppress(OSError):
@@ -183,6 +191,8 @@ def save_task_yaml(task_id: str, data: dict[str, Any]) -> Path:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+            f.flush()
+            os.fsync(f.fileno())
         Path(tmp).replace(path)  # atomic on POSIX
     except BaseException:
         with contextlib.suppress(OSError):
@@ -192,7 +202,11 @@ def save_task_yaml(task_id: str, data: dict[str, Any]) -> Path:
 
 
 def update_task_yaml(task_id: str, updates: dict[str, Any]) -> Path:
-    """Merge-update task YAML while preserving existing metadata fields."""
+    """Merge-update task YAML while preserving existing metadata fields.
+
+    Uses atomic read-merge-write (tempfile + fsync + os.replace) to prevent
+    partial writes from corrupting the YAML on crash.
+    """
     import yaml
 
     _validate_task_id(task_id)
@@ -210,7 +224,19 @@ def update_task_yaml(task_id: str, updates: dict[str, Any]) -> Path:
     merged = dict(existing)
     merged.update(updates)
     merged["task_id"] = task_id
-    return save_task_yaml(task_id, merged)
+
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp", prefix=f".{task_id}-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            yaml.dump(merged, f, default_flow_style=False, allow_unicode=True)
+            f.flush()
+            os.fsync(f.fileno())
+        Path(tmp).replace(path)  # atomic on POSIX
+    except BaseException:
+        with contextlib.suppress(OSError):
+            Path(tmp).unlink()
+        raise
+    return path
 
 
 # ── Task Lock ─────────────────────────────────────────────
@@ -250,6 +276,7 @@ def acquire_lock(task_id: str) -> None:
             fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
             try:
                 os.write(fd, task_id.encode("utf-8"))
+                os.fsync(fd)
             finally:
                 os.close(fd)
             return

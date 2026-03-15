@@ -8,6 +8,7 @@ from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing_extensions import TypedDict
 
 from multi_agent._utils import SAFE_TASK_ID_RE as _ID_RE
 from multi_agent._utils import now_utc as _now_utc
@@ -75,6 +76,32 @@ class ReviewDecision(StrEnum):
     APPROVE = "approve"
     REJECT = "reject"
     REQUEST_CHANGES = "request_changes"
+
+
+# ── Review Policy (typed structure for WorkflowState.review_policy) ───
+
+class RubberStampPolicy(TypedDict, total=False):
+    """Configuration for rubber-stamp detection in strict mode."""
+    generic_summary_max_len: int       # default 50
+    shallow_summary_max_len: int       # default 30
+    block_on_strict: bool              # default True
+    generic_phrases: list[str]         # override phrases list
+
+
+class ReviewerPolicy(TypedDict, total=False):
+    """Configuration for reviewer requirements."""
+    require_evidence_on_approve: bool  # default True in strict mode
+    min_evidence_items: int            # default 1
+
+
+class ReviewPolicy(TypedDict, total=False):
+    """Typed structure for WorkflowState.review_policy field.
+
+    Previously this was an untyped dict[str, Any] making it impossible
+    to detect missing keys or typos at validation time.
+    """
+    rubber_stamp: RubberStampPolicy
+    reviewer: ReviewerPolicy
 
 
 # ── Helpers ───────────────────────────────────────────────

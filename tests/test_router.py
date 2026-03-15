@@ -461,12 +461,12 @@ class TestLoadRegistryLegacyFallback:
         profiles = tmp_path / "agents" / "profiles.json"
         profiles.parent.mkdir(parents=True)
         profiles.write_text(json.dumps({"agents": [{"id": "legacy-agent"}]}))
-        with patch("multi_agent.router.agents_profile_path", return_value=profiles):
+        with patch("multi_agent.agent_registry.agents_profile_path", return_value=profiles):
             reg = load_registry(path=tmp_path / "nonexistent.yaml")
         assert any(a["id"] == "legacy-agent" for a in reg.get("agents", []))
 
     def test_no_registry_files(self, tmp_path):
-        with patch("multi_agent.router.agents_profile_path", return_value=tmp_path / "no.json"):
+        with patch("multi_agent.agent_registry.agents_profile_path", return_value=tmp_path / "no.json"):
             reg = load_registry(path=tmp_path / "no.yaml")
         assert reg["agents"] == []
 

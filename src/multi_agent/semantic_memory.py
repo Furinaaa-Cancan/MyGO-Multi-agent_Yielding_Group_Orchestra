@@ -105,15 +105,6 @@ def store(
 
     entry_id = _content_hash(content)
 
-    # Dedup check
-    existing = _load_entries()
-    for e in existing:
-        if e.get("id") == entry_id:
-            return {"status": "duplicate", "entry_id": entry_id, "count": len(existing)}
-
-    if len(existing) >= _MAX_ENTRIES:
-        return {"status": "error", "reason": f"memory full ({_MAX_ENTRIES} entries)"}
-
     entry = {
         "id": entry_id,
         "ts": time.time(),
@@ -130,6 +121,15 @@ def store(
             if fcntl is not None:
                 fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             try:
+                # Dedup check inside lock to prevent TOCTOU race
+                existing = _load_entries()
+                for e in existing:
+                    if e.get("id") == entry_id:
+                        return {"status": "duplicate", "entry_id": entry_id, "count": len(existing)}
+
+                if len(existing) >= _MAX_ENTRIES:
+                    return {"status": "error", "reason": f"memory full ({_MAX_ENTRIES} entries)"}
+
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
             finally:
                 if fcntl is not None:
@@ -537,14 +537,24 @@ def stats() -> dict[str, Any]:
 
 
 def _rewrite_entries(entries: list[dict[str, Any]]) -> None:
-    """Rewrite all entries to disk (after delete/clear)."""
+    """Rewrite all entries to disk (after delete/clear).
+
+    Opens in 'r+' mode and truncates after acquiring the lock to prevent
+    another process from reading an empty file mid-truncate.  If the file
+    does not exist yet, it is created first.
+    """
     path = _memory_file()
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Ensure file exists before opening in r+ mode
+    if not path.exists():
+        path.touch()
     try:
-        with path.open("w", encoding="utf-8") as f:
+        with path.open("r+", encoding="utf-8") as f:
             if fcntl is not None:
                 fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             try:
+                f.seek(0)
+                f.truncate()
                 for e in entries:
                     f.write(json.dumps(e, ensure_ascii=False) + "\n")
             finally:

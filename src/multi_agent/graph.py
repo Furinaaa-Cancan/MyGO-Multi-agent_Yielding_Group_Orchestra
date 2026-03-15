@@ -9,7 +9,6 @@ import logging
 import sqlite3
 import time
 from collections.abc import Callable, Mapping
-from operator import add
 from typing import Annotated, Any
 
 import yaml
@@ -26,6 +25,7 @@ from multi_agent._utils import (
 from multi_agent._utils import (
     positive_int as _positive_int,
 )
+from multi_agent.agent_registry import load_agents
 from multi_agent.config import store_db_path
 from multi_agent.contract import load_contract, validate_preconditions
 from multi_agent.dashboard import write_dashboard
@@ -44,11 +44,12 @@ from multi_agent.graph_infra import (  # noqa: F401 — re-exported for backward
     trim_conversation,
 )
 from multi_agent.prompt import render_builder_prompt, render_reviewer_prompt
-from multi_agent.router import load_agents, resolve_builder, resolve_reviewer
+from multi_agent.router import resolve_builder, resolve_reviewer
 from multi_agent.schema import (
     BuilderOutput,
     ReviewerOutput,
     Task,
+    make_event,
 )
 from multi_agent.workspace import (
     archive_conversation,
@@ -103,8 +104,8 @@ def _graph_node(node_name: str) -> Callable[[_NodeFn], _NodeFn]:
                     "error": f"{node_name}_node: {e}",
                     "final_status": "failed",
                     "conversation": [
-                        {"role": "orchestrator", "action": "internal_error",
-                         "details": str(e), "t": time.time()}
+                        make_event("orchestrator", action="internal_error",
+                                   details=str(e))
                     ],
                 }
             finally:
@@ -124,6 +125,19 @@ def _graph_node(node_name: str) -> Callable[[_NodeFn], _NodeFn]:
 
 
 # ── State ─────────────────────────────────────────────────
+
+
+def _conversation_reducer(existing: list[dict[str, Any]], new: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Custom reducer that caps conversation size at MAX_CONVERSATION_SIZE.
+
+    Unlike the default ``add`` reducer which accumulates unboundedly,
+    this applies trim_conversation() to keep checkpoint size bounded.
+    """
+    combined = (existing or []) + (new or [])
+    if len(combined) > MAX_CONVERSATION_SIZE:
+        return trim_conversation(combined)
+    return combined
+
 
 class WorkflowState(TypedDict, total=False):
     # Input (set once at start)
@@ -152,7 +166,7 @@ class WorkflowState(TypedDict, total=False):
     review_started_at: float | None
 
     # Accumulate
-    conversation: Annotated[list[dict[str, Any]], add]
+    conversation: Annotated[list[dict[str, Any]], _conversation_reducer]
 
     # Hierarchy
     parent_task_id: str | None
@@ -263,8 +277,8 @@ def plan_node(state: WorkflowState) -> dict[str, Any]:
             "error": f"Precondition failed: {msg}",
             "final_status": "failed",
             "conversation": [
-                {"role": "orchestrator", "action": "precondition_failed",
-                 "details": precondition_errors, "t": time.time()}
+                make_event("orchestrator", action="precondition_failed",
+                          details=precondition_errors)
             ],
         }
         graph_hooks.fire_exit("plan", state, result)
@@ -362,7 +376,7 @@ def plan_node(state: WorkflowState) -> dict[str, Any]:
         "build_started_at": None,  # type: ignore[dict-item]  # LangGraph partial state
         "review_started_at": None,  # type: ignore[dict-item]  # LangGraph partial state
         "conversation": [
-            {"role": "orchestrator", "action": "assigned", "agent": builder_id, "t": now}
+            make_event("orchestrator", action="assigned", agent=builder_id)
         ],
     }
     graph_hooks.fire_exit("plan", state, result)
@@ -383,9 +397,8 @@ def _check_total_timeout(state: WorkflowState, node: str) -> dict[str, Any] | No
                   f"{MAX_TASK_DURATION_SEC}s limit (node={node}, "
                   f"agent={state.get(agent_key, '?')})"),
         "final_status": "failed",
-        "conversation": [{"role": "orchestrator", "action": "total_timeout",
-                          "node": node, "elapsed": int(total_elapsed),
-                          "t": time.time()}],
+        "conversation": [make_event("orchestrator", action="total_timeout",
+                                   node=node, elapsed=int(total_elapsed))],
     }
 
 
@@ -407,7 +420,7 @@ def _validate_builder_output(result: Any) -> dict[str, Any] | None:
         return {
             "error": f"Builder output invalid: {'; '.join(errors)}",
             "final_status": "failed",
-            "conversation": [{"role": "builder", "output": "INVALID", "t": time.time()}],
+            "conversation": [make_event("builder", output="INVALID")],
         }
     return None
 
@@ -464,7 +477,7 @@ def build_node(state: WorkflowState) -> dict[str, Any]:
     if _is_cancelled(state.get("task_id", "")):
         return {
             "final_status": "cancelled",
-            "conversation": [{"role": "orchestrator", "action": "cancelled", "t": time.time()}],
+            "conversation": [make_event("orchestrator", action="cancelled")],
         }
 
     # A3: Timeout enforcement — use build_started_at for precise timing
@@ -480,7 +493,7 @@ def build_node(state: WorkflowState) -> dict[str, Any]:
             return {
                 "error": f"TIMEOUT: builder took {int(elapsed)}s (limit: {timeout}s)",
                 "final_status": "failed",
-                "conversation": [{"role": "orchestrator", "action": "timeout", "elapsed": int(elapsed), "t": time.time()}],
+                "conversation": [make_event("orchestrator", action="timeout", elapsed=int(elapsed))],
             }
 
     # Validate builder output
@@ -513,7 +526,7 @@ def build_node(state: WorkflowState) -> dict[str, Any]:
         return {
             "error": f"Builder failed: {error_msg}",
             "final_status": "failed",
-            "conversation": [{"role": "builder", "output": f"ERROR: {error_msg}", "t": time.time()}],
+            "conversation": [make_event("builder", output=f"ERROR: {error_msg}")],
         }
 
     # Validate via Pydantic (non-fatal — we log warnings but proceed)
@@ -561,7 +574,7 @@ def build_node(state: WorkflowState) -> dict[str, Any]:
         "build_started_at": build_started,
         "current_role": "reviewer",
         "conversation": [
-            {"role": "builder", "output": result.get("summary", ""), "t": time.time()}
+            make_event("builder", output=result.get("summary", ""))
         ],
     }
     # Plugin hook: build complete
@@ -594,7 +607,7 @@ def review_node(state: WorkflowState) -> dict[str, Any]:
     if _is_cancelled(state.get("task_id", "")):
         return {
             "final_status": "cancelled",
-            "conversation": [{"role": "orchestrator", "action": "cancelled", "t": time.time()}],
+            "conversation": [make_event("orchestrator", action="cancelled")],
         }
 
     # Timeout enforcement — use review_started_at for precise timing
@@ -609,14 +622,14 @@ def review_node(state: WorkflowState) -> dict[str, Any]:
             return {
                 "reviewer_output": {"decision": "reject", "feedback": f"TIMEOUT: reviewer took {int(elapsed)}s (limit: {timeout}s)"},
                 "review_started_at": review_started,
-                "conversation": [{"role": "orchestrator", "action": "timeout", "elapsed": int(elapsed), "t": time.time()}],
+                "conversation": [make_event("orchestrator", action="timeout", elapsed=int(elapsed))],
             }
 
     # Basic validation
     if not isinstance(result, dict):
         return {
             "reviewer_output": {"decision": "reject", "feedback": "Invalid reviewer output"},
-            "conversation": [{"role": "reviewer", "decision": "reject", "t": time.time()}],
+            "conversation": [make_event("reviewer", decision="reject")],
         }
 
     # Record optional token usage from IDE driver (FinOps)
@@ -642,7 +655,7 @@ def review_node(state: WorkflowState) -> dict[str, Any]:
         error_msg = result.get("summary", "unknown reviewer CLI error")
         return {
             "reviewer_output": {"decision": "reject", "feedback": f"Reviewer CLI failed: {error_msg}"},
-            "conversation": [{"role": "reviewer", "decision": "reject", "t": time.time()}],
+            "conversation": [make_event("reviewer", decision="reject")],
         }
 
     try:
@@ -668,7 +681,7 @@ def review_node(state: WorkflowState) -> dict[str, Any]:
     review_result = {
         "reviewer_output": result,
         "review_started_at": review_started,
-        "conversation": [{"role": "reviewer", "decision": decision, "t": time.time()}],
+        "conversation": [make_event("reviewer", decision=decision)],
     }
     # Plugin hook: review complete
     with contextlib.suppress(Exception):
@@ -722,14 +735,13 @@ def _decide_approve(state: WorkflowState, rubber_stamp: bool) -> dict[str, Any]:
             "independent verification (MAST TV-1). Approving with audit note.",
             state.get("task_id", "?"),
         )
-        convo_entries.append({
-            "role": "orchestrator", "action": "rubber_stamp_warning",
-            "details": "Reviewer approved without substantive reasoning. "
-                       "Approval accepted but flagged for audit.",
-            "reviewer_id": state.get("reviewer_id", "?"),
-            "t": time.time(),
-        })
-    convo_entries.append({"role": "orchestrator", "action": "approved", "t": time.time()})
+        convo_entries.append(make_event(
+            "orchestrator", action="rubber_stamp_warning",
+            details="Reviewer approved without substantive reasoning. "
+                    "Approval accepted but flagged for audit.",
+            reviewer_id=state.get("reviewer_id", "?"),
+        ))
+    convo_entries.append(make_event("orchestrator", action="approved"))
     full_convo = state.get("conversation", []) + convo_entries
     write_dashboard(
         task_id=state["task_id"],
@@ -761,8 +773,8 @@ def _decide_request_changes(
     )
     if rc_count >= MAX_REQUEST_CHANGES:
         _log.warning("request_changes cap reached (%d), escalating", rc_count)
-        final_entry = {"role": "orchestrator", "action": "escalated",
-                       "reason": f"request_changes cap ({rc_count})", "t": time.time()}
+        final_entry = make_event("orchestrator", action="escalated",
+                                reason=f"request_changes cap ({rc_count})")
         full_convo = [*convo_for_count, final_entry]
         archive_conversation(state["task_id"], full_convo)
         return {"error": "REQUEST_CHANGES_CAP", "final_status": "escalated",
@@ -779,8 +791,7 @@ def _decide_request_changes(
         status_msg=f"🔧 需修改 ({retry_count}/{budget})",
     )
     return {"conversation": [
-        {"role": "orchestrator", "action": "request_changes",
-         "feedback": feedback, "t": time.time()}
+        make_event("orchestrator", action="request_changes", feedback=feedback)
     ]}
 
 
@@ -795,9 +806,9 @@ def _decide_reject_retry(
     if retry_count > budget:
         last_feedback = reviewer_output.get("feedback", "")
         feedback_summary = (last_feedback[:200] + "…") if len(last_feedback) > 200 else last_feedback
-        final_entry = {"role": "orchestrator", "action": "escalated",
-                       "reason": "budget exhausted",
-                       "last_feedback": feedback_summary, "t": time.time()}
+        final_entry = make_event("orchestrator", action="escalated",
+                                reason="budget exhausted",
+                                last_feedback=feedback_summary)
         full_convo = [*state.get("conversation", []), final_entry]
         write_dashboard(
             task_id=state["task_id"],
@@ -851,9 +862,7 @@ def _decide_reject_retry(
         status_msg=f"🔄 重试 ❌ 驳回 ({retry_count}/{budget})",
     )
 
-    retry_entry: dict[str, Any] = {
-        "role": "orchestrator", "action": "retry", "feedback": feedback, "t": time.time(),
-    }
+    retry_entry: dict[str, Any] = make_event("orchestrator", action="retry", feedback=feedback)
     if isinstance(prev_builder, dict):
         changed = prev_builder.get("changed_files")
         if changed:
@@ -1007,8 +1016,8 @@ def decide_node(state: WorkflowState) -> dict[str, Any]:
     if fs and fs not in ("approved",):
         passthrough = {
             "final_status": fs,
-            "conversation": [{"role": "orchestrator", "action": "terminal_passthrough",
-                              "original_status": fs, "t": time.time()}],
+            "conversation": [make_event("orchestrator", action="terminal_passthrough",
+                                       original_status=fs)],
         }
         if state.get("error"):
             passthrough["error"] = state["error"]  # type: ignore[assignment]  # LangGraph partial state

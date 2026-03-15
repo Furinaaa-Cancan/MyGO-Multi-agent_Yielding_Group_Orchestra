@@ -17,7 +17,6 @@ import contextlib
 import json
 import logging
 import os
-import platform
 import re
 import shlex
 import shutil
@@ -28,6 +27,7 @@ import threading
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from multi_agent.agent_registry import load_agents
 from multi_agent.config import outbox_dir, subtask_outbox_dir, subtask_task_file, workspace_dir
 
 logger = logging.getLogger(__name__)
@@ -62,8 +62,6 @@ _active_agents: dict[str, threading.Thread] = {}
 
 def get_agent_driver(agent_id: str) -> dict[str, Any]:
     """Look up driver config for an agent from agents.yaml."""
-    from multi_agent.router import load_agents
-
     for agent in load_agents():
         if agent.id == agent_id:
             return {
@@ -551,9 +549,10 @@ def dispatch_visible(
         raise
 
     # If terminal already open for this key, just return — wrapper will see trigger
-    if key in _open_terminals:
-        logger.info("Trigger written for existing terminal %s", key)
-        return
+    with _terminal_counter_lock:
+        if key in _open_terminals:
+            logger.info("Trigger written for existing terminal %s", key)
+            return
 
     # First time: create wrapper script + open terminal
     cwd = project_dir or str(Path.cwd())
@@ -680,7 +679,8 @@ def dispatch_visible(
 
     ok = _open_terminal_window(wrapper_path, label)
     if ok:
-        _open_terminals[key] = wrapper_path
+        with _terminal_counter_lock:
+            _open_terminals[key] = wrapper_path
         logger.info("Opened terminal for %s", key)
     else:
         logger.error("Failed to open terminal for %s, falling back to headless CLI", key)
@@ -693,12 +693,15 @@ def close_visible_terminal(subtask_id: str | None = None, agent_id: str = "", ro
     tdir = _trigger_dir(subtask_id, terminal_slot)
     done = tdir / ".done"
     done.write_text("done", encoding="utf-8")
-    _open_terminals.pop(key, None)
+    with _terminal_counter_lock:
+        _open_terminals.pop(key, None)
 
 
 def close_all_visible_terminals() -> None:
     """Close all open visible terminals (called at end of decompose run)."""
-    for key in list(_open_terminals.keys()):
+    with _terminal_counter_lock:
+        keys = list(_open_terminals.keys())
+    for key in keys:
         with contextlib.suppress(OSError):
             if key.startswith("slot:"):
                 slot = int(key.split(":")[1])
@@ -714,7 +717,8 @@ def close_all_visible_terminals() -> None:
             done = tdir / ".done"
             done.parent.mkdir(parents=True, exist_ok=True)
             done.write_text("done", encoding="utf-8")
-    _open_terminals.clear()
+    with _terminal_counter_lock:
+        _open_terminals.clear()
 
 
 def _ensure_outbox_written(

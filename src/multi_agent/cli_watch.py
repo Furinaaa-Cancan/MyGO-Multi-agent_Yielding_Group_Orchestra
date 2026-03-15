@@ -23,6 +23,7 @@ from multi_agent._utils import (
 from multi_agent._utils import (
     positive_int as _positive_int,
 )
+from multi_agent.trace import append_trace_event
 from multi_agent.workspace import (
     clear_runtime,
     release_lock,
@@ -31,7 +32,6 @@ from multi_agent.workspace import (
 from multi_agent.workspace import (
     update_task_yaml as save_task_yaml,
 )
-from multi_agent.trace import append_trace_event
 
 # Serializes resume_task + sync so parallel subtasks don't corrupt global TASK.md/outbox
 _resume_lock = threading.Lock()
@@ -80,14 +80,28 @@ def _terminal_next_steps(task_id: str, final: str, error: str) -> list[str]:
 
 def _sync_subtask_workspace(subtask_id: str) -> None:
     """Sync global TASK.md + outbox paths into subtask workspace after graph advances."""
-    import shutil
+    import os
+    import tempfile
 
     from multi_agent.config import subtask_outbox_dir, subtask_task_file, workspace_dir
 
     global_task = workspace_dir() / "TASK.md"
     sub_task = subtask_task_file(subtask_id)
     if global_task.exists():
-        shutil.copy2(str(global_task), str(sub_task))
+        # Atomic copy: write to temp file then rename
+        from pathlib import Path
+
+        fd, tmp = tempfile.mkstemp(dir=str(sub_task.parent), suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(global_task.read_text(encoding="utf-8"))
+                f.flush()
+                os.fsync(f.fileno())
+            Path(tmp).replace(sub_task)
+        except Exception:
+            with contextlib.suppress(OSError):
+                Path(tmp).unlink()
+            raise
     subtask_outbox_dir(subtask_id).mkdir(parents=True, exist_ok=True)
 
 
