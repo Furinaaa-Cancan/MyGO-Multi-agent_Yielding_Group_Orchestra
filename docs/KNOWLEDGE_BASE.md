@@ -433,6 +433,26 @@ Layer 5: cli, cli_*                     (入口层)
 - **核心贡献**: 分层防御——analyzer + sanitizer + validator 三 agent 检测并阻断 prompt injection。
 - **对 MyGO 的启示**: 可在 builder 提交后加入 sanitizer agent 验证输出
 
+#### [P34] CodeAgent: Autonomous Communicative Agents for Code Review
+- **作者**: Xunzhu Tang, Kisub Kim et al.
+- **会议**: EMNLP 2024
+- **核心贡献**: 首个面向实际代码审查的多 agent 系统（author/reviewer/decision-maker + QA-Checker 监督 agent 防止 prompt 漂移）。构建了 3500 条真实代码审查数据集。
+- **对 MyGO 的启示**:
+  - **直接可用**: QA-Checker 概念——在编排器中检测 agent 是否偏离任务，防止 prompt drift
+  - **可改进**: MyGO 的 reviewer 可参考 CodeAgent 的结构化审查模板
+
+#### [P35] HuggingGPT: Solving AI Tasks with ChatGPT and its Friends
+- **作者**: Yongliang Shen et al.
+- **会议**: NeurIPS 2023
+- **核心贡献**: LLM 作为控制器编排专业 AI 模型，四阶段（任务规划 → 模型选择 → 任务执行 → 响应生成）。基于 DAG 的子任务分解 + 依赖追踪。
+- **对 MyGO 的启示**: 四阶段编排与 MyGO 的 Plan/Build/Review/Decide 结构同构，验证了 LLM 作为元控制器的可行性
+
+#### [P36] ToolLLM: Facilitating Large Language Models to Master 16000+ Real-world APIs
+- **作者**: Yujia Qin et al.
+- **会议**: ICLR 2024 (Spotlight)
+- **核心贡献**: 通用 LLM 工具使用框架，16464 个真实 API。引入深度优先搜索决策树（DFSDT）进行多步 API 推理。
+- **对 MyGO 的启示**: DFSDT 推理方式可增强 Build agent 的多步工具调用能力（git、linter、test runner）
+
 ---
 
 ### 2.9 动态角色分配与路由
@@ -786,7 +806,7 @@ prompt_variants:
 | 关键词 | 相关论文 |
 |--------|---------|
 | 多 agent 协作 | P01 MetaGPT, P02 ChatDev, P03 AutoGen, P04 CAMEL, P05 CrewAI |
-| 代码生成 | P06 MASAI, P07 SWE-agent, P08 Agentless, P10 MapCoder, P12 AgentCoder, P33 SoA |
+| 代码生成 | P06 MASAI, P07 SWE-agent, P08 Agentless, P10 MapCoder, P12 AgentCoder, P33 SoA, P34 CodeAgent |
 | 自我反思 | P13 Reflexion, P14 Self-Refine |
 | 记忆系统 | P17 MemGPT, P18 Generative Agents |
 | 成本优化 | P19 FrugalGPT, P20 RouteLLM, P32 AgentDiet |
@@ -796,6 +816,7 @@ prompt_variants:
 | 通信协议 | P24 A2A, P25 MCP |
 | 动态路由 | P29 Meta-Debate, P30 DyLAN, P31 MasRouter, P20 RouteLLM |
 | 安全对齐 | P26 AgentHarm, P27 Adversarial Robustness, P28 Prompt Injection Defense |
+| 工具使用 | P35 HuggingGPT, P36 ToolLLM |
 | 综述 | S1-S8 (见 2.11 节) |
 
 ## 附录 B: 竞品框架对比
