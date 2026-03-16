@@ -807,45 +807,37 @@ class TestReviewNodeTimeout:
 class TestConnectionPool:
     """Task 11: Verify SQLite connection pool singleton."""
 
-    def test_same_path_returns_same_connection(self, tmp_path):
+    def test_same_path_returns_same_connection(self, tmp_path, monkeypatch):
+        isolated_pool = {}
+        monkeypatch.setattr("multi_agent.graph._conn_pool", isolated_pool)
         db = str(tmp_path / "test.db")
-        # Clean up pool state
-        _conn_pool.pop(db, None)
-        try:
-            c1 = _get_connection(db)
-            c2 = _get_connection(db)
-            assert c1 is c2
-        finally:
-            c1.close()
-            _conn_pool.pop(db, None)
+        c1 = _get_connection(db)
+        c2 = _get_connection(db)
+        assert c1 is c2
+        c1.close()
 
-    def test_different_paths_return_different_connections(self, tmp_path):
+    def test_different_paths_return_different_connections(self, tmp_path, monkeypatch):
+        isolated_pool = {}
+        monkeypatch.setattr("multi_agent.graph._conn_pool", isolated_pool)
         db1 = str(tmp_path / "test1.db")
         db2 = str(tmp_path / "test2.db")
-        _conn_pool.pop(db1, None)
-        _conn_pool.pop(db2, None)
-        try:
-            c1 = _get_connection(db1)
-            c2 = _get_connection(db2)
-            assert c1 is not c2
-        finally:
-            c1.close()
-            c2.close()
-            _conn_pool.pop(db1, None)
-            _conn_pool.pop(db2, None)
+        c1 = _get_connection(db1)
+        c2 = _get_connection(db2)
+        assert c1 is not c2
+        c1.close()
+        c2.close()
 
-    def test_closed_connection_gets_replaced(self, tmp_path):
+    def test_closed_connection_gets_replaced(self, tmp_path, monkeypatch):
+        isolated_pool = {}
+        monkeypatch.setattr("multi_agent.graph._conn_pool", isolated_pool)
         db = str(tmp_path / "closed.db")
-        _conn_pool.pop(db, None)
-        try:
-            c1 = _get_connection(db)
-            c1.close()
-            c2 = _get_connection(db)
-            assert c1 is not c2
-            # c2 should work
-            c2.execute("SELECT 1")
-        finally:
-            _conn_pool.pop(db, None)
+        c1 = _get_connection(db)
+        c1.close()
+        c2 = _get_connection(db)
+        assert c1 is not c2
+        # c2 should work
+        c2.execute("SELECT 1")
+        c2.close()
 
 
 class TestEventHooks:

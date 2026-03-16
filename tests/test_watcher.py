@@ -1,6 +1,7 @@
 """Tests for the OutboxPoller — including partial write race condition."""
 
 import json
+import os
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -26,10 +27,11 @@ class TestAdaptivePolling:
         assert poller._current_interval == 2.0
         assert poller._idle_count == 0
 
-    def test_idle_count_increases(self):
+    def test_idle_count_increases(self, tmp_outbox):
         poller = OutboxPoller(poll_interval=2.0, min_interval=0.5, max_interval=5.0)
-        # Simulate idle polls
+        # Empty check_once calls simulate idle polls (no files to detect)
         for _ in range(15):
+            poller.check_once()
             poller._idle_count += 1
             if poller._idle_count >= 10:
                 poller._current_interval = min(
@@ -38,13 +40,17 @@ class TestAdaptivePolling:
         assert poller._current_interval > 2.0
         assert poller._current_interval <= 5.0
 
-    def test_activity_resets_interval(self):
+    def test_activity_resets_interval(self, tmp_outbox):
         poller = OutboxPoller(poll_interval=2.0, min_interval=0.5, max_interval=5.0)
         poller._idle_count = 20
         poller._current_interval = 5.0
-        # Simulate activity detection
-        poller._idle_count = 0
-        poller._current_interval = poller.min_interval
+        # Simulate activity by writing a file and detecting it
+        path = tmp_outbox / "builder.json"
+        path.write_text(json.dumps({"status": "done", "summary": "ok"}))
+        results = poller.check_once()
+        if results:
+            poller._idle_count = 0
+            poller._current_interval = poller.min_interval
         assert poller._current_interval == 0.5
         assert poller._idle_count == 0
 
@@ -85,9 +91,10 @@ class TestCheckOnce:
         path.write_text(json.dumps({"status": "v1", "summary": "first"}))
         poller.check_once()
 
-        # Update with new mtime
-        time.sleep(0.05)
+        # Update with new mtime (use os.utime to avoid filesystem granularity issues)
         path.write_text(json.dumps({"status": "v2", "summary": "second"}))
+        st = path.stat()
+        os.utime(path, (st.st_atime + 2, st.st_mtime + 2))
         results = poller.check_once()
         assert len(results) == 1
         assert results[0][1]["status"] == "v2"

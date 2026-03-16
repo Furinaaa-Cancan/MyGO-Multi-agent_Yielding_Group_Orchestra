@@ -311,12 +311,14 @@ class TestLogTimingSanitization:
 class TestGraphSnapshotSanitization:
     """Verify graph.py sanitizes task_id/node_name in snapshot paths."""
 
-    def test_snapshot_path_no_traversal(self):
-        # Should not raise even with malicious-looking task_id
-        # because the function sanitizes via regex
-        # Just verify it doesn't create files outside snapshots dir
-        import re
-        safe = re.compile(r"^[a-zA-Z0-9_.-]+$")
+    def test_snapshot_path_no_traversal(self, tmp_path, monkeypatch):
+        # Call the real save_state_snapshot with malicious task_ids
+        # and verify files stay within the snapshots directory
+        monkeypatch.setattr("multi_agent.config.workspace_dir", lambda: tmp_path)
+        from multi_agent.graph_infra import save_state_snapshot
         for bad in ["../etc", "foo/bar", "x;rm -rf"]:
-            sanitized = re.sub(r"[^a-zA-Z0-9_.-]", "_", bad)
-            assert safe.match(sanitized)
+            save_state_snapshot(bad, "build", {"task_id": bad})
+        snap_dir = tmp_path / "snapshots"
+        for f in snap_dir.iterdir():
+            assert f.parent == snap_dir  # no traversal escape
+            assert "/" not in f.name

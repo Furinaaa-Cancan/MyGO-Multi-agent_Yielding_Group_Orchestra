@@ -333,14 +333,16 @@ class TestGetLatestLog:
             assert get_latest_log("claude") is None
 
     def test_returns_latest_log(self, tmp_path):
-        import time
+        import os
         logs_dir = tmp_path / "logs"
         logs_dir.mkdir()
         old_log = logs_dir / "claude-builder-1000.log"
         old_log.write_text("old")
-        time.sleep(0.05)
         new_log = logs_dir / "claude-builder-2000.log"
         new_log.write_text("new")
+        # Ensure distinct mtimes without relying on wall-clock sleep
+        os.utime(old_log, (1000, 1000))
+        os.utime(new_log, (2000, 2000))
         with patch("multi_agent.driver.workspace_dir", return_value=tmp_path):
             from multi_agent.driver import get_latest_log
             result = get_latest_log("claude")
