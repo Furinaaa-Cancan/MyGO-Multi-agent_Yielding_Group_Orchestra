@@ -1317,6 +1317,83 @@ def bench_status(experiment_id: str | None, db_path: str | None) -> None:
                        f"平均重试={row['avg_retries']}")
 
 
+@bench.command("eval")
+@click.argument("task_name")
+@click.option("--workspace", required=True, type=click.Path(exists=True), help="Agent 输出目录")
+@click.option("--json-output", is_flag=True, help="输出 JSON 格式")
+@handle_errors
+def bench_eval(task_name: str, workspace: str, json_output: bool) -> None:
+    """独立评估 agent 输出的代码质量.
+
+    用 gold-standard 测试集自动评分（0-100）。
+
+    Examples:
+      my bench eval low-01-fizzbuzz --workspace /tmp/my-output
+      my bench eval med-01-todo-api --workspace ./workspace --json-output
+    """
+    from multi_agent.config import root_dir
+
+    task_dir = root_dir() / "benchmark" / "tasks" / task_name
+    if not task_dir.exists():
+        available = [d.name for d in (root_dir() / "benchmark" / "tasks").iterdir()
+                     if d.is_dir() and (d / "REQUIREMENT.md").exists()]
+        click.echo(f"❌ 任务不存在: {task_name}", err=True)
+        click.echo(f"   可用: {available}", err=True)
+        sys.exit(1)
+
+    # Import evaluator
+    eval_path = root_dir() / "benchmark"
+    sys.path.insert(0, str(eval_path))
+    from evaluator import evaluate_trial, print_report
+
+    result = evaluate_trial(task_dir, Path(workspace), task_id=task_name)
+
+    if json_output:
+        click.echo(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+    else:
+        print_report(result)
+
+
+@bench.command("tasks")
+@handle_errors
+def bench_tasks() -> None:
+    """列出所有可用的 benchmark 任务.
+
+    Examples:
+      my bench tasks
+    """
+    import yaml
+
+    from multi_agent.config import root_dir
+
+    tasks_dir = root_dir() / "benchmark" / "tasks"
+    if not tasks_dir.exists():
+        click.echo("📭 没有 benchmark 任务。")
+        return
+
+    tasks = sorted(d for d in tasks_dir.iterdir()
+                   if d.is_dir() and (d / "REQUIREMENT.md").exists())
+    if not tasks:
+        click.echo("📭 没有 benchmark 任务。")
+        return
+
+    click.echo(f"📋 Benchmark 任务 ({len(tasks)} 个):\n")
+    for t in tasks:
+        meta_path = t / "metadata.yaml"
+        if meta_path.exists():
+            meta = yaml.safe_load(meta_path.read_text(encoding="utf-8")) or {}
+            complexity = meta.get("complexity", "?")
+            score = meta.get("complexity_score", "?")
+            name = meta.get("name", t.name)
+            tags = " ".join(f"[{tg}]" for tg in meta.get("tags", []))
+            test_count = len(list((t / "tests").glob("test_*.py"))) if (t / "tests").exists() else 0
+            click.echo(f"  {t.name:<25} {complexity:<8} ({score})  {name}")
+            click.echo(f"  {'':25} {tags}  ({test_count} gold tests)")
+        else:
+            click.echo(f"  {t.name}")
+        click.echo()
+
+
 # ── Web Dashboard ────────────────────────────────────────
 
 

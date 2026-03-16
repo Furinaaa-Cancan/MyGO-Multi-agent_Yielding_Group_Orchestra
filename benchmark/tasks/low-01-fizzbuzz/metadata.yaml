@@ -1,0 +1,12 @@
+id: low-01-fizzbuzz
+name: FizzBuzz Extended
+complexity: low
+complexity_score: 2.0
+type: utility
+expected_file_count: 2
+tags: [pure-function, basic]
+required_patterns:
+  - "def fizzbuzz\\("
+  - "def fizzbuzz_range\\("
+  - "def fizzbuzz_sum\\("
+  - "ValueError"

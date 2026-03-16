@@ -1,0 +1,16 @@
+id: high-01-user-auth
+name: User Authentication System
+complexity: high
+complexity_score: 8.0
+type: auth
+expected_file_count: 5
+tags: [fastapi, auth, jwt, security]
+required_patterns:
+  - "FastAPI|fastapi"
+  - "bcrypt|passlib|hashlib"
+  - "jwt|jose|JWT"
+  - "Bearer|bearer"
+  - "register|signup"
+  - "login|signin"
+  - "403|Forbidden|forbidden"
+  - "role|admin"

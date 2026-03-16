@@ -1,0 +1,15 @@
+id: med-01-todo-api
+name: Todo REST API
+complexity: medium
+complexity_score: 5.0
+type: api
+expected_file_count: 3
+tags: [fastapi, crud, rest]
+required_patterns:
+  - "FastAPI|fastapi"
+  - "POST.*todos|post.*todos"
+  - "GET.*todos|get.*todos"
+  - "PATCH|patch|put"
+  - "DELETE|delete"
+  - "404|not.found|NotFound"
+  - "uuid|UUID"
