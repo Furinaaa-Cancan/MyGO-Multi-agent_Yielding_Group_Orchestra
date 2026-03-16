@@ -161,7 +161,7 @@ class TestGoCommand:
              patch("multi_agent.cli.read_lock", return_value="task-existing"):
             result = runner.invoke(main, ["go", "new task"])
         assert result.exit_code != 0
-        assert "正在进行中" in result.output or "task-existing" in result.output
+        assert "正在进行中" in result.output
 
     def test_stale_lock_is_auto_cleaned(self, runner):
         app = _mock_app_terminal("failed")
@@ -188,7 +188,7 @@ class TestGoCommand:
              patch("multi_agent.cli.acquire_lock"):
             result = runner.invoke(main, ["go", "new task"])
         assert result.exit_code != 0
-        assert "活跃任务标记" in result.output or "task-orphan" in result.output
+        assert "活跃任务标记" in result.output
 
     def test_skill_not_found(self, runner):
         app = MagicMock()
@@ -203,7 +203,7 @@ class TestGoCommand:
              patch("multi_agent.cli.release_lock"):
             result = runner.invoke(main, ["go", "test", "--skill", "nonexistent", "--no-watch"])
         assert result.exit_code != 0
-        assert "nonexistent" in result.output or "Skill" in result.output
+        assert "nonexistent" in result.output
 
     def test_no_agents_error(self, runner):
         app = MagicMock()

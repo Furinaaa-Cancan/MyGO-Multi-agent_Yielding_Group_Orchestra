@@ -118,7 +118,7 @@ class TestGoCommandComplexityHint:
             mock_cg.return_value = MagicMock()
             long_req = "实现完整的用户认证模块包括登录注册密码重置和中间件鉴权以及用户角色管理和权限控制还需要实现OAuth2集成和JWT令牌管理同时添加审计日志和安全告警功能最后要实现用户配置导出和批量导入功能"
             result = runner.invoke(main, ["go", long_req])
-            assert "decompose" in result.output.lower() or result.exit_code != 0
+            assert result.exit_code != 0 or "decompose" in result.output.lower()
 
 
 class TestDecomposePromptNewFields:

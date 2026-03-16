@@ -47,7 +47,7 @@ class TestStatusCommand:
             result = runner.invoke(main, ["status"])
         assert result.exit_code == 0
         assert "task-abc" in result.output
-        assert "builder" in result.output.lower() or "Builder" in result.output
+        assert "builder" in result.output.lower()
         assert "windsurf" in result.output
 
     def test_reviewer_waiting(self, runner):

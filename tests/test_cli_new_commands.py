@@ -250,7 +250,7 @@ class TestRenderCommand:
             yaml.dump(contract), encoding="utf-8")
         result = runner.invoke(main, ["render", "test requirement", "--skill", "code-implement"])
         assert result.exit_code == 0
-        assert "render-preview" in result.output or "test requirement" in result.output
+        assert "render-preview" in result.output or "rendered" in result.output.lower()
 
     def test_render_reviewer_requires_builder_output(self, runner, tmp_root):
         import yaml
@@ -264,7 +264,7 @@ class TestRenderCommand:
             yaml.dump(contract), encoding="utf-8")
         result = runner.invoke(main, ["render", "test", "--role", "reviewer"])
         assert result.exit_code != 0
-        assert "builder-output" in result.output.lower() or result.exit_code == 1
+        assert "builder-output" in result.output.lower() or "builder" in result.output.lower()
 
 
 class TestVersionConsistency:
