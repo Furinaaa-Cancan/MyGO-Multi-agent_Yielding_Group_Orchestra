@@ -85,6 +85,7 @@ def record_task_usage(
                 fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             try:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                f.flush()
             finally:
                 if fcntl is not None:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)

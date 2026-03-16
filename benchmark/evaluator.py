@@ -75,7 +75,7 @@ class EvalResult:
         )
         # Complexity bonus: up to 5 points if avg_complexity <= 5 (grade A/B)
         complexity_bonus = 0.0
-        if self.avg_complexity > 0 and self.avg_complexity <= 5:
+        if self.avg_complexity >= 1 and self.avg_complexity <= 5:
             # Linear scale: complexity 1 -> 5 pts, complexity 5 -> 1 pt
             complexity_bonus = 5.0 - (self.avg_complexity - 1.0)
         self.quality_score = min(100.0, base + complexity_bonus)
@@ -146,13 +146,16 @@ def check_lint(workspace: Path, timeout: int = 30) -> dict[str, Any]:
 
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "ruff", "check", "--select=E,W,F", "--no-fix", str(workspace)],
+            [sys.executable, "-m", "ruff", "check", "--select=E,W,F", "--no-fix"] + [str(f) for f in py_files],
             capture_output=True,
             text=True,
             timeout=timeout,
         )
         # Count non-empty lines (each ruff error is one line)
-        error_count = sum(1 for line in result.stdout.splitlines() if line.strip()) if result.stdout.strip() else 0
+        # Each ruff error is one line; exclude the summary line ("Found N errors.")
+        error_lines = [line for line in result.stdout.splitlines()
+                       if line.strip() and not line.startswith("Found ")]
+        error_count = len(error_lines)
         return {
             "errors": error_count,
             "output": (result.stdout + result.stderr)[-1000:],

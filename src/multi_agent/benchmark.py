@@ -626,7 +626,8 @@ def ingest_trial_from_snapshot(
     conversation = snapshot.get("conversation", [])
     last_t = conversation[-1].get("t") if conversation else None
     wall_clock = (last_t - started) if (started and last_t) else None
-    build_time = (build_started - started) if (started and build_started) else None
+    build_end = review_started or last_t
+    build_time = (build_end - build_started) if (build_started and build_end) else None
     review_time = None
     if review_started and last_t:
         review_time = last_t - review_started
@@ -674,7 +675,7 @@ def ingest_trial_from_snapshot(
         role="builder",
         invocation_seq=1,
         started_at=datetime.fromtimestamp(started, tz=UTC).isoformat() if started else None,
-        finished_at=datetime.fromtimestamp(build_started, tz=UTC).isoformat() if build_started else None,
+        finished_at=datetime.fromtimestamp(review_started or last_t, tz=UTC).isoformat() if (review_started or last_t) else None,
         duration_sec=build_time,
         files_changed=len(builder_output.get("changed_files", [])),
         status=builder_output.get("status", "unknown"),
@@ -761,6 +762,9 @@ def export_csv(view_name: str, output_path: Path, db_path: Path | None = None) -
 
 def query(sql: str, params: tuple = (), db_path: Path | None = None) -> list[dict[str, Any]]:
     """Run an arbitrary read-only SQL query. For advanced analysis."""
+    stripped = sql.strip().upper()
+    if not stripped.startswith("SELECT") and not stripped.startswith("WITH"):
+        raise ValueError("Only SELECT/WITH queries are allowed")
     with _connect(db_path) as conn:
         rows = conn.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
