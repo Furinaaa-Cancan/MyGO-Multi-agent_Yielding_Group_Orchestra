@@ -52,6 +52,11 @@ class EvalResult:
     completeness_score: float = 0.0
     security_score: float = 1.0  # Default to clean
 
+    # Complexity & coverage
+    avg_complexity: float = 0.0
+    complexity_grade: str = ""
+    coverage_pct: float = 0.0
+
     # Composite
     quality_score: float = 0.0
 
@@ -59,7 +64,7 @@ class EvalResult:
     checks: dict[str, bool] = field(default_factory=dict)
 
     def compute_quality_score(self) -> float:
-        self.quality_score = (
+        base = (
             30 * self.test_pass_rate
             + 20 * self.lint_clean
             + 15 * self.builds_clean
@@ -67,6 +72,12 @@ class EvalResult:
             + 10 * self.completeness_score
             + 10 * self.security_score
         )
+        # Complexity bonus: up to 5 points if avg_complexity <= 5 (grade A/B)
+        complexity_bonus = 0.0
+        if self.avg_complexity > 0 and self.avg_complexity <= 5:
+            # Linear scale: complexity 1 -> 5 pts, complexity 5 -> 1 pt
+            complexity_bonus = max(1.0, 5.0 - (self.avg_complexity - 1))
+        self.quality_score = min(100.0, base + complexity_bonus)
         return self.quality_score
 
     def to_dict(self) -> dict[str, Any]:
@@ -285,6 +296,125 @@ def check_security(workspace: Path) -> float:
     return (total_checks - issues) / total_checks
 
 
+def check_complexity(workspace: Path, timeout: int = 30) -> dict[str, Any]:
+    """Compute cyclomatic complexity of Python files using radon.
+
+    Returns {"avg_complexity": float, "grade": str, "details": str}.
+    """
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "radon", "cc", "-s", "-a", "-j", str(workspace)],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if result.returncode != 0 and "No module named radon" in result.stderr:
+            return {"avg_complexity": 0, "grade": "N/A", "details": "radon not installed"}
+
+        output = result.stdout.strip()
+        if not output:
+            return {"avg_complexity": 0, "grade": "N/A", "details": "no output from radon"}
+
+        # Parse JSON output from radon
+        data = json.loads(output)
+
+        # Compute average complexity across all functions/methods
+        total_complexity = 0.0
+        count = 0
+        for file_path, blocks in data.items():
+            for block in blocks:
+                total_complexity += block.get("complexity", 0)
+                count += 1
+
+        if count == 0:
+            return {"avg_complexity": 0, "grade": "N/A", "details": "no functions found"}
+
+        avg = total_complexity / count
+
+        # Determine grade based on radon's scale
+        if avg <= 5:
+            grade = "A"
+        elif avg <= 10:
+            grade = "B"
+        elif avg <= 20:
+            grade = "C"
+        elif avg <= 30:
+            grade = "D"
+        elif avg <= 40:
+            grade = "E"
+        else:
+            grade = "F"
+
+        return {
+            "avg_complexity": round(avg, 2),
+            "grade": grade,
+            "details": f"{count} blocks analyzed, avg complexity {avg:.2f} ({grade})",
+        }
+    except FileNotFoundError:
+        return {"avg_complexity": 0, "grade": "N/A", "details": "radon not installed"}
+    except Exception as e:
+        return {"avg_complexity": 0, "grade": "N/A", "details": str(e)}
+
+
+def check_coverage(workspace: Path, test_dir: Path, timeout: int = 120) -> dict[str, Any]:
+    """Run pytest with coverage and return coverage percentage.
+
+    Returns {"coverage_pct": float, "details": str}.
+    """
+    if not test_dir.exists() or not list(test_dir.glob("test_*.py")):
+        return {"coverage_pct": 0, "details": "no test files found"}
+
+    cov_json = workspace / "coverage.json"
+    try:
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "pytest", str(test_dir),
+                f"--cov={workspace}",
+                "--cov-report=json",
+                "-q",
+                "--override-ini=addopts=",
+                "-p", "no:cacheprovider",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=str(workspace),
+            env={**os.environ, "PYTHONPATH": str(workspace), "COVERAGE_FILE": str(workspace / ".coverage")},
+        )
+        if "No module named" in result.stderr and "pytest_cov" in result.stderr:
+            return {"coverage_pct": 0, "details": "pytest-cov not installed"}
+
+        # pytest-cov writes coverage.json in cwd by default
+        cov_file = workspace / "coverage.json"
+        if not cov_file.exists():
+            # Try current directory
+            cov_file = Path("coverage.json")
+
+        if cov_file.exists():
+            cov_data = json.loads(cov_file.read_text(encoding="utf-8"))
+            pct = cov_data.get("totals", {}).get("percent_covered", 0.0)
+            return {
+                "coverage_pct": round(pct, 2),
+                "details": f"{pct:.1f}% coverage",
+            }
+        else:
+            return {"coverage_pct": 0, "details": "coverage.json not found"}
+    except subprocess.TimeoutExpired:
+        return {"coverage_pct": 0, "details": "coverage run timed out"}
+    except FileNotFoundError:
+        return {"coverage_pct": 0, "details": "pytest-cov not installed"}
+    except Exception as e:
+        return {"coverage_pct": 0, "details": str(e)}
+    finally:
+        # Clean up coverage artifacts
+        for f in [workspace / "coverage.json", workspace / ".coverage"]:
+            if f.exists():
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
+
+
 def evaluate_trial(
     task_dir: Path,
     workspace: Path,
@@ -343,6 +473,15 @@ def evaluate_trial(
     # 6. Security
     result.security_score = check_security(workspace)
 
+    # 7. Complexity
+    complexity_result = check_complexity(workspace)
+    result.avg_complexity = complexity_result["avg_complexity"]
+    result.complexity_grade = complexity_result["grade"]
+
+    # 8. Coverage
+    coverage_result = check_coverage(workspace, test_dir)
+    result.coverage_pct = coverage_result["coverage_pct"]
+
     # Composite score
     result.compute_quality_score()
 
@@ -376,6 +515,8 @@ def print_report(result: EvalResult) -> None:
     print(f"  Structure:    {result.structure_score*100:.0f}%")
     print(f"  Completeness: {result.completeness_score*100:.0f}%")
     print(f"  Security:     {result.security_score*100:.0f}%")
+    print(f"  Complexity:   {result.avg_complexity:.2f} (grade {result.complexity_grade})")
+    print(f"  Coverage:     {result.coverage_pct:.1f}%")
     print(f"\n  {'─'*40}")
     print(f"  QUALITY SCORE: {result.quality_score:.1f} / 100")
     print(f"  {'─'*40}\n")

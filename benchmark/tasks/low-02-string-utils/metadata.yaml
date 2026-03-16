@@ -1,0 +1,13 @@
+id: low-02-string-utils
+name: String Utility Functions
+complexity: low
+complexity_score: 2.5
+type: utility
+expected_file_count: 2
+tags: [pure-function, string]
+required_patterns:
+  - "def reverse_words\\("
+  - "def is_palindrome\\("
+  - "def truncate\\("
+  - "def snake_to_camel\\("
+  - "def count_vowels\\("

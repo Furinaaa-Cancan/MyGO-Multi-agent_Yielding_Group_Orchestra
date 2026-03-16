@@ -1,0 +1,14 @@
+id: low-03-config-parser
+name: Simple Config Parser
+complexity: low
+complexity_score: 3.0
+type: utility
+expected_file_count: 2
+tags: [class, parsing]
+required_patterns:
+  - "class ConfigParser"
+  - "def load\\("
+  - "def get\\("
+  - "def get_int\\("
+  - "def get_bool\\("
+  - "ValueError"
