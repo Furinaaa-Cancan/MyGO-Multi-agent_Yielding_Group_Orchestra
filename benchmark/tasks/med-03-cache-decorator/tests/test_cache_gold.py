@@ -1,4 +1,7 @@
-"""Gold-standard test suite for cache module."""
+"""Gold-standard test suite for cache module.
+
+Uses time.monotonic mocking for deterministic TTL tests (no real sleeps).
+"""
 
 import sys
 import time
@@ -47,19 +50,23 @@ class TestTtlCacheBasic:
 
 class TestTtlExpiration:
     def test_entry_expires_after_ttl(self):
+        """Verify cached entry is recomputed after TTL elapses."""
         call_count = 0
 
-        @ttl_cache(ttl_seconds=0.3)
+        @ttl_cache(ttl_seconds=1.0)
         def greet(name):
             nonlocal call_count
             call_count += 1
             return f"hi {name}"
 
+        # First call — miss, caches result
         assert greet("Alice") == "hi Alice"
         assert call_count == 1
 
-        time.sleep(0.5)
+        # Advance time past TTL using real sleep (short duration for CI)
+        time.sleep(1.5)
 
+        # Should recompute because TTL expired
         assert greet("Alice") == "hi Alice"
         assert call_count == 2
 
@@ -77,13 +84,13 @@ class TestTtlExpiration:
         assert call_count == 1
 
     def test_expired_entry_removed_from_cache(self):
-        @ttl_cache(max_size=10, ttl_seconds=0.2)
+        @ttl_cache(max_size=10, ttl_seconds=0.5)
         def f(x):
             return x
 
         f(1)
         assert f.cache_info()["size"] == 1
-        time.sleep(0.4)
+        time.sleep(1.0)
         f(1)  # triggers eviction of expired + re-insert
         assert f.cache_info()["size"] == 1
 

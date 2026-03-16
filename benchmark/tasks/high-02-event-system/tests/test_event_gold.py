@@ -261,14 +261,16 @@ class TestPublishAsync:
     def test_publish_async_calls_handlers(self):
         bus = EventBus()
         results = []
+        done = threading.Event()
         lock = threading.Lock()
 
         def handler(e):
             with lock:
                 results.append(e.event_type)
+            done.set()
 
         bus.subscribe("evt", handler)
         bus.publish_async("evt")
-        # Give threads time to finish
-        time.sleep(0.3)
+        # Wait for handler thread with timeout instead of fixed sleep
+        done.wait(timeout=5.0)
         assert "evt" in results

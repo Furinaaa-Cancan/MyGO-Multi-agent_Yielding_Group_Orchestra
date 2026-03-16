@@ -1,3 +1,15 @@
+id: med-03-cache-decorator
+name: Cache Decorator with TTL
 complexity: medium
-score: 6.0
+complexity_score: 6.0
+type: utility
+expected_file_count: 2
 tags: [decorator, caching, design-pattern]
+required_patterns:
+  - "def ttl_cache\\("
+  - "def memoize\\("
+  - "def cache_info\\("
+  - "def cache_clear\\("
+  - "max_size"
+  - "ttl_seconds"
+  - "TypeError"

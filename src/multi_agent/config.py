@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re as _re
+import warnings
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,6 @@ def _find_root() -> Path:
                 f"Check the path or unset MA_ROOT."
             )
         if not (p / "skills").is_dir() or not (p / "agents").is_dir():
-            import warnings
             warnings.warn(
                 f"MA_ROOT={p} does not contain 'skills/' and 'agents/' directories. "
                 f"Some operations may fail.",
@@ -37,7 +37,6 @@ def _find_root() -> Path:
         if (parent / "skills").is_dir() and (parent / "agents").is_dir():
             return parent
 
-    import warnings
     scanned_display = ", ".join(scanned[:5])
     warnings.warn(
         f"Could not find MyGO project root (no 'skills/' + 'agents/' found). "
@@ -226,12 +225,10 @@ def load_project_config() -> dict[str, Any]:
         with path.open("r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
         if not isinstance(data, dict):
-            import warnings
             warnings.warn(".ma.yaml is not a valid mapping, ignoring.", stacklevel=2)
             return {}
         return data
     except Exception as e:
-        import warnings
         warnings.warn(f".ma.yaml parse error: {e}. Using defaults.", stacklevel=2)
         return {}
 
@@ -302,7 +299,6 @@ class ProjectSettings:
             if "review_policy" in mode_cfg:
                 self._merged["review_policy"] = mode_cfg["review_policy"]
         except Exception as exc:
-            import warnings
             warnings.warn(f"Failed to load workmode.yaml: {exc}", stacklevel=2)
 
     def get(self, key: str, default: Any = None) -> Any:

@@ -1,3 +1,17 @@
+id: high-02-event-system
+name: Event Bus System
 complexity: high
-score: 7.5
+complexity_score: 7.5
+type: service
+expected_file_count: 3
 tags: [pubsub, threading, design-pattern]
+required_patterns:
+  - "class EventBus"
+  - "class Event"
+  - "def subscribe\\("
+  - "def unsubscribe\\("
+  - "def publish\\("
+  - "def publish_async\\("
+  - "def stop_propagation\\("
+  - "event_handler"
+  - "threading"

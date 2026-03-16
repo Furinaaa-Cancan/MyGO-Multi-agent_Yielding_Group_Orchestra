@@ -1,3 +1,16 @@
+id: med-02-csv-processor
+name: CSV Data Processor
 complexity: medium
-score: 5.5
+complexity_score: 5.5
+type: utility
+expected_file_count: 2
 tags: [data, file-io, csv]
+required_patterns:
+  - "def read_csv\\("
+  - "def filter_rows\\("
+  - "def sort_rows\\("
+  - "def add_column\\("
+  - "def write_csv\\("
+  - "def aggregate\\("
+  - "FileNotFoundError"
+  - "KeyError"

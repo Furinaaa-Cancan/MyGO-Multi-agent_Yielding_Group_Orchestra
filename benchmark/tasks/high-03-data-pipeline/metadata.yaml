@@ -1,3 +1,20 @@
+id: high-03-data-pipeline
+name: Data Validation Pipeline
 complexity: high
-score: 8.5
+complexity_score: 8.5
+type: service
+expected_file_count: 3
 tags: [pipeline, validation, design-pattern, oop]
+required_patterns:
+  - "class Pipeline"
+  - "class PipelineResult"
+  - "class Step"
+  - "class StepResult"
+  - "class TypeCheck"
+  - "class Required"
+  - "class Range"
+  - "class Transform"
+  - "class Regex"
+  - "class Schema"
+  - "def run\\("
+  - "__or__"
