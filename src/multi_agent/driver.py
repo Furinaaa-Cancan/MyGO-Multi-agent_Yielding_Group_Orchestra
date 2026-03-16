@@ -549,17 +549,17 @@ def dispatch_visible(
         raise
 
     # If terminal already open for this key, just return — wrapper will see trigger
+    # Single lock scope to prevent TOCTOU race on _open_terminals check + registration
     with _terminal_counter_lock:
         if key in _open_terminals:
             logger.info("Trigger written for existing terminal %s", key)
             return
-
-    # First time: create wrapper script + open terminal
-    cwd = project_dir or str(Path.cwd())
-    with _terminal_counter_lock:
         global _terminal_counter
         persona = get_agent_name(_terminal_counter)
         _terminal_counter += 1
+
+    # First time: create wrapper script + open terminal
+    cwd = project_dir or str(Path.cwd())
     label = f"{persona} · {subtask_id}" if subtask_id else f"{persona} · {agent_id}/{role}"
 
     fd, wrapper_path = tempfile.mkstemp(

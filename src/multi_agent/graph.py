@@ -466,6 +466,7 @@ def build_node(state: WorkflowState) -> dict[str, Any]:
 
     builder_id = state.get("builder_id", "?")
     reviewer_id = state.get("reviewer_id", "?")
+    build_started = time.time()
 
     # Interrupt: wait for builder to submit via `my done`
     # Role-based: inbox is always builder.md regardless of which IDE
@@ -482,7 +483,7 @@ def build_node(state: WorkflowState) -> dict[str, Any]:
         }
 
     # A3: Timeout enforcement — use build_started_at for precise timing
-    build_started = time.time()
+    build_finished = time.time()
     # Fallback to started_at for backward compatibility with old state
     ref_time = state.get("build_started_at") or state.get("started_at", 0)
     if not ref_time:
@@ -1071,7 +1072,8 @@ def decide_node(state: WorkflowState) -> dict[str, Any]:
         # Plugin hook: task complete
         with contextlib.suppress(Exception):
             from multi_agent.hooks import emit
-            elapsed = time.time() - (state.get("task_started_at") or time.time())
+            task_started = state.get("task_started_at") or state.get("started_at")
+            elapsed = round(time.time() - task_started, 1) if task_started else 0
             emit("on_task_complete", {"task_id": state.get("task_id", ""), "elapsed": round(elapsed, 1)})
     elif decision == "request_changes":
         result = _decide_request_changes(state, reviewer_output, original_convo=original_convo)

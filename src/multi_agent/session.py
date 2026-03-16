@@ -102,7 +102,8 @@ def _clear_task_checkpoint(task_id: str) -> None:
     db = store_db_path()
     if not db.exists():
         return
-    with sqlite3.connect(db) as conn:
+    with sqlite3.connect(db, timeout=10) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("DELETE FROM writes WHERE thread_id = ?", (task_id,))
         conn.execute("DELETE FROM checkpoints WHERE thread_id = ?", (task_id,))
         conn.commit()
