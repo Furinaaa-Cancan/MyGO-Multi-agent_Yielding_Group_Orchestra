@@ -76,27 +76,17 @@ class EvalResult:
 def run_gold_tests(workspace: Path, test_dir: Path, timeout: int = 120) -> dict[str, Any]:
     """Run gold-standard pytest tests against agent workspace.
 
-    Copies gold tests into workspace, runs pytest, then cleans up.
+    Runs pytest on gold test files directly, with PYTHONPATH set to workspace
+    so that imports resolve to agent code.
     Returns {total, passed, failed, errors, output}.
     """
     if not test_dir.exists() or not list(test_dir.glob("test_*.py")):
         return {"total": 0, "passed": 0, "failed": 0, "errors": 0, "output": "no gold tests found"}
 
-    # Copy gold tests to a temp location in workspace
-    gold_dest = workspace / "_gold_tests"
-    gold_dest.mkdir(exist_ok=True)
-
-    for tf in test_dir.glob("test_*.py"):
-        (gold_dest / tf.name).write_text(tf.read_text(encoding="utf-8"), encoding="utf-8")
-
-    # Also copy conftest if exists
-    conftest = test_dir / "conftest.py"
-    if conftest.exists():
-        (gold_dest / "conftest.py").write_text(conftest.read_text(encoding="utf-8"), encoding="utf-8")
-
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "pytest", str(gold_dest), "-v", "--tb=short", "-q"],
+            [sys.executable, "-m", "pytest", str(test_dir), "-v", "--tb=short", "-q",
+             "--override-ini=addopts=", "-p", "no:cacheprovider"],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -131,10 +121,6 @@ def run_gold_tests(workspace: Path, test_dir: Path, timeout: int = 120) -> dict[
         return {"total": 0, "passed": 0, "failed": 0, "errors": 1, "output": "pytest timeout"}
     except Exception as e:
         return {"total": 0, "passed": 0, "failed": 0, "errors": 1, "output": str(e)}
-    finally:
-        # Clean up gold tests
-        import shutil
-        shutil.rmtree(gold_dest, ignore_errors=True)
 
 
 def check_lint(workspace: Path, timeout: int = 30) -> dict[str, Any]:
