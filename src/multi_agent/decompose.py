@@ -473,14 +473,16 @@ def _detect_circular_deps(sub_tasks: list[SubTask]) -> list[str]:
     def _has_cycle(node: str) -> bool:
         visited.add(node)
         in_stack.add(node)
+        found = False
         for dep in adj.get(node, []):
             if dep in in_stack:
                 cycle_errors.append(f"circular dependency detected involving '{node}' → '{dep}'")
-                return True
-            if dep not in visited and _has_cycle(dep):
-                return True
+                found = True
+            elif dep not in visited:
+                if _has_cycle(dep):
+                    found = True
         in_stack.discard(node)
-        return False
+        return found
 
     for sid in adj:
         if sid not in visited:

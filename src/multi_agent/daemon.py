@@ -15,9 +15,11 @@ Usage::
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import signal
+import threading
 import time
 from enum import Enum
 from pathlib import Path
@@ -59,6 +61,22 @@ def _queue_dir() -> Path:
 
 def _queue_file() -> Path:
     return _queue_dir() / "tasks.jsonl"
+
+
+def _queue_lock():
+    """Context manager providing exclusive file lock on the queue."""
+    lock_path = _queue_dir() / ".lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_fd = open(lock_path, "w")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        yield lock_fd
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
+
+
+_queue_lock = __import__("contextlib").contextmanager(_queue_lock)
 
 
 def _load_queue() -> list[dict[str, Any]]:
@@ -259,36 +277,39 @@ def _next_task() -> dict[str, Any] | None:
 
 def _mark_running(queue_id: str) -> None:
     """Mark a task as running."""
-    entries = _load_queue()
-    for e in entries:
-        if e.get("queue_id") == queue_id:
-            e["status"] = TaskStatus.RUNNING.value
-            e["started_at"] = time.time()
-            break
-    _save_queue(entries)
+    with _queue_lock():
+        entries = _load_queue()
+        for e in entries:
+            if e.get("queue_id") == queue_id:
+                e["status"] = TaskStatus.RUNNING.value
+                e["started_at"] = time.time()
+                break
+        _save_queue(entries)
 
 
 def _mark_completed(queue_id: str) -> None:
     """Mark a task as completed."""
-    entries = _load_queue()
-    for e in entries:
-        if e.get("queue_id") == queue_id:
-            e["status"] = TaskStatus.COMPLETED.value
-            e["completed_at"] = time.time()
-            break
-    _save_queue(entries)
+    with _queue_lock():
+        entries = _load_queue()
+        for e in entries:
+            if e.get("queue_id") == queue_id:
+                e["status"] = TaskStatus.COMPLETED.value
+                e["completed_at"] = time.time()
+                break
+        _save_queue(entries)
 
 
 def _mark_failed(queue_id: str, error: str) -> None:
     """Mark a task as failed."""
-    entries = _load_queue()
-    for e in entries:
-        if e.get("queue_id") == queue_id:
-            e["status"] = TaskStatus.FAILED.value
-            e["completed_at"] = time.time()
-            e["error"] = error[:500]
-            break
-    _save_queue(entries)
+    with _queue_lock():
+        entries = _load_queue()
+        for e in entries:
+            if e.get("queue_id") == queue_id:
+                e["status"] = TaskStatus.FAILED.value
+                e["completed_at"] = time.time()
+                e["error"] = error[:500]
+                break
+        _save_queue(entries)
 
 
 # ── Daemon ───────────────────────────────────────────────
@@ -311,8 +332,11 @@ def run_daemon(*, once: bool = False, poll_interval: float = _POLL_INTERVAL) -> 
     def _handle_signal(signum: int, frame: Any) -> None:
         _shutdown[0] = True
 
-    signal.signal(signal.SIGINT, _handle_signal)
-    signal.signal(signal.SIGTERM, _handle_signal)
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGINT, _handle_signal)
+        signal.signal(signal.SIGTERM, _handle_signal)
+    else:
+        _log.warning("Daemon not on main thread; signal handlers not installed")
 
     while not _shutdown[0]:
         task = _next_task()

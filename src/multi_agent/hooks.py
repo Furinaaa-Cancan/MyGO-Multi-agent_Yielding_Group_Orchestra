@@ -129,7 +129,7 @@ def emit(event: str, data: dict[str, Any] | None = None) -> int:
         _log.warning("Unknown hook event: %s", event)
         return 0
 
-    hooks = _registry.get(event, [])
+    hooks = list(_registry.get(event, []))  # snapshot for thread safety
     if not hooks:
         return 0
 

@@ -283,6 +283,7 @@ def notify_task_complete(
 
 
 _notify_registered = False
+_notify_lock = __import__("threading").Lock()
 
 
 def register_notify_hooks() -> None:
@@ -292,9 +293,10 @@ def register_notify_hooks() -> None:
     Sends notifications on task terminal states (approved/failed/escalated).
     """
     global _notify_registered
-    if _notify_registered:
-        return
-    _notify_registered = True
+    with _notify_lock:
+        if _notify_registered:
+            return
+        _notify_registered = True
 
     cfg = load_notify_config()
     if not cfg.enabled:
