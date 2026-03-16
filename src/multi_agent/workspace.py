@@ -88,7 +88,17 @@ def write_inbox(agent_id: str, content: str) -> Path:
     _validate_agent_id(agent_id)
     ensure_workspace()
     path = inbox_dir() / f"{agent_id}.md"
-    path.write_text(content, encoding="utf-8")
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp", prefix=f".{agent_id}-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        Path(tmp).replace(path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            Path(tmp).unlink()
+        raise
     return path
 
 
@@ -365,9 +375,11 @@ def _find_oversized_files(ws: Path) -> list[str]:
             continue
         # Prevent symlink escape: resolved path must stay within workspace
         try:
-            if not str(f.resolve()).startswith(str(ws.resolve())):
-                found.append(f"Symlink escape detected: {f.relative_to(ws)}")
-                continue
+            f.resolve().relative_to(ws.resolve())
+        except ValueError:
+            found.append(f"Symlink escape detected: {f.relative_to(ws)}")
+            continue
+        try:
             size_mb = f.stat().st_size / (1024 * 1024)
             if size_mb > MAX_FILE_SIZE_MB:
                 found.append(f"Oversized file ({size_mb:.1f}MB): {f.relative_to(ws)}")
@@ -415,7 +427,10 @@ def get_workspace_stats() -> dict[str, Any]:
 
 def check_disk_space(min_mb: int = 100) -> tuple[bool, int]:
     """Check available disk space. Returns (is_sufficient, available_mb)."""
-    usage = shutil.disk_usage(workspace_dir().parent)
+    target = workspace_dir().parent
+    while not target.exists() and target != target.parent:
+        target = target.parent
+    usage = shutil.disk_usage(target)
     available_mb = usage.free // (1024 * 1024)
     return (available_mb >= min_mb, available_mb)
 
@@ -436,9 +451,8 @@ def cleanup_old_files(max_age_days: int = 7) -> int:
                 continue
             # Prevent symlink escape: resolved path must stay within workspace
             try:
-                if not str(f.resolve()).startswith(str(ws.resolve())):
-                    continue
-            except OSError:
+                f.resolve().relative_to(ws.resolve())
+            except (ValueError, OSError):
                 continue
             # Don't delete active task files
             if active_task and active_task in f.name:

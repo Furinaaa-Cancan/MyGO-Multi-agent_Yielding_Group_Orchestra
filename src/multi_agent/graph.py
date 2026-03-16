@@ -160,6 +160,7 @@ class WorkflowState(TypedDict, total=False):
     reviewer_output: dict[str, Any] | None
     retry_count: int
     retry_budget: int
+    request_changes_count: int
     started_at: float
     task_started_at: float | None  # total duration anchor (DoW guard)
     build_started_at: float | None
@@ -764,13 +765,13 @@ def _decide_request_changes(
     retry_count = state.get("retry_count", 0)
     budget = state.get("retry_budget", 2)
 
-    # Count from original (pre-trim) conversation to avoid undercounting
-    # when trim_conversation removes middle entries.
+    # Use state counter (resilient to conversation trimming) with fallback
+    # to counting conversation entries for backwards compatibility.
     convo_for_count = original_convo if original_convo is not None else state.get("conversation", [])
-    rc_count = sum(
+    rc_count = state.get("request_changes_count", sum(
         1 for e in convo_for_count
         if e.get("action") == "request_changes"
-    )
+    ))
     if rc_count >= MAX_REQUEST_CHANGES:
         _log.warning("request_changes cap reached (%d), escalating", rc_count)
         final_entry = make_event("orchestrator", action="escalated",
@@ -790,7 +791,8 @@ def _decide_request_changes(
         conversation=dashboard_convo,
         status_msg=f"🔧 需修改 ({retry_count}/{budget})",
     )
-    return {"conversation": [
+    rc_total = state.get("request_changes_count", 0) + 1
+    return {"request_changes_count": rc_total, "conversation": [
         make_event("orchestrator", action="request_changes", feedback=feedback)
     ]}
 

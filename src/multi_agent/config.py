@@ -277,13 +277,13 @@ class ProjectSettings:
         # Layer 2: .ma.yaml
         proj = load_project_config()
         for k, v in proj.items():
-            if v is not None and v != "":
+            if v is not None:
                 self._merged[k] = v
 
         # Layer 1: CLI overrides (highest precedence)
         if overrides:
             for k, v in overrides.items():
-                if v is not None and v != "":
+                if v is not None:
                     self._merged[k] = v
 
     def _apply_workmode(self, mode: str) -> None:
