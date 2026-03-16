@@ -43,16 +43,19 @@ def _load_spec() -> dict[str, Any]:
 
 
 def terminal_states() -> frozenset[str]:
-    """Return the set of terminal states from the spec."""
+    """Return the set of terminal states from the spec (normalized to uppercase)."""
     spec = _load_spec()
-    return frozenset(spec.get("terminal_states", []))
+    return frozenset(s.upper().strip() if isinstance(s, str) else s for s in spec.get("terminal_states", []))
 
 
 def valid_targets(from_state: str) -> frozenset[str]:
-    """Return all states reachable from *from_state* per the spec."""
+    """Return all states reachable from *from_state* per the spec (case-insensitive)."""
     spec = _load_spec()
-    targets = spec.get("transitions", {}).get(from_state, [])
-    return frozenset(targets)
+    transitions = spec.get("transitions", {})
+    # Normalize keys for case-insensitive lookup
+    normalized = {k.upper().strip(): v for k, v in transitions.items() if isinstance(k, str)}
+    targets = normalized.get(from_state.upper().strip(), [])
+    return frozenset(t.upper().strip() if isinstance(t, str) else t for t in targets)
 
 
 class InvalidTransitionError(RuntimeError):

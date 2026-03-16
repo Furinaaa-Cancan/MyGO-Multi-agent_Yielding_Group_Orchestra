@@ -117,12 +117,22 @@ def store(
     }
 
     try:
-        with path.open("a", encoding="utf-8") as f:
+        with path.open("a+", encoding="utf-8") as f:
             if fcntl is not None:
                 fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             try:
-                # Dedup check inside lock to prevent TOCTOU race
-                existing = _load_entries()
+                # Read through same locked fd to prevent TOCTOU race
+                f.seek(0)
+                existing = []
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        existing.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+
                 for e in existing:
                     if e.get("id") == entry_id:
                         return {"status": "duplicate", "entry_id": entry_id, "count": len(existing)}
@@ -130,6 +140,7 @@ def store(
                 if len(existing) >= _MAX_ENTRIES:
                     return {"status": "error", "reason": f"memory full ({_MAX_ENTRIES} entries)"}
 
+                f.seek(0, 2)  # seek to end for append
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
             finally:
                 if fcntl is not None:
@@ -539,22 +550,16 @@ def stats() -> dict[str, Any]:
 def _rewrite_entries(entries: list[dict[str, Any]]) -> None:
     """Rewrite all entries to disk (after delete/clear).
 
-    Opens in 'r+' mode and truncates after acquiring the lock to prevent
-    another process from reading an empty file mid-truncate.  If the file
-    does not exist yet, it is created first.
+    Uses 'w' mode which atomically creates/truncates, then acquires lock
+    before writing to prevent concurrent readers from seeing partial data.
     """
     path = _memory_file()
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Ensure file exists before opening in r+ mode
-    if not path.exists():
-        path.touch()
     try:
-        with path.open("r+", encoding="utf-8") as f:
+        with path.open("w", encoding="utf-8") as f:
             if fcntl is not None:
                 fcntl.flock(f.fileno(), fcntl.LOCK_EX)
             try:
-                f.seek(0)
-                f.truncate()
                 for e in entries:
                     f.write(json.dumps(e, ensure_ascii=False) + "\n")
             finally:

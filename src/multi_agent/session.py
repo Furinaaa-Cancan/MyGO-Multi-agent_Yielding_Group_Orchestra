@@ -560,8 +560,11 @@ def _parse_json_payload(raw: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         pass
 
-    fence_re = re.compile(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", flags=re.IGNORECASE)
+    fence_re = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```", flags=re.IGNORECASE)
     for block in reversed(fence_re.findall(text)):
+        block = block.strip()
+        if not block.startswith("{"):
+            continue
         try:
             data = json.loads(block)
             if isinstance(data, dict):
@@ -1167,6 +1170,10 @@ def _post_push_hooks(
 def session_push(task_id: str, agent: str, file_path: str, *, app: Any | None = None) -> dict[str, Any]:
     _validate_task_id(task_id)
     _validate_agent_id(agent)
+    # Verify workspace lock to prevent race with concurrent start_session(reset=True)
+    locked = read_lock()
+    if locked and locked != task_id:
+        raise ValueError(f"another task is active: {locked}")
     graph_app = app or _compile_graph_app()
     cfg = _config(task_id)
     snapshot = graph_app.get_state(cfg)
