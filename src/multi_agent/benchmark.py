@@ -165,8 +165,12 @@ CREATE INDEX IF NOT EXISTS idx_agent_runs_agent
     ON agent_runs(agent_id);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_role
     ON agent_runs(role);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_runs_trial_seq
+    ON agent_runs(trial_id, invocation_seq);
 CREATE INDEX IF NOT EXISTS idx_quality_gates_trial
     ON quality_gates(trial_id);
+CREATE INDEX IF NOT EXISTS idx_quality_gates_run
+    ON quality_gates(run_id);
 CREATE INDEX IF NOT EXISTS idx_review_decisions_trial
     ON review_decisions(trial_id);
 
@@ -222,7 +226,7 @@ SELECT
     t.agent_mode,
     COUNT(*)                                AS trial_count,
     SUM(CASE WHEN t.status = 'approved' THEN 1 ELSE 0 END) AS success_count,
-    ROUND(100.0 * SUM(CASE WHEN t.status = 'approved' THEN 1 ELSE 0 END) / COUNT(*), 1) AS success_rate_pct,
+    ROUND(100.0 * SUM(CASE WHEN t.status = 'approved' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) AS success_rate_pct,
     ROUND(AVG(t.wall_clock_sec), 2)         AS avg_wall_clock_sec,
     ROUND(AVG(t.build_time_sec), 2)         AS avg_build_time_sec,
     ROUND(AVG(t.review_time_sec), 2)        AS avg_review_time_sec,
@@ -241,7 +245,7 @@ SELECT
     qg.check_name,
     COUNT(*)                    AS total_checks,
     SUM(qg.passed)              AS passed_count,
-    ROUND(100.0 * SUM(qg.passed) / COUNT(*), 1) AS pass_rate_pct
+    ROUND(100.0 * SUM(qg.passed) / NULLIF(COUNT(*), 0), 1) AS pass_rate_pct
 FROM quality_gates qg
 JOIN agent_runs ar ON ar.run_id = qg.run_id
 GROUP BY ar.agent_id, qg.check_name;
@@ -408,6 +412,8 @@ def create_trial(
     db_path: Path | None = None,
 ) -> str:
     """Create a new trial. Returns trial_id."""
+    if agent_mode not in ("single", "multi"):
+        raise ValueError(f"agent_mode must be 'single' or 'multi', got {agent_mode!r}")
     tid = f"trial-{_uid()}"
     with _connect(db_path) as conn:
         conn.execute(
@@ -491,6 +497,9 @@ def record_agent_run(
     db_path: Path | None = None,
 ) -> str:
     """Record a single agent invocation. Returns run_id."""
+    _valid_roles = ("builder", "reviewer", "decomposer", "orchestrator")
+    if role not in _valid_roles:
+        raise ValueError(f"role must be one of {_valid_roles}, got {role!r}")
     rid = f"run-{_uid()}"
     with _connect(db_path) as conn:
         conn.execute(

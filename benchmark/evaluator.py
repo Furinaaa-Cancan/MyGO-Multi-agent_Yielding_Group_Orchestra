@@ -15,6 +15,7 @@ Scoring formula (0-100):
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -76,7 +77,7 @@ class EvalResult:
         complexity_bonus = 0.0
         if self.avg_complexity > 0 and self.avg_complexity <= 5:
             # Linear scale: complexity 1 -> 5 pts, complexity 5 -> 1 pt
-            complexity_bonus = max(1.0, 5.0 - (self.avg_complexity - 1))
+            complexity_bonus = 5.0 - (self.avg_complexity - 1.0)
         self.quality_score = min(100.0, base + complexity_bonus)
         return self.quality_score
 
@@ -137,7 +138,8 @@ def run_gold_tests(workspace: Path, test_dir: Path, timeout: int = 120) -> dict[
 def check_lint(workspace: Path, timeout: int = 30) -> dict[str, Any]:
     """Run ruff linter on workspace Python files."""
     py_files = list(workspace.rglob("*.py"))
-    py_files = [f for f in py_files if "_gold_tests" not in str(f) and "__pycache__" not in str(f)]
+    py_files = [f for f in py_files if "_gold_tests" not in str(f)
+                and "__pycache__" not in str(f) and not f.is_symlink()]
 
     if not py_files:
         return {"errors": 0, "output": "no Python files found", "clean": True}
@@ -149,7 +151,8 @@ def check_lint(workspace: Path, timeout: int = 30) -> dict[str, Any]:
             text=True,
             timeout=timeout,
         )
-        error_count = result.stdout.count("\n") if result.stdout.strip() else 0
+        # Count non-empty lines (each ruff error is one line)
+        error_count = sum(1 for line in result.stdout.splitlines() if line.strip()) if result.stdout.strip() else 0
         return {
             "errors": error_count,
             "output": (result.stdout + result.stderr)[-1000:],
@@ -160,22 +163,19 @@ def check_lint(workspace: Path, timeout: int = 30) -> dict[str, Any]:
 
 
 def check_builds(workspace: Path) -> dict[str, Any]:
-    """Check if Python files in workspace can be imported without errors."""
+    """Check if Python files in workspace parse without syntax errors."""
     errors = []
     py_files = list(workspace.rglob("*.py"))
     py_files = [f for f in py_files if not f.name.startswith("test_")
-                and "_gold_tests" not in str(f) and "__pycache__" not in str(f)]
+                and "_gold_tests" not in str(f) and "__pycache__" not in str(f)
+                and not f.is_symlink()]
 
     for pf in py_files:
         try:
-            result = subprocess.run(
-                [sys.executable, "-c", f"import ast; ast.parse(open('{pf}').read())"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode != 0:
-                errors.append(f"{pf.name}: {result.stderr.strip()[:200]}")
+            source = pf.read_text(encoding="utf-8")
+            ast.parse(source, filename=str(pf.name))
+        except SyntaxError as e:
+            errors.append(f"{pf.name}: {e.msg} (line {e.lineno})")
         except Exception as e:
             errors.append(f"{pf.name}: {e}")
 
@@ -384,11 +384,8 @@ def check_coverage(workspace: Path, test_dir: Path, timeout: int = 120) -> dict[
         if "No module named" in result.stderr and "pytest_cov" in result.stderr:
             return {"coverage_pct": 0, "details": "pytest-cov not installed"}
 
-        # pytest-cov writes coverage.json in cwd by default
+        # pytest-cov writes coverage.json in cwd (workspace)
         cov_file = workspace / "coverage.json"
-        if not cov_file.exists():
-            # Try current directory
-            cov_file = Path("coverage.json")
 
         if cov_file.exists():
             cov_data = json.loads(cov_file.read_text(encoding="utf-8"))
@@ -434,8 +431,11 @@ def evaluate_trial(
     meta_path = task_dir / "metadata.yaml"
     metadata: dict[str, Any] = {}
     if meta_path.exists():
-        import yaml
-        metadata = yaml.safe_load(meta_path.read_text(encoding="utf-8")) or {}
+        try:
+            import yaml
+            metadata = yaml.safe_load(meta_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            pass  # Gracefully degrade if YAML is malformed
 
     result = EvalResult(task_id=task_id, workspace=str(workspace))
 

@@ -66,7 +66,15 @@ def run_agent_on_task(
 
     Returns orchestrator result dict with task_id, status, timing, etc.
     """
-    requirement = (task_dir / "REQUIREMENT.md").read_text(encoding="utf-8")
+    req_path = task_dir / "REQUIREMENT.md"
+    if not req_path.exists():
+        return {
+            "success": False,
+            "elapsed_sec": 0,
+            "stdout": "",
+            "stderr": f"REQUIREMENT.md not found in {task_dir}",
+        }
+    requirement = req_path.read_text(encoding="utf-8")
 
     # Prepare workspace
     workspace.mkdir(parents=True, exist_ok=True)
@@ -202,14 +210,24 @@ def run_trial(
     )
 
     # Record quality gates from evaluation
+    # Map check names to their corresponding EvalResult score attributes
+    _check_score_attr = {
+        "gold_tests": "test_pass_rate",
+        "lint": "lint_clean",
+        "builds": "builds_clean",
+        "structure": "structure_score",
+        "completeness": "completeness_score",
+        "security": "security_score",
+    }
     for check_name, passed in eval_result.checks.items():
+        score_attr = _check_score_attr.get(check_name)
+        score_val = getattr(eval_result, score_attr, None) if score_attr else None
         record_quality_gate(
             run_id=build_run_id,
             trial_id=trial_id,
             check_name=check_name,
             passed=passed,
-            details={"score": getattr(eval_result, f"{check_name}_score", None)
-                      if hasattr(eval_result, f"{check_name}_score") else None},
+            details={"score": score_val},
         )
 
     # Record reviewer run if multi
@@ -340,12 +358,17 @@ def main():
         print("No benchmark tasks found!", file=sys.stderr)
         sys.exit(1)
 
+    # In multi mode, reviewer defaults to builder if not specified
+    reviewer = args.reviewer
+    if reviewer is None and "multi" in modes:
+        reviewer = args.builder
+
     run_experiment(
         name=args.experiment,
         hypothesis=args.hypothesis,
         tasks=tasks,
         builder=args.builder,
-        reviewer=args.reviewer or args.builder,
+        reviewer=reviewer,
         modes=modes,
         reps=args.reps,
         timeout=args.timeout,
