@@ -208,7 +208,8 @@ class TestFailFast:
         p = Pipeline() | TypeCheck(int)
         result = p.run("string")
         assert result.success is False
-        assert len(result.errors) >= 1
+        assert len(result.errors) == 1
+        assert isinstance(result.errors[0], str) and len(result.errors[0]) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +270,10 @@ class TestIntegration:
         assert result.success is True
         assert result.data["verified"] is True
         assert result.steps_executed == 5
+        # Verify original fields preserved after Transform
+        assert result.data["name"] == "Alice"
+        assert result.data["age"] == 30
+        assert result.data["email"] == "alice@example.com"
 
     def test_full_pipeline_failure_midway(self):
         p = (
@@ -279,4 +284,6 @@ class TestIntegration:
         )
         result = p.run({"name": "Kid", "age": 5})
         assert result.success is False
-        assert result.steps_executed == 3
+        assert result.steps_executed == 3  # TypeCheck OK, Required OK, Range fails
+        assert len(result.errors) == 1
+        assert result.data is None or result.data == {"name": "Kid", "age": 5}

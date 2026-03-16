@@ -91,6 +91,14 @@ class TestTruncate:
     def test_empty_suffix(self):
         assert truncate("hello world", 5, suffix="") == "hello"
 
+    def test_max_len_zero_raises(self):
+        with pytest.raises(ValueError):
+            truncate("hello", 0)
+
+    def test_negative_max_len_raises(self):
+        with pytest.raises(ValueError):
+            truncate("hello", -1)
+
 
 # ── snake_to_camel ────────────────────────────────────────────────────────
 
@@ -114,6 +122,9 @@ class TestSnakeToCamel:
         # Leading underscore produces an empty first segment
         result = snake_to_camel("_private_var")
         assert result == "PrivateVar"
+
+    def test_mixed_case_segments(self):
+        assert snake_to_camel("hello_WORLD") == "HelloWorld"
 
     def test_multiple_underscores(self):
         result = snake_to_camel("a__b")

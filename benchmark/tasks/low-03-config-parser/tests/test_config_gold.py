@@ -163,3 +163,25 @@ class TestMultipleLoads:
         assert cp.get("a") == "1"
         assert cp.get("b") == "99"
         assert cp.get("c") == "3"
+
+
+# ── edge cases ───────────────────────────────────────────────────────────
+
+class TestEdgeCases:
+    def test_load_empty_string(self):
+        """Loading empty string should not error and add no keys."""
+        cp = ConfigParser()
+        cp.load("")
+        assert cp.keys() == [] or len(list(cp.keys())) == 0
+
+    def test_load_only_comments_and_blanks(self):
+        cp = ConfigParser()
+        cp.load("# comment\n\n# another comment\n")
+        assert len(list(cp.keys())) == 0
+
+    def test_get_int_from_bool_key(self):
+        """A key set to '1' should be valid for both get_bool and get_int."""
+        cp = ConfigParser()
+        cp.load("flag = 1")
+        assert cp.get_int("flag") == 1
+        assert cp.get_bool("flag") is True

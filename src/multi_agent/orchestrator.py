@@ -81,8 +81,9 @@ def get_waiting_info(snapshot: Any) -> tuple[str | None, str | None]:
     """
     if not snapshot or not snapshot.next:
         return None, None
-    if snapshot.tasks and snapshot.tasks[0].interrupts:
-        info = snapshot.tasks[0].interrupts[0].value
+    tasks = getattr(snapshot, "tasks", None)
+    if tasks and getattr(tasks[0], "interrupts", None):
+        info = getattr(tasks[0].interrupts[0], "value", None)
         if isinstance(info, dict):
             role = info.get("role")
             agent = info.get("agent")

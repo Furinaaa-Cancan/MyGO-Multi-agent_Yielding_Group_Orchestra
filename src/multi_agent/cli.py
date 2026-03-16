@@ -79,7 +79,8 @@ def handle_errors(f: _F) -> _F:
 def _log_error_to_file(command: str, error: Exception) -> None:
     """Write error details to .multi-agent/logs/."""
     try:
-        from datetime import UTC, datetime
+        from datetime import datetime, timezone
+        UTC = timezone.utc
 
         from multi_agent.config import workspace_dir
         logs_dir = workspace_dir() / "logs"
@@ -833,7 +834,7 @@ def status(task_id: str | None) -> None:
         click.echo(f"No state found for task {task_id}")
         return
 
-    vals = snapshot.values
+    vals = snapshot.values or {}
     current_role = vals.get("current_role", "?")
     locked = read_lock()
 
@@ -932,7 +933,7 @@ def watch(task_id: str | None, interval: float) -> None:
     config = _make_config(task_id)
     snapshot = app.get_state(config)
     if not snapshot or not snapshot.next:
-        vals = snapshot.values if snapshot else {}
+        vals = (snapshot.values if snapshot else None) or {}
         final = vals.get("final_status", "done")
         release_lock()
         clear_runtime()
@@ -985,7 +986,7 @@ def _auto_fix_runtime_consistency() -> list[str]:
         try:
             acquire_lock(active_task)
             actions.append(f"恢复锁: {active_task}")
-        except Exception as exc:  # pragma: no cover - defensive
+        except (OSError, RuntimeError) as exc:  # pragma: no cover - defensive
             actions.append(f"恢复锁失败: {active_task} ({exc})")
         return actions
 
@@ -1002,7 +1003,7 @@ def _auto_fix_runtime_consistency() -> list[str]:
         try:
             acquire_lock(active_task)
             actions.append(f"重对齐锁: {locked_task} -> {active_task}")
-        except Exception as exc:  # pragma: no cover - defensive
+        except (OSError, RuntimeError) as exc:  # pragma: no cover - defensive
             actions.append(f"重对齐失败: {locked_task} -> {active_task} ({exc})")
         return actions
 
