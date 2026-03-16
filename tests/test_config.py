@@ -417,3 +417,44 @@ class TestPathFunctions:
         finally:
             monkeypatch.delenv("MA_ROOT", raising=False)
             root_dir.cache_clear()
+
+
+class TestLoadAgentNamesFromConfig:
+    """Cover load_agent_names_from_config logging on malformed input."""
+
+    def test_malformed_agent_names_logs_warning(self, tmp_path, monkeypatch, caplog):
+        import logging
+        from multi_agent.config import load_agent_names_from_config
+        (tmp_path / "skills").mkdir()
+        (tmp_path / "agents").mkdir()
+        (tmp_path / ".ma.yaml").write_text(
+            yaml.dump({"agent_names": "not-a-list"}), encoding="utf-8",
+        )
+        monkeypatch.setenv("MA_ROOT", str(tmp_path))
+        root_dir.cache_clear()
+        try:
+            with caplog.at_level(logging.WARNING, logger="multi_agent.config"):
+                load_agent_names_from_config()
+            assert any("malformed" in r.message for r in caplog.records)
+        finally:
+            monkeypatch.delenv("MA_ROOT", raising=False)
+            root_dir.cache_clear()
+
+    def test_valid_agent_names_no_warning(self, tmp_path, monkeypatch, caplog):
+        import logging
+        from multi_agent.config import load_agent_names_from_config, get_all_agent_names
+        (tmp_path / "skills").mkdir()
+        (tmp_path / "agents").mkdir()
+        (tmp_path / ".ma.yaml").write_text(
+            yaml.dump({"agent_names": ["alpha", "beta"]}), encoding="utf-8",
+        )
+        monkeypatch.setenv("MA_ROOT", str(tmp_path))
+        root_dir.cache_clear()
+        try:
+            with caplog.at_level(logging.WARNING, logger="multi_agent.config"):
+                load_agent_names_from_config()
+            assert not any("malformed" in r.message for r in caplog.records)
+            assert get_all_agent_names() == ["alpha", "beta"]
+        finally:
+            monkeypatch.delenv("MA_ROOT", raising=False)
+            root_dir.cache_clear()

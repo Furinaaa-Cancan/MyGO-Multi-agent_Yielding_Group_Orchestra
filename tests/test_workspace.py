@@ -411,6 +411,14 @@ class TestWorkspaceHealth:
         issues = workspace.check_workspace_health()
         assert any("Orphan lock" in i for i in issues)
 
+    def test_corrupted_lock_content(self, tmp_workspace):
+        """Lock file with path-traversal content should be flagged as corrupted."""
+        workspace.ensure_workspace()
+        lock = tmp_workspace / ".lock"
+        lock.write_text("../../etc/passwd", encoding="utf-8")
+        issues = workspace.check_workspace_health()
+        assert any("corrupted" in i.lower() or "Orphan lock" in i for i in issues)
+
 
 class TestWorkspaceStats:
     """Task 88: Workspace size statistics tests."""

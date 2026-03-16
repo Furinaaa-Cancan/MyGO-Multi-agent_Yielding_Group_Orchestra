@@ -340,9 +340,14 @@ def check_workspace_health() -> list[str]:
     # Check orphan lock
     lock_content = read_lock()
     if lock_content:
-        task_file = tasks_dir() / f"{lock_content}.yaml"
-        if not task_file.exists():
-            issues.append(f"Orphan lock: task '{lock_content}' has no YAML file")
+        try:
+            _validate_task_id(lock_content)
+        except ValueError:
+            issues.append(f"Orphan lock: corrupted task ID '{lock_content}'")
+        else:
+            task_file = tasks_dir() / f"{lock_content}.yaml"
+            if not task_file.exists():
+                issues.append(f"Orphan lock: task '{lock_content}' has no YAML file")
 
     # Check oversized files
     issues.extend(_find_oversized_files(ws))

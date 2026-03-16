@@ -26,6 +26,14 @@ from typing import Any
 _log = logging.getLogger(__name__)
 
 
+def _safe_int(value: Any, default: int) -> int:
+    """Convert *value* to int, returning *default* on failure."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 # ── Configuration ─────────────────────────────────────────
 
 
@@ -53,7 +61,7 @@ def load_notify_config() -> NotifyConfig:
         sound=bool(raw.get("sound", True)),
         webhook_url=str(raw.get("webhook_url", "")),
         webhook_format=str(raw.get("webhook_format", "auto")),
-        webhook_retries=max(0, min(int(raw.get("webhook_retries", 2)), 5)),
+        webhook_retries=max(0, min(_safe_int(raw.get("webhook_retries", 2), 2), 5)),
     )
 
 

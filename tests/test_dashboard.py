@@ -206,3 +206,26 @@ class TestDashboardBoundary:
         )
         assert "criterion_0" in content
         assert "criterion_19" in content
+
+    def test_invalid_timestamp_does_not_crash(self):
+        """Non-numeric timestamp in conversation entry should fall back gracefully."""
+        content = generate_dashboard(
+            task_id="task-abc", done_criteria=[], current_agent="w",
+            current_role="builder",
+            conversation=[
+                {"role": "orchestrator", "action": "assigned", "t": "not-a-number"},
+            ],
+        )
+        assert "orchestrator" in content
+        assert "assigned" in content
+
+    def test_extreme_timestamp_does_not_crash(self):
+        """Extremely large timestamp should not raise OverflowError."""
+        content = generate_dashboard(
+            task_id="task-abc", done_criteria=[], current_agent="w",
+            current_role="builder",
+            conversation=[
+                {"role": "builder", "action": "built", "t": 1e20},
+            ],
+        )
+        assert "builder" in content

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re as _re
 import warnings
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+_log = logging.getLogger(__name__)
 
 import yaml
 
@@ -144,8 +147,10 @@ def load_agent_names_from_config() -> None:
         custom = proj.get("agent_names")
         if isinstance(custom, list) and all(isinstance(n, str) for n in custom):
             set_agent_names(custom)
+        elif custom is not None:
+            _log.warning("agent_names in config is malformed (expected list of strings)")
     except Exception:
-        pass
+        _log.debug("Failed to load agent_names from config", exc_info=True)
 
 
 def tasks_dir() -> Path:

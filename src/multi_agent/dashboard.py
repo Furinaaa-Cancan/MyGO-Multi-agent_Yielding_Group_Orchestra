@@ -59,7 +59,10 @@ def generate_dashboard(
         action = entry.get("action", entry.get("decision", entry.get("output", "—")))
         # Use event timestamp if available, else fall back to render time
         t = entry.get("t")
-        ts = datetime.fromtimestamp(t, tz=UTC).strftime("%H:%M:%S") if t else _now()
+        try:
+            ts = datetime.fromtimestamp(t, tz=UTC).strftime("%H:%M:%S") if isinstance(t, (int, float)) else _now()
+        except (OSError, ValueError, OverflowError):
+            ts = _now()
         lines.append(f"| {ts} | {role} | {action} |")
     lines.append("")
 
