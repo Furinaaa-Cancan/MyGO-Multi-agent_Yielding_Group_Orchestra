@@ -247,6 +247,7 @@ def run_trial(
         wall_clock_sec=agent_result["elapsed_sec"],
         build_time_sec=agent_result["elapsed_sec"] * 0.7 if mode == "single" else agent_result["elapsed_sec"] * 0.5,
         review_time_sec=0 if mode == "single" else agent_result["elapsed_sec"] * 0.3,
+        idle_time_sec=agent_result["elapsed_sec"] * 0.3 if mode == "single" else agent_result["elapsed_sec"] * 0.2,
     )
 
     # Try to backfill finops

@@ -285,8 +285,9 @@ def check_security(workspace: Path) -> float:
     if re.search(r'\b(eval|exec)\s*\(', all_code):
         issues += 1
 
-    # 3. No SQL injection patterns
-    if re.search(r'execute\s*\(\s*[f"\'].*\{', all_code):
+    # 3. No SQL injection patterns (direct f-string or variable-based)
+    if re.search(r'execute\s*\(\s*[f"\'].*\{', all_code) or \
+       re.search(r'(?:query|sql)\s*=\s*f["\'].*\{', all_code, re.IGNORECASE):
         issues += 1
 
     # 4. No shell injection
