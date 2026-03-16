@@ -755,3 +755,56 @@ def query(sql: str, params: tuple = (), db_path: Path | None = None) -> list[dic
     with _connect(db_path) as conn:
         rows = conn.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
+
+
+# ── FinOps backfill ───────────────────────────────────────
+
+def backfill_finops(trial_id: str, task_id: str, db_path: Path | None = None) -> bool:
+    """Backfill token/cost data from FinOps JSONL logs into a trial's agent_runs.
+
+    Reads .multi-agent/logs/token-usage.jsonl, matches entries by task_id,
+    and updates agent_runs + trial aggregate totals.
+    Returns True if any data was backfilled.
+    """
+    try:
+        from multi_agent.finops import load_usage_log
+    except ImportError:
+        return False
+
+    entries = [e for e in load_usage_log() if e.get("task_id") == task_id]
+    if not entries:
+        return False
+
+    # Aggregate per agent
+    agent_totals: dict[str, dict[str, int | float]] = {}
+    for e in entries:
+        aid = e.get("agent_id", "unknown")
+        if aid not in agent_totals:
+            agent_totals[aid] = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
+        agent_totals[aid]["input_tokens"] += e.get("input_tokens", 0)
+        agent_totals[aid]["output_tokens"] += e.get("output_tokens", 0)
+        agent_totals[aid]["cost_usd"] += e.get("cost", 0.0)
+
+    total_input = sum(v["input_tokens"] for v in agent_totals.values())
+    total_output = sum(v["output_tokens"] for v in agent_totals.values())
+    total_cost = sum(v["cost_usd"] for v in agent_totals.values())
+
+    with _connect(db_path) as conn:
+        # Update per-agent runs
+        for aid, totals in agent_totals.items():
+            conn.execute(
+                """UPDATE agent_runs SET
+                    input_tokens=?, output_tokens=?, cost_usd=?
+                WHERE trial_id=? AND agent_id=?""",
+                (totals["input_tokens"], totals["output_tokens"],
+                 round(totals["cost_usd"], 6), trial_id, aid),
+            )
+        # Update trial aggregates
+        conn.execute(
+            """UPDATE trials SET
+                total_input_tokens=?, total_output_tokens=?, total_cost_usd=?
+            WHERE trial_id=?""",
+            (total_input, total_output, round(total_cost, 6), trial_id),
+        )
+
+    return True

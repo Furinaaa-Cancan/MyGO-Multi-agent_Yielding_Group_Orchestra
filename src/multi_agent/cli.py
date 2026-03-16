@@ -1212,6 +1212,11 @@ def bench_ingest(
     click.echo(f"   任务: {snapshot.get('requirement', '')[:60]}")
     click.echo(f"   模式: {agent_mode}")
 
+    # Auto-backfill token/cost from FinOps logs
+    from multi_agent.benchmark import backfill_finops
+    if backfill_finops(trial_id, task_id, db_path=p):
+        click.echo("   💰 FinOps token/cost 数据已回填")
+
 
 @bench.command("export")
 @click.argument("view_name")
