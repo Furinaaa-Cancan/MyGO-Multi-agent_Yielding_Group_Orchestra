@@ -35,7 +35,7 @@ from multi_agent.config import (
     tasks_dir,
     workspace_dir,
 )
-from multi_agent.workspace import read_lock
+from multi_agent.workspace import read_lock, write_outbox
 
 _log = logging.getLogger(__name__)
 
@@ -120,8 +120,17 @@ def task_list(limit: int = 20, status_filter: str = "") -> dict[str, Any]:
     if not td.exists():
         return {"tasks": [], "count": 0}
 
+    if status_filter and status_filter not in _VALID_STATUSES:
+        return {"tasks": [], "count": 0, "error": f"Invalid status_filter: {status_filter!r}. Valid: {sorted(_VALID_STATUSES)}"}
+
+    def _safe_mtime(p):
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            return 0.0
+
     tasks: list[dict[str, Any]] = []
-    for f in sorted(td.glob("*.yaml"), key=lambda p: p.stat().st_mtime, reverse=True):
+    for f in sorted(td.glob("*.yaml"), key=_safe_mtime, reverse=True):
         if len(tasks) >= limit:
             break
         try:
@@ -130,9 +139,6 @@ def task_list(limit: int = 20, status_filter: str = "") -> dict[str, Any]:
             continue
         task_status_val = data.get("status", "unknown")
         if status_filter:
-            # Whitelist valid status values
-            if status_filter not in _VALID_STATUSES:
-                continue  # invalid filter = no match
             if task_status_val != status_filter:
                 continue
         tasks.append({
@@ -219,16 +225,12 @@ def submit_review(decision: str, feedback: str = "", summary: str = "") -> dict[
         feedback = "Approved via MCP" if decision == "approve" else "Rejected via MCP"
     summary = (summary or "")[:500] or f"Review {decision} via MCP"
 
-    ws = workspace_dir()
-    outbox = ws / "outbox"
-    outbox.mkdir(parents=True, exist_ok=True)
     reviewer_output = {
         "decision": decision, "feedback": feedback, "summary": summary,
         "source": "mcp", "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
-    out_file = outbox / "reviewer.json"
     try:
-        out_file.write_text(json.dumps(reviewer_output, indent=2), encoding="utf-8")
+        write_outbox("reviewer", reviewer_output)
         return {"ok": True, "decision": decision, "task_id": active}
     except OSError as e:
         return {"error": f"Failed to write reviewer output: {e}"}

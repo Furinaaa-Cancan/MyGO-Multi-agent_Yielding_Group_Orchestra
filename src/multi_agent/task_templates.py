@@ -171,7 +171,9 @@ def _template_dirs() -> list[Path]:
             p = Path(d) if Path(d).is_absolute() else root_dir() / d
             resolved = p.resolve()
             # Prevent path traversal outside project root
-            if not str(resolved).startswith(str(project_root)):
+            try:
+                resolved.relative_to(project_root)
+            except ValueError:
                 continue
             if resolved.is_dir():
                 dirs.append(resolved)

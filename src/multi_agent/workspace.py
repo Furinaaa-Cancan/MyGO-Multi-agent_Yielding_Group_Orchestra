@@ -135,7 +135,9 @@ def read_outbox(agent_id: str, *, validate: bool = False) -> dict[str, Any] | No
                 _log.warning("Outbox %s is not a JSON object (got %s), ignoring.", path, type(data).__name__)
                 return None
             if validate:
-                errors = validate_outbox_data(agent_id, data)
+                # Infer role from agent_id filename (e.g. "builder.json" -> "builder")
+                role = agent_id if agent_id in ("builder", "reviewer") else data.get("role", agent_id)
+                errors = validate_outbox_data(role, data)
                 if errors:
                     _log.warning("Outbox %s validation failed: %s", agent_id, "; ".join(errors))
                     return None
@@ -371,13 +373,14 @@ def _find_oversized_files(ws: Path) -> list[str]:
     if not ws.exists():
         return found
     for f in ws.rglob("*"):
-        if not f.is_file() or f.is_symlink():
+        if not f.is_file():
             continue
-        # Prevent symlink escape: resolved path must stay within workspace
-        try:
-            f.resolve().relative_to(ws.resolve())
-        except ValueError:
-            found.append(f"Symlink escape detected: {f.relative_to(ws)}")
+        if f.is_symlink():
+            # Check for symlink escape: resolved path must stay within workspace
+            try:
+                f.resolve().relative_to(ws.resolve())
+            except ValueError:
+                found.append(f"Symlink escape detected: {f.relative_to(ws)}")
             continue
         try:
             size_mb = f.stat().st_size / (1024 * 1024)
