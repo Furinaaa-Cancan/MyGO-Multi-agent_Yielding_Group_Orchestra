@@ -49,6 +49,11 @@ agents:
     command: "aider --message 'Read {task_file} and complete the task. Save the JSON output to {outbox_file}' --yes"
     capabilities: [planning, implementation, testing, review]
 
+  - id: mock
+    driver: cli
+    command: "python3 {project_root}/scripts/mock_cli_agent.py --task-file {task_file} --outbox-file {outbox_file}"
+    capabilities: [planning, implementation, testing, review, docs, security]
+
   - id: antigravity
     driver: file
     capabilities: [planning, implementation, review, security]
