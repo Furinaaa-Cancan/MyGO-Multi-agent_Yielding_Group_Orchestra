@@ -1342,17 +1342,19 @@ def bench_eval(task_name: str, workspace: str, json_output: bool) -> None:
         click.echo(f"   可用: {available}", err=True)
         sys.exit(1)
 
-    # Import evaluator
-    eval_path = root_dir() / "benchmark"
-    sys.path.insert(0, str(eval_path))
-    from evaluator import evaluate_trial, print_report
+    # Import evaluator via importlib to avoid polluting sys.path
+    import importlib.util
+    eval_file = root_dir() / "benchmark" / "evaluator.py"
+    spec = importlib.util.spec_from_file_location("evaluator", str(eval_file))
+    evaluator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(evaluator)
 
-    result = evaluate_trial(task_dir, Path(workspace), task_id=task_name)
+    result = evaluator.evaluate_trial(task_dir, Path(workspace), task_id=task_name)
 
     if json_output:
         click.echo(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
     else:
-        print_report(result)
+        evaluator.print_report(result)
 
 
 @bench.command("tasks")

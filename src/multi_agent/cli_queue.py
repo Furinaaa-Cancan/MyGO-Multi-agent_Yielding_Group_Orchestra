@@ -173,7 +173,9 @@ def run_single_queue_task(
     click.echo(f"{'=' * 60}\n")
 
     start_time = time.time()
-    cmd = ["my", "go", prompt, "--task-id", task_id, "--builder", builder, "--reviewer", reviewer]
+    # Sanitize prompt: strip null bytes and limit length for CLI arg safety
+    sanitized_prompt = prompt.replace("\x00", "")[:100_000]
+    cmd = ["my", "go", sanitized_prompt, "--task-id", task_id, "--builder", builder, "--reviewer", reviewer]
 
     try:
         result = subprocess.run(cmd, timeout=timeout)

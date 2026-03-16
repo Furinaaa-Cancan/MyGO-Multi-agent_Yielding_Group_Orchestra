@@ -30,6 +30,7 @@ from multi_agent.config import (
     root_dir,
     workspace_dir,
 )
+from multi_agent.workspace import read_lock, release_lock
 
 # task_id validation: must be safe alphanumeric + hyphens (prevent path traversal)
 _SAFE_TASK_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
@@ -336,11 +337,10 @@ async def api_action_cancel(request: Request) -> JSONResponse:
         task_file.write_text(yaml.dump(existing), encoding="utf-8")
     except OSError as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-    # Release lock
-    lock_file = ws / ".lock"
+    # Release lock (use workspace API to avoid TOCTOU race)
     with contextlib.suppress(OSError):
-        if lock_file.exists() and lock_file.read_text(encoding="utf-8").strip() == task_id:
-            lock_file.unlink()
+        if read_lock() == task_id:
+            release_lock()
     # Clear runtime
     for sub in ("outbox", "inbox"):
         d = ws / sub
@@ -447,6 +447,9 @@ def _parse_jsonl_file(path: Path) -> list[dict[str, Any]]:
     return results
 
 
+_MAX_TRACE_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
 def _read_trace_events(task_id: str) -> list[dict[str, Any]]:
     """Read JSONL trace events for a task."""
     hdir = history_dir()
@@ -454,16 +457,26 @@ def _read_trace_events(task_id: str) -> list[dict[str, Any]]:
     # Try direct file match first
     for pattern in [f"{task_id}.events.jsonl", f"task-{task_id}.events.jsonl", f"{task_id}.jsonl", f"task-{task_id}.jsonl"]:
         trace_file = hdir / pattern
-        if trace_file.exists():
-            return _parse_jsonl_file(trace_file)
+        try:
+            if trace_file.exists():
+                if trace_file.stat().st_size > _MAX_TRACE_FILE_SIZE:
+                    return []
+                return _parse_jsonl_file(trace_file)
+        except OSError:
+            continue
 
     # Fallback: scan all JSONL files for matching task_id
     events: list[dict[str, Any]] = []
     if hdir.exists():
         for f in hdir.glob("*.jsonl"):
+            try:
+                if f.stat().st_size > _MAX_TRACE_FILE_SIZE:
+                    continue
+            except OSError:
+                continue
             for evt in _parse_jsonl_file(f):
                 tid = evt.get("task_id", "")
-                if tid == task_id or tid.endswith(task_id):
+                if tid == task_id or tid == f"task-{task_id}":
                     events.append(evt)
     return events
 
@@ -478,20 +491,26 @@ def _collect_changes(
 
     # Check dashboard.md changes
     dashboard_file = ws / "dashboard.md"
-    if dashboard_file.exists():
-        mtime = dashboard_file.stat().st_mtime
-        if mtime > last_dashboard_mtime:
-            content = dashboard_file.read_text(encoding="utf-8")
-            changes.append(("dashboard_update", {
-                "content": content,
-                "mtime": mtime,
-            }))
+    try:
+        if dashboard_file.exists():
+            mtime = dashboard_file.stat().st_mtime
+            if mtime > last_dashboard_mtime:
+                content = dashboard_file.read_text(encoding="utf-8")
+                changes.append(("dashboard_update", {
+                    "content": content,
+                    "mtime": mtime,
+                }))
+    except OSError:
+        pass
 
     # Check trace file changes
     hdir = history_dir()
     if hdir.exists():
         for f in hdir.glob("*.jsonl"):
-            size = f.stat().st_size
+            try:
+                size = f.stat().st_size
+            except OSError:
+                continue
             prev_size = last_trace_sizes.get(f.name, 0)
             if size > prev_size:
                 # Read only new lines
