@@ -1108,6 +1108,210 @@ def template_show(template_id: str) -> None:
     click.echo(f"启动: my go --template {tmpl.id}")
 
 
+# ── Benchmark ────────────────────────────────────────────
+
+
+@main.group()
+def bench() -> None:
+    """Benchmark 实验数据管理（初始化、导入、导出、查询）."""
+
+
+@bench.command("init")
+@click.option("--name", required=True, help="实验名称")
+@click.option("--hypothesis", default=None, help="研究假设 H0/H1")
+@click.option("--description", default=None, help="实验描述")
+@click.option("--db", "db_path", default=None, type=click.Path(), help="数据库路径（默认 benchmark/benchmark.db）")
+@handle_errors
+def bench_init(name: str, hypothesis: str | None, description: str | None, db_path: str | None) -> None:
+    """创建新的 benchmark 实验.
+
+    Examples:
+      my bench init --name "multi-vs-single CRUD" --hypothesis "多 agent 模式在 CRUD 任务上质量更高"
+    """
+    from multi_agent.benchmark import create_experiment, init_db
+
+    p = Path(db_path) if db_path else None
+    init_db(p)
+    eid = create_experiment(name=name, hypothesis=hypothesis, description=description, db_path=p)
+    click.echo(f"✅ 实验已创建: {eid}")
+    click.echo(f"   名称: {name}")
+    if hypothesis:
+        click.echo(f"   假设: {hypothesis}")
+
+
+@bench.command("list")
+@click.option("--db", "db_path", default=None, type=click.Path(), help="数据库路径")
+@handle_errors
+def bench_list(db_path: str | None) -> None:
+    """列出所有实验.
+
+    Examples:
+      my bench list
+    """
+    from multi_agent.benchmark import list_experiments
+
+    p = Path(db_path) if db_path else None
+    exps = list_experiments(p)
+    if not exps:
+        click.echo("📭 没有实验。运行 my bench init --name '...' 创建。")
+        return
+    click.echo(f"📊 实验列表 ({len(exps)} 个):\n")
+    for exp in exps:
+        click.echo(f"  {exp['experiment_id']}  {exp['name']}")
+        if exp.get("hypothesis"):
+            click.echo(f"    假设: {exp['hypothesis']}")
+        click.echo(f"    创建: {exp['created_at']}")
+        click.echo()
+
+
+@bench.command("ingest")
+@click.argument("task_id")
+@click.option("--experiment", "experiment_id", required=True, help="目标实验 ID")
+@click.option("--mode", "agent_mode", default="multi", type=click.Choice(["single", "multi"]), help="Agent 模式")
+@click.option("--complexity", default=None, type=click.Choice(["low", "medium", "high", "extreme"]))
+@click.option("--tag", "tags", multiple=True, help="标签（可多次使用）")
+@click.option("--db", "db_path", default=None, type=click.Path(), help="数据库路径")
+@handle_errors
+def bench_ingest(
+    task_id: str,
+    experiment_id: str,
+    agent_mode: str,
+    complexity: str | None,
+    tags: tuple[str, ...],
+    db_path: str | None,
+) -> None:
+    """从已完成任务的快照导入 benchmark 数据.
+
+    Examples:
+      my bench ingest task-801defa0 --experiment exp-abc123 --mode multi --complexity medium
+    """
+    from multi_agent.benchmark import ingest_trial_from_snapshot
+    from multi_agent.config import workspace_dir
+
+    # Find the decide snapshot (final state)
+    snap_dir = workspace_dir() / "snapshots"
+    candidates = sorted(snap_dir.glob(f"{task_id}-decide-*.json"), reverse=True)
+    if not candidates:
+        # Fallback: try any snapshot
+        candidates = sorted(snap_dir.glob(f"{task_id}-*.json"), reverse=True)
+    if not candidates:
+        click.echo(f"❌ 未找到 {task_id} 的快照文件", err=True)
+        sys.exit(1)
+
+    snapshot = json.loads(candidates[0].read_text(encoding="utf-8"))
+    p = Path(db_path) if db_path else None
+    trial_id = ingest_trial_from_snapshot(
+        experiment_id,
+        snapshot,
+        agent_mode=agent_mode,
+        complexity=complexity,
+        tags=list(tags) if tags else None,
+        db_path=p,
+    )
+    click.echo(f"✅ Trial 已导入: {trial_id}")
+    click.echo(f"   任务: {snapshot.get('requirement', '')[:60]}")
+    click.echo(f"   模式: {agent_mode}")
+
+
+@bench.command("export")
+@click.argument("view_name")
+@click.option("--output", "-o", "output_path", required=True, type=click.Path(), help="输出 CSV 路径")
+@click.option("--db", "db_path", default=None, type=click.Path(), help="数据库路径")
+@handle_errors
+def bench_export(view_name: str, output_path: str, db_path: str | None) -> None:
+    """导出视图/表到 CSV 文件（用于 pandas/R 分析）.
+
+    Available views: v_trial_summary, v_mode_comparison, v_agent_performance,
+                     v_quality_pass_rates, v_review_quality
+
+    Examples:
+      my bench export v_trial_summary -o results/trials.csv
+      my bench export v_mode_comparison -o results/comparison.csv
+    """
+    from multi_agent.benchmark import export_csv
+
+    p = Path(db_path) if db_path else None
+    out = Path(output_path)
+    export_csv(view_name, out, p)
+    click.echo(f"✅ 已导出: {out}")
+
+
+@bench.command("query")
+@click.argument("sql")
+@click.option("--db", "db_path", default=None, type=click.Path(), help="数据库路径")
+@handle_errors
+def bench_query(sql: str, db_path: str | None) -> None:
+    """执行自定义 SQL 查询（只读）.
+
+    Examples:
+      my bench query "SELECT * FROM v_mode_comparison"
+      my bench query "SELECT agent_mode, AVG(wall_clock_sec) FROM trials GROUP BY agent_mode"
+    """
+    from multi_agent.benchmark import query as bq
+
+    p = Path(db_path) if db_path else None
+    rows = bq(sql, db_path=p)
+    if not rows:
+        click.echo("(no results)")
+        return
+    # Pretty-print as aligned table
+    keys = list(rows[0].keys())
+    widths = {k: max(len(k), max(len(str(r.get(k, ""))) for r in rows)) for k in keys}
+    header = " | ".join(k.ljust(widths[k]) for k in keys)
+    click.echo(header)
+    click.echo("-+-".join("-" * widths[k] for k in keys))
+    for row in rows:
+        line = " | ".join(str(row.get(k, "")).ljust(widths[k]) for k in keys)
+        click.echo(line)
+
+
+@bench.command("status")
+@click.option("--experiment", "experiment_id", default=None, help="指定实验 ID（默认显示全部）")
+@click.option("--db", "db_path", default=None, type=click.Path(), help="数据库路径")
+@handle_errors
+def bench_status(experiment_id: str | None, db_path: str | None) -> None:
+    """查看 benchmark 实验统计概览.
+
+    Examples:
+      my bench status
+      my bench status --experiment exp-abc123
+    """
+    from multi_agent.benchmark import query as bq
+
+    p = Path(db_path) if db_path else None
+
+    # Overall stats
+    if experiment_id:
+        trials = bq("SELECT * FROM trials WHERE experiment_id=?", (experiment_id,), db_path=p)
+    else:
+        trials = bq("SELECT * FROM trials", db_path=p)
+
+    if not trials:
+        click.echo("📭 没有 trial 数据。运行任务后用 my bench ingest 导入。")
+        return
+
+    total = len(trials)
+    approved = sum(1 for t in trials if t.get("status") == "approved")
+    single = sum(1 for t in trials if t.get("agent_mode") == "single")
+    multi = sum(1 for t in trials if t.get("agent_mode") == "multi")
+
+    click.echo(f"📊 Benchmark 概览")
+    click.echo(f"   总 trials: {total}")
+    click.echo(f"   Single-agent: {single}  |  Multi-agent: {multi}")
+    click.echo(f"   成功率: {100*approved/total:.1f}% ({approved}/{total})")
+
+    # Mode comparison if both modes exist
+    comparison = bq("SELECT * FROM v_mode_comparison", db_path=p)
+    if len(comparison) > 1:
+        click.echo(f"\n📈 模式对比:")
+        for row in comparison:
+            mode = row["agent_mode"]
+            click.echo(f"   [{mode}] 成功率={row['success_rate_pct']}%  "
+                       f"平均耗时={row['avg_wall_clock_sec']}s  "
+                       f"平均成本=${row['avg_cost_usd']}  "
+                       f"平均重试={row['avg_retries']}")
+
+
 # ── Web Dashboard ────────────────────────────────────────
 
 
