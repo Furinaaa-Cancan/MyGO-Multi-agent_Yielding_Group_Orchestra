@@ -1,9 +1,18 @@
 """Ground truth tests for task-auth-oauth: OAuth2 authorization code flow."""
 import sys
 from pathlib import Path
+import importlib
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "artifacts" / "experiment-auth-oauth"))
+_artifact_path = str(Path(__file__).resolve().parents[3] / "artifacts" / "experiment-auth-oauth")
+if _artifact_path not in sys.path:
+    sys.path.insert(0, _artifact_path)
+
+
+@pytest.fixture(autouse=True)
+def _reset_module_state():
+    import oauth
+    importlib.reload(oauth)
 
 
 def test_register_client():

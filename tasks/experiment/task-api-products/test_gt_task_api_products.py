@@ -1,9 +1,18 @@
 """Ground truth tests for task-api-products: product management."""
 import sys
 from pathlib import Path
+import importlib
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "artifacts" / "experiment-api-products"))
+_artifact_path = str(Path(__file__).resolve().parents[3] / "artifacts" / "experiment-api-products")
+if _artifact_path not in sys.path:
+    sys.path.insert(0, _artifact_path)
+
+
+@pytest.fixture(autouse=True)
+def _reset_module_state():
+    import app
+    importlib.reload(app)
 
 
 def test_create_product_returns_dict():

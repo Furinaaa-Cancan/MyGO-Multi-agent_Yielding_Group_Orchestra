@@ -1,9 +1,18 @@
 """Ground truth tests for task-auth-jwt: JWT authentication module."""
 import sys
 from pathlib import Path
+import importlib
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "artifacts" / "experiment-auth-jwt"))
+_artifact_path = str(Path(__file__).resolve().parents[3] / "artifacts" / "experiment-auth-jwt")
+if _artifact_path not in sys.path:
+    sys.path.insert(0, _artifact_path)
+
+
+@pytest.fixture(autouse=True)
+def _reset_module_state():
+    import auth
+    importlib.reload(auth)
 
 
 def test_register_returns_user():

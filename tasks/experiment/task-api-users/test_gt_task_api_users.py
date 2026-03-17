@@ -1,10 +1,20 @@
 """Ground truth tests for task-api-users: user management API."""
+import importlib
 import sys
 from pathlib import Path
 import pytest
 
 # Add artifacts to path so we can import the module
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "artifacts" / "experiment-api-users"))
+_artifact_path = str(Path(__file__).resolve().parents[3] / "artifacts" / "experiment-api-users")
+if _artifact_path not in sys.path:
+    sys.path.insert(0, _artifact_path)
+
+
+@pytest.fixture(autouse=True)
+def _reset_module_state():
+    """Reload app module before each test to reset global state."""
+    import app
+    importlib.reload(app)
 
 
 def test_create_user_returns_dict():
@@ -17,8 +27,7 @@ def test_create_user_returns_dict():
 
 
 def test_create_user_autoincrement_id():
-    from app import create_user, list_users
-    # Clear state by reimporting if possible
+    from app import create_user
     u1 = create_user("Bob", "bob@example.com")
     u2 = create_user("Carol", "carol@example.com")
     assert u2["id"] > u1["id"]
