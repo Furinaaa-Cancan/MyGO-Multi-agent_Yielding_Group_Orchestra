@@ -827,8 +827,16 @@ def send_gui_message(app_name: str, message: str) -> bool:
         logger.warning("osascript not found — GUI automation unavailable")
         return False
 
-    # Escape AppleScript strings to prevent injection via app_name
-    safe_app = app_name.replace("\\", "\\\\").replace('"', '\\"')
+    # Escape AppleScript strings to prevent injection via app_name.
+    # Must escape: backslash, double-quote, newline, and dollar sign
+    # (AppleScript variable interpolation in some contexts).
+    safe_app = (app_name
+                .replace("\\", "\\\\")
+                .replace('"', '\\"')
+                .replace("\n", "")
+                .replace("\r", "")
+                .replace("$", "")
+                .replace("`", ""))
     applescript = f'''
 tell application "{safe_app}" to activate
 delay 1.0

@@ -60,6 +60,51 @@ RUNS_PER_CONDITION = 3
 TASK_TIMEOUT_SEC = 3600  # 1 hour max per task
 
 
+def _clear_semantic_memory() -> None:
+    """Clear semantic memory to prevent cross-task learning effects."""
+    mem_file = PROJECT_ROOT / ".multi-agent" / "memory" / "semantic.jsonl"
+    if mem_file.exists():
+        mem_file.write_text("", encoding="utf-8")
+
+
+def _extract_retry_count() -> int:
+    """Extract retry count from the most recent task's graph state."""
+    try:
+        report_files = sorted(
+            (PROJECT_ROOT / ".multi-agent").glob("report-*.md"),
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )
+        if report_files:
+            text = report_files[0].read_text(encoding="utf-8")
+            import re
+            m = re.search(r"总重试:\s*(\d+)", text)
+            if m:
+                return int(m.group(1))
+    except Exception:
+        pass
+    return 0
+
+
+def _extract_sub_task_count() -> int:
+    """Extract sub-task count from the most recent decompose report."""
+    try:
+        report_files = sorted(
+            (PROJECT_ROOT / ".multi-agent").glob("report-*.md"),
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )
+        if report_files:
+            text = report_files[0].read_text(encoding="utf-8")
+            import re
+            m = re.search(r"总子任务:\s*(\d+)", text)
+            if m:
+                return int(m.group(1))
+    except Exception:
+        pass
+    return 0
+
+
 def discover_tasks(tasks_dir: Path) -> list[dict]:
     """Discover experiment tasks from the tasks directory."""
     tasks = []
@@ -229,8 +274,12 @@ def run_single_experiment(
         result["metrics"]["dry_run"] = True
         return result
 
-    # Build the command
-    cmd = ["my", "go", task["requirement"], "--task-id", f"exp-{condition}-{task_id}-r{run_idx}"]
+    # Clear semantic memory to prevent cross-task learning effects
+    _clear_semantic_memory()
+
+    # Build the command — use python3 -m since 'my' may not be on PATH
+    cmd = ["python3", "-m", "multi_agent.cli", "go", task["requirement"],
+           "--task-id", f"exp-{condition}-{task_id}-r{run_idx}"]
 
     if cond_cfg["use_reviewer"]:
         cmd.extend(["--builder", builder, "--reviewer", builder, "--mode", "strict"])
@@ -239,20 +288,26 @@ def run_single_experiment(
         cmd.extend(["--builder", builder])
 
     if cond_cfg["decompose"]:
-        cmd.append("--decompose")
+        cmd.extend(["--decompose", "--auto-confirm"])
+    else:
+        cmd.append("--no-decompose")
 
     # Execute
+    env = {**os.environ, "PYTHONPATH": str(PROJECT_ROOT / "src")}
     t0 = time.time()
     try:
-        proc = subprocess.run(cmd, timeout=TASK_TIMEOUT_SEC, cwd=str(PROJECT_ROOT))
+        proc = subprocess.run(cmd, timeout=TASK_TIMEOUT_SEC, cwd=str(PROJECT_ROOT),
+                              env=env, capture_output=False)
         success = proc.returncode == 0
     except subprocess.TimeoutExpired:
         print(f"  TIMEOUT after {TASK_TIMEOUT_SEC}s")
-        subprocess.run(["my", "cancel"], capture_output=True, cwd=str(PROJECT_ROOT))
+        subprocess.run(["python3", "-m", "multi_agent.cli", "cancel"],
+                           capture_output=True, cwd=str(PROJECT_ROOT), env=env)
         success = False
     except KeyboardInterrupt:
         print(f"\n  User interrupted at {condition}/{task_id}/run_{run_idx}")
-        subprocess.run(["my", "cancel"], capture_output=True, cwd=str(PROJECT_ROOT))
+        subprocess.run(["python3", "-m", "multi_agent.cli", "cancel"],
+                           capture_output=True, cwd=str(PROJECT_ROOT), env=env)
         sys.exit(1)
     duration_sec = time.time() - t0
 
@@ -268,18 +323,22 @@ def run_single_experiment(
         "functional_tests_passed": test_results["passed"],
         "lint_violations": lint_violations,
         "type_errors": type_errors,
-        "retry_count": 0,  # TODO: extract from graph state
+        "retry_count": _extract_retry_count(),
         "duration_sec": round(duration_sec, 1),
         "changed_files_count": count_changed_files(),
         "task_returncode": 0 if success else 1,
-        "decompose_sub_tasks": 0,  # TODO: extract from decompose result
+        "decompose_sub_tasks": _extract_sub_task_count() if cond_cfg["decompose"] else 0,
     }
 
-    # Save individual result
+    # Save individual result with SHA-256 checksum for integrity verification
     out_dir = results_dir / condition / task_id
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / f"run_{run_idx}.json"
-    out_file.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
+    content = json.dumps(result, indent=2, ensure_ascii=False)
+    import hashlib as _hl
+    result["_checksum"] = _hl.sha256(content.encode()).hexdigest()[:16]
+    content = json.dumps(result, indent=2, ensure_ascii=False)
+    out_file.write_text(content, encoding="utf-8")
     print(f"  Result saved: {out_file}")
 
     return result
