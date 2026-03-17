@@ -69,7 +69,6 @@ class TestUpdateOrderStatus:
             app._orders.clear()
             app._next_id = 1
             order = create_order("A", [{"product": "X", "quantity": 1, "unit_price": 1.0}])
-            # Advance to start_status
             transitions = {
                 "pending": [],
                 "confirmed": ["confirmed"],
@@ -109,15 +108,47 @@ class TestListOrders:
     def test_all_orders(self):
         create_order("A", [{"product": "X", "quantity": 1, "unit_price": 1.0}])
         create_order("B", [{"product": "Y", "quantity": 1, "unit_price": 2.0}])
-        assert len(list_orders()) == 2
+        result = list_orders()
+        assert len(result) == 2
 
-    def test_filter_by_status(self):
+    def test_filter_by_status_pending(self):
         create_order("A", [{"product": "X", "quantity": 1, "unit_price": 1.0}])
         o2 = create_order("B", [{"product": "Y", "quantity": 1, "unit_price": 2.0}])
         update_order_status(o2["id"], "confirmed")
         pending = list_orders(status="pending")
-        confirmed = list_orders(status="confirmed")
         assert len(pending) == 1
-        assert len(confirmed) == 1
         assert pending[0]["customer_name"] == "A"
+
+    def test_filter_by_status_confirmed(self):
+        create_order("A", [{"product": "X", "quantity": 1, "unit_price": 1.0}])
+        o2 = create_order("B", [{"product": "Y", "quantity": 1, "unit_price": 2.0}])
+        update_order_status(o2["id"], "confirmed")
+        confirmed = list_orders(status="confirmed")
+        assert len(confirmed) == 1
         assert confirmed[0]["customer_name"] == "B"
+
+    def test_filter_by_status_shipped(self):
+        o1 = create_order("A", [{"product": "X", "quantity": 1, "unit_price": 1.0}])
+        o2 = create_order("B", [{"product": "Y", "quantity": 1, "unit_price": 2.0}])
+        update_order_status(o1["id"], "confirmed")
+        update_order_status(o1["id"], "shipped")
+        shipped = list_orders(status="shipped")
+        assert len(shipped) == 1
+        assert shipped[0]["customer_name"] == "A"
+        assert shipped[0]["status"] == "shipped"
+
+    def test_filter_by_nonexistent_status(self):
+        create_order("A", [{"product": "X", "quantity": 1, "unit_price": 1.0}])
+        result = list_orders(status="nonexistent")
+        assert result == []
+
+    def test_returns_all_orders_list(self):
+        create_order("A", [{"product": "X", "quantity": 1, "unit_price": 1.0}])
+        create_order("B", [{"product": "Y", "quantity": 2, "unit_price": 3.0}])
+        create_order("C", [{"product": "Z", "quantity": 1, "unit_price": 5.0}])
+        result = list_orders()
+        assert len(result) == 3
+        names = [o["customer_name"] for o in result]
+        assert "A" in names
+        assert "B" in names
+        assert "C" in names

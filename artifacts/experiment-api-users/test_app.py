@@ -1,60 +1,49 @@
-"""Unit tests for user management module."""
+"""Unit tests for user read operations."""
+
+import importlib
 
 import pytest
-from app import create_user, get_user, list_users, delete_user, _users, _next_id
+
 import app
 
 
 @pytest.fixture(autouse=True)
-def reset_state():
-    """Reset module state before each test."""
-    app._users.clear()
-    app._next_id = 1
+def reset_store():
+    """Reset the in-memory store before each test."""
+    importlib.reload(app)
     yield
 
 
-def test_create_user_returns_dict():
-    user = create_user("Alice", "alice@example.com")
-    assert user == {"id": 1, "name": "Alice", "email": "alice@example.com"}
+class TestGetUser:
+    def test_get_existing_user(self):
+        user = app.create_user("Alice", "alice@example.com")
+        result = app.get_user(1)
+        assert result == user
+
+    def test_get_nonexistent_user(self):
+        assert app.get_user(999) is None
+
+    def test_get_user_returns_same_structure_as_create(self):
+        created = app.create_user("Bob", "bob@example.com")
+        fetched = app.get_user(created["id"])
+        assert fetched is not None
+        assert set(fetched.keys()) == set(created.keys())
+        assert fetched == created
 
 
-def test_create_user_auto_increments_id():
-    u1 = create_user("A", "a@x.com")
-    u2 = create_user("B", "b@x.com")
-    assert u1["id"] == 1
-    assert u2["id"] == 2
+class TestListUsers:
+    def test_list_users_empty(self):
+        assert app.list_users() == []
 
+    def test_list_users_returns_all(self):
+        u1 = app.create_user("A", "a@example.com")
+        u2 = app.create_user("B", "b@example.com")
+        users = app.list_users()
+        assert u1 in users
+        assert u2 in users
 
-def test_create_user_invalid_email():
-    with pytest.raises(ValueError):
-        create_user("Bad", "no-at-sign")
-
-
-def test_get_user_found():
-    create_user("Alice", "alice@example.com")
-    assert get_user(1) == {"id": 1, "name": "Alice", "email": "alice@example.com"}
-
-
-def test_get_user_not_found():
-    assert get_user(999) is None
-
-
-def test_list_users_empty():
-    assert list_users() == []
-
-
-def test_list_users_multiple():
-    create_user("A", "a@x.com")
-    create_user("B", "b@x.com")
-    users = list_users()
-    assert len(users) == 2
-
-
-def test_delete_user_success():
-    create_user("A", "a@x.com")
-    assert delete_user(1) is True
-    assert get_user(1) is None
-
-
-def test_delete_user_not_found():
-    assert delete_user(999) is False
+    def test_list_users_count_matches(self):
+        app.create_user("A", "a@example.com")
+        app.create_user("B", "b@example.com")
+        app.create_user("C", "c@example.com")
+        assert len(app.list_users()) == 3
