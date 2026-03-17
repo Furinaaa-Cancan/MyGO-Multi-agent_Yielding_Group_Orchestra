@@ -160,7 +160,8 @@ class _DecomposeExecContext:
                  make_config: Any, build_state: Any, start_task: Any,
                  start_error: type[BaseException], show_waiting: Any, watch_loop: Any,
                  save_yaml: Any, save_ckpt: Any, clear_rt: Any,
-                 visible: bool = False) -> None:
+                 visible: bool = False,
+                 enable_bridge: bool = False) -> None:
         self.app = app
         self.parent_task_id = parent_task_id
         self.builder = builder
@@ -181,6 +182,9 @@ class _DecomposeExecContext:
         self.save_ckpt = save_ckpt
         self.clear_rt = clear_rt
         self.visible = visible
+        self.enable_bridge = enable_bridge
+        # Accumulated interface contracts from completed sub-tasks
+        self.interface_contracts: list[Any] = []
 
     def run_one(
         self, i: int, total: int, st: Any,
@@ -220,6 +224,7 @@ class _DecomposeExecContext:
             timeout=self.timeout, retry_budget=self.retry_budget,
             prior_results=prior_results,
             workflow_mode=self.workflow_mode, review_policy=self.review_policy,
+            interface_contracts=self.interface_contracts if self.enable_bridge else None,
         )
         sub_task_id = sub_state["task_id"]
         sub_config = self.make_config(sub_task_id)
@@ -257,6 +262,11 @@ class _DecomposeExecContext:
 
         if sub_status in ("approved", "completed"):
             completed_ids.add(st.id)
+
+            # Context Bridge: extract interface contract from completed sub-task
+            if self.enable_bridge:
+                self._extract_and_store_contract(st.id, result)
+
             self.save_ckpt(self.parent_task_id, prior_results, list(completed_ids))
             done_count2 = len([r for r in prior_results if r["status"] in ("approved", "completed", "skipped")])
             pct2 = int(done_count2 / total * 100)
@@ -266,6 +276,27 @@ class _DecomposeExecContext:
         return self._handle_failure(
             st, sub_start, prior_results, completed_ids, failed_ids,
         )
+
+    def _extract_and_store_contract(self, subtask_id: str, result: dict[str, Any]) -> None:
+        """Extract interface contract from a completed sub-task and store it."""
+        changed_files = result.get("changed_files", [])
+        if not changed_files:
+            return
+        try:
+            from multi_agent.config import project_root
+            from multi_agent.context_bridge import extract_interface_contract
+
+            contract = extract_interface_contract(
+                changed_files, project_root(), subtask_id=subtask_id,
+            )
+            if contract.exports or contract.shared_state:
+                self.interface_contracts.append(contract)
+                click.echo(
+                    f"  🔗 Bridge: extracted {len(contract.exports)} exports, "
+                    f"{len(contract.shared_state)} shared state from {subtask_id}",
+                )
+        except Exception as exc:
+            click.echo(f"  ⚠️ Bridge extraction failed for {subtask_id}: {exc}", err=True)
 
     def _setup_subtask_workspace(self, st: Any, subtask_id: str) -> None:
         """Copy global TASK.md to subtask workspace for isolated parallel execution."""
@@ -336,6 +367,7 @@ class _DecomposeExecContext:
                 timeout=self.timeout, retry_budget=self.retry_budget,
                 prior_results=prior_results,
                 workflow_mode=self.workflow_mode, review_policy=self.review_policy,
+                interface_contracts=self.interface_contracts if self.enable_bridge else None,
             )
             sub_task_id = sub_state["task_id"]
             sub_config = self.make_config(sub_task_id)
@@ -664,6 +696,7 @@ def _run_decomposed(
     decompose_file: str | None = None,
     no_cache: bool = False,
     visible: bool = False,
+    enable_bridge: bool = False,
 ) -> None:
     """Decompose → grouped parallel/sequential sub-task build-review cycles → aggregate."""
     from multi_agent.cli import (  # type: ignore[attr-defined]
@@ -724,6 +757,7 @@ def _run_decomposed(
         save_yaml=save_task_yaml, save_ckpt=save_checkpoint,
         clear_rt=clear_runtime,
         visible=visible,
+        enable_bridge=enable_bridge,
     )
 
     # Phase 3b: Execute sub-tasks using parallel groups

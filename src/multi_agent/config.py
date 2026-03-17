@@ -54,6 +54,10 @@ def root_dir() -> Path:
     return _find_root()
 
 
+# Alias for semantic clarity in experiment/bridge code
+project_root = root_dir
+
+
 def workspace_dir() -> Path:
     return root_dir() / ".multi-agent"
 

@@ -426,6 +426,8 @@ def _resolve_and_validate_agents_for_run(
 @click.option("--no-watch", is_flag=True, default=False, help="Don't auto-watch (exit after start)")
 @click.option("--decompose", is_flag=True, default=False, help="Decompose complex requirement into sub-tasks first")
 @click.option("--no-decompose", is_flag=True, default=False, help="Prevent auto-decompose for complex tasks (experiment use)")
+@click.option("--adaptive", is_flag=True, default=False, help="Use adaptive decomposition (auto-selects strategy by complexity)")
+@click.option("--bridge", is_flag=True, default=False, help="Enable context bridge protocol (inject interface contracts between sub-tasks)")
 @click.option("--auto-confirm", is_flag=True, default=False, help="Skip decompose confirmation (for automated runs)")
 @click.option("--decompose-file", default=None, type=click.Path(exists=True), help="Read decompose result from file instead of agent")
 @click.option("--no-cache", is_flag=True, default=False, help="Skip decompose result cache (force fresh decomposition)")
@@ -435,7 +437,7 @@ def _resolve_and_validate_agents_for_run(
 @click.option("--profile", "profile_name", default=None, help="Config profile name (e.g. fast, thorough, solo)")
 @click.option("--config", "mode_config_path", default="config/workmode.yaml", help="Workmode 配置路径")
 @handle_errors
-def go(requirement: str | None, template_id: str | None, var_args: tuple[str, ...], skill: str, task_id: str | None, builder: str, reviewer: str, retry_budget: int, timeout: int, no_watch: bool, decompose: bool, no_decompose: bool, auto_confirm: bool, decompose_file: str | None, no_cache: bool, visible: bool, git_commit: bool, mode: str, profile_name: str | None, mode_config_path: str) -> None:
+def go(requirement: str | None, template_id: str | None, var_args: tuple[str, ...], skill: str, task_id: str | None, builder: str, reviewer: str, retry_budget: int, timeout: int, no_watch: bool, decompose: bool, no_decompose: bool, adaptive: bool, bridge: bool, auto_confirm: bool, decompose_file: str | None, no_cache: bool, visible: bool, git_commit: bool, mode: str, profile_name: str | None, mode_config_path: str) -> None:
     """Start a new task and watch for IDE output.
 
     Starts the task, then auto-watches outbox/ for agent output.
@@ -588,10 +590,32 @@ def go(requirement: str | None, template_id: str | None, var_args: tuple[str, ..
         strict_auth=mode.strip().lower() == "strict",
     )
 
-    # Task 16: Suggest decompose for complex requirements
+    # Task 16: Decompose strategy resolution
+    # Priority: --no-decompose > --adaptive > --decompose > auto-detect
     if no_decompose:
         decompose = False
-    if not decompose and not no_decompose:
+        adaptive = False
+    elif adaptive:
+        # Adaptive mode: let the classifier decide
+        from multi_agent.adaptive_decompose import StrategyKind, select_strategy
+        from multi_agent.config import project_root
+
+        strategy = select_strategy(
+            requirement, codebase_root=project_root(), enable_bridge=bridge,
+        )
+        click.echo(
+            f"🧠 Adaptive strategy: {strategy.kind.value} "
+            f"(level={strategy.level}, confidence={strategy.confidence:.0%})",
+            err=True,
+        )
+        if strategy.kind == StrategyKind.NO_DECOMPOSE:
+            decompose = False
+        else:
+            decompose = True
+            # Bridge is auto-enabled for deep decompose if flag is set
+            if strategy.enable_bridge:
+                bridge = True
+    elif not decompose and not no_decompose:
         from multi_agent.decompose import estimate_complexity
         from multi_agent.driver import get_agent_driver
 
@@ -624,7 +648,8 @@ def go(requirement: str | None, template_id: str | None, var_args: tuple[str, ..
             _run_decomposed(app, task_id, requirement, skill, builder, reviewer,
                             retry_budget, timeout, no_watch, mode, review_policy,
                             auto_confirm=auto_confirm, decompose_file=decompose_file,
-                            no_cache=no_cache, visible=visible)
+                            no_cache=no_cache, visible=visible,
+                            enable_bridge=bridge)
             return
 
         _run_single_task(app, task_id, requirement, skill, builder, reviewer,

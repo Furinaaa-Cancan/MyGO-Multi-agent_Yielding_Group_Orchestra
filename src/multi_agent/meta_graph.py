@@ -21,6 +21,13 @@ from typing import Any
 
 from multi_agent._utils import SAFE_TASK_ID_RE as _ID_RE
 from multi_agent._utils import validate_task_id as _validate_task_id
+from multi_agent.context_bridge import (
+    InterfaceContract,
+    check_conformance,
+    extract_interface_contract,
+    format_bridge_context,
+    format_violations_for_reviewer,
+)
 from multi_agent.schema import SubTask
 
 _log = logging.getLogger(__name__)
@@ -179,10 +186,12 @@ def build_sub_task_state(
     prior_results: list[dict[str, Any]] | None = None,
     workflow_mode: str = "strict",
     review_policy: dict[str, Any] | None = None,
+    interface_contracts: list[InterfaceContract] | None = None,
 ) -> dict[str, Any]:
     """Build the initial state dict for a sub-task's build-review cycle.
 
     prior_results: list of completed sub-task summaries for context.
+    interface_contracts: upstream contracts for context bridge injection.
     """
     task_id = generate_sub_task_id(parent_task_id, sub_task.id)
 
@@ -190,7 +199,16 @@ def build_sub_task_state(
     # E1: Always include dependency results to prevent FM-5 information loss
     context = format_prior_context(prior_results or [], dep_ids=list(sub_task.deps))
 
+    # Context Bridge Protocol: inject structured interface contracts
+    bridge_context = ""
+    if interface_contracts:
+        bridge_context = format_bridge_context(
+            interface_contracts, dep_ids=list(sub_task.deps)
+        )
+
     requirement = sub_task.description
+    if bridge_context:
+        requirement = requirement + "\n\n" + bridge_context
     if context:
         requirement = requirement + "\n\n" + context
 
@@ -259,6 +277,11 @@ def aggregate_results(
     total_estimated_min = sum(sr.get("estimated_minutes", 0) for sr in sub_results)
     actual_total_min = round(total_duration / 60, 1) if total_duration else 0
 
+    # Bridge metrics
+    total_bridge_violations = sum(
+        len(sr.get("bridge_violations", [])) for sr in sub_results
+    )
+
     return {
         "task_id": parent_task_id,
         "total_sub_tasks": len(sub_results),
@@ -274,6 +297,7 @@ def aggregate_results(
         "slowest_duration_sec": slowest_dur,
         "estimated_total_minutes": total_estimated_min,
         "actual_total_minutes": actual_total_min,
+        "bridge_violations_total": total_bridge_violations,
         "sub_results": sub_results,
     }
 
