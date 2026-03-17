@@ -175,7 +175,38 @@ Agent A ←→ Agent B ←→ Agent C
 
 ---
 
-## 五、参考文献
+## 五、效度威胁与已知局限 (Threats to Validity)
+
+> 本节主动列出架构选择和实验设计中的已知偏差，
+> 遵循 Wohlin et al. (2012) "Experimentation in Software Engineering" 的威胁分类框架。
+
+### 内部效度 (Internal Validity)
+
+| 威胁 | 状态 | 缓解措施 |
+|------|------|----------|
+| MASAI +7.67% 的可迁移性 | **已修正** | 明确标注该数据来源于策略差异化，不直接适用于黑箱 IDE agent |
+| simulate_architectures.py 预设结论 | **已修正** | 重新定义为说明性示例，不作为定量证据 |
+| 缺乏 baseline 对照 | **已补齐** | experiment-protocol.md 设计了 single/multi/decompose 三组对照 |
+| LLM 输出随机性 | **已处理** | 每个 (条件, 任务) 重复 3 次，使用非参数统计检验 |
+
+### 外部效度 (External Validity)
+
+| 威胁 | 承认 |
+|------|------|
+| 单一代码库 | 实验仅在 MyGO 项目上进行，跨项目泛化性待验证 |
+| 自设计任务 | 未使用 SWE-bench 等公开 benchmark，存在选择偏差风险 |
+| 单一 LLM | 仅使用 Claude CLI，其他 LLM 可能表现不同 |
+
+### 构念效度 (Construct Validity)
+
+| 威胁 | 缓解措施 |
+|------|----------|
+| return code 不等于代码质量 | 采用多维指标：functional tests + lint + type check |
+| review 质量难以量化 | strict mode 的橡皮图章检测提供部分保障 |
+
+---
+
+## 六、参考文献
 
 1. MASAI (NeurIPS 2024 / ICSE 2025): 模块化 sub-agent，5 个专职角色
 2. Agentless (FSE 2025): 简单 3 步管道，证明过度工程化适得其反
@@ -187,3 +218,5 @@ Agent A ←→ Agent B ←→ Agent C
 8. CrewAI: 角色驱动，sequential/hierarchical process
 9. AutoGen: 对话式 multi-agent
 10. LangGraph: 有状态图，条件路由，checkpoint
+11. Jimenez et al. "SWE-bench: Can Language Models Resolve Real-World GitHub Issues?" ICLR 2024
+12. Wohlin et al. "Experimentation in Software Engineering." Springer, 2012
