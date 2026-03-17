@@ -1,0 +1,99 @@
+{
+  "experiment_version": "1.0",
+  "condition": "single",
+  "agent": "claude-opus-4-6 (via Claude Code CLI)",
+  "timestamp": "2026-03-17",
+  "run_idx": 1,
+  "tasks": [
+    {
+      "task_id": "task-bugfix-01",
+      "complexity": "simple",
+      "functional_tests_total": 3,
+      "functional_tests_passed": 3,
+      "functional_pass": true,
+      "retry_count": 0,
+      "notes": "Added reviewer summary validation to validate_outbox_data"
+    },
+    {
+      "task_id": "task-bugfix-02",
+      "complexity": "simple",
+      "functional_tests_total": 3,
+      "functional_tests_passed": 3,
+      "functional_pass": true,
+      "retry_count": 0,
+      "notes": "Added empty content validation to write_inbox"
+    },
+    {
+      "task_id": "task-bugfix-03",
+      "complexity": "simple",
+      "functional_tests_total": 3,
+      "functional_tests_passed": 3,
+      "functional_pass": true,
+      "retry_count": 0,
+      "notes": "Added empty event_type validation to append_trace_event"
+    },
+    {
+      "task_id": "task-api-users",
+      "complexity": "medium",
+      "functional_tests_total": 8,
+      "functional_tests_passed": 8,
+      "functional_pass": true,
+      "retry_count": 0,
+      "notes": "User CRUD with email validation and auto-increment"
+    },
+    {
+      "task_id": "task-api-products",
+      "complexity": "medium",
+      "functional_tests_total": 8,
+      "functional_tests_passed": 8,
+      "functional_pass": true,
+      "retry_count": 0,
+      "notes": "Product management with price validation and stock control"
+    },
+    {
+      "task_id": "task-api-orders",
+      "complexity": "medium",
+      "functional_tests_total": 8,
+      "functional_tests_passed": 8,
+      "functional_pass": true,
+      "retry_count": 0,
+      "notes": "Order lifecycle with state machine transitions"
+    },
+    {
+      "task_id": "task-auth-jwt",
+      "complexity": "complex",
+      "functional_tests_total": 11,
+      "functional_tests_passed": 11,
+      "functional_pass": true,
+      "retry_count": 0,
+      "notes": "JWT auth with HMAC tokens, salted password hashing"
+    },
+    {
+      "task_id": "task-auth-oauth",
+      "complexity": "complex",
+      "functional_tests_total": 11,
+      "functional_tests_passed": 11,
+      "functional_pass": true,
+      "retry_count": 0,
+      "notes": "OAuth2 authorization code flow with single-use codes"
+    },
+    {
+      "task_id": "task-auth-session",
+      "complexity": "complex",
+      "functional_tests_total": 14,
+      "functional_tests_passed": 14,
+      "functional_pass": true,
+      "retry_count": 0,
+      "notes": "Session auth with RBAC role hierarchy"
+    }
+  ],
+  "summary": {
+    "total_tasks": 9,
+    "total_passed": 9,
+    "total_tests": 70,
+    "total_tests_passed": 70,
+    "pass_rate": 1.0,
+    "regression_tests_passed": 1454,
+    "regression_tests_failed": 0
+  }
+}
