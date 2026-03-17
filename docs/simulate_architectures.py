@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""模拟对比：当前架构 vs 任务分解架构
+"""说明性示例 (Illustrative Example)：单体 vs 分解架构的执行流程对比
 
-用一个真实场景 "实现用户认证模块" 来对比两种架构的执行流程。
-不需要 LLM，纯粹模拟编排逻辑。
+注意：这不是实验或模拟。所有 builder/reviewer 输出均为硬编码 (mock)，
+结论（上下文缩减、重试减少）是预设场景的必然结果，不可作为架构优劣的定量证据。
+
+如需真正的定量比较，请使用 scripts/experiment_runner.py 进行对照实验。
+
+用一个固定场景 "实现用户认证模块" 来演示两种架构的执行流程差异。
 
 运行: python docs/simulate_architectures.py
 """
@@ -242,7 +246,7 @@ def print_comparison(a: SimResult, b: SimResult):
 
     print()
     print("  关键发现:")
-    print(f"  1. 上下文缩减 {a.max_context_tokens/b.max_context_tokens:.1f}x — MASAI 论文核心论点得到验证")
+    print(f"  1. 上下文缩减 {a.max_context_tokens/b.max_context_tokens:.1f}x — 预设场景下的理论优势（需对照实验验证）")
     print(f"  2. 重试从 {a.total_retries} 次降到 {b.total_retries} 次 — 小任务更容易一次做对")
     print(f"  3. 每个 sub-task 的 reviewer 只需审查一个功能，审查质量更高")
     print(f"  4. 任何 sub-task 失败不影响其他已完成的 sub-task")
@@ -256,7 +260,7 @@ def print_comparison(a: SimResult, b: SimResult):
 
 
 if __name__ == "__main__":
-    print("🔬 Multi-Agent 编排架构模拟对比")
+    print("📋 Multi-Agent 编排架构说明性示例 (Illustrative Example)")
     print("   场景: " + COMPLEX_REQUIREMENT)
 
     current = simulate_current_architecture()

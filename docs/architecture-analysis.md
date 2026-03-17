@@ -37,7 +37,9 @@ Ranker (排序 + 验证)
   - 避免单一超长 trajectory 导致上下文膨胀
   - 信息来源分散（README、test、source）各 sub-agent 独立获取
 - **缺点**: sub-agent 之间的状态传递需要精心设计
-- **关键发现**: 论文消融实验证明，拆分成 sub-agent 比单一 agent 高 7.67%
+- **关键发现**: 论文消融实验表明，使用差异化推理策略的 5 个 sub-agent 比单一 agent 高 7.67%。
+  注意：该提升主要归因于**策略差异化**（ReAct/CoT/单次），而非单纯的任务拆分。
+  对于黑箱 IDE agent（无法控制推理策略），此数据不可直接迁移
 
 ### 模式 C: 层级编排器 (AgentOrchestra/Skywork, 2025)
 
@@ -147,7 +149,10 @@ Agent A ←→ Agent B ←→ Agent C
 2. **借鉴 MASAI 的模块化** (模式 B) 做任务分解
    - ✅ 大任务拆成多个小的 build-review 循环
    - ✅ 每个 sub-task 有独立 context，不互相污染
-   - ✅ MASAI 论文证明：拆分 > 不拆分（+7.67%）
+   - ✅ MASAI 论证了模块化的优势；但其 +7.67% 来自策略差异化，
+     对于黑箱 IDE agent，分解的收益假设需通过我们自己的对照实验验证
+   - ✅ Agentless (FSE 2025) 验证了分步处理的有效性 (Localize→Edit→Verify)
+   - ✅ MapCoder (ACL 2024) 验证了独立验证阶段 (verification isolation) 的价值
 
 3. **不做的事** (借鉴 Agentless "简单即正确"):
    - ❌ 不嵌套 sub-agent（IDE 做不到）
