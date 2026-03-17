@@ -369,10 +369,10 @@ def run_single_experiment(
         "--task-id", f"exp-{condition}-{task_id}-r{run_idx}",
     ]
 
-    if cond_cfg["use_reviewer"]:
-        cmd.extend(["--builder", builder, "--reviewer", builder, "--mode", "strict"])
-    else:
-        cmd.extend(["--builder", builder])
+    # All conditions use the same execution path through the orchestration pipeline.
+    # For C1 (single), we still pass through build+review but use the same CLI agent,
+    # ensuring fair comparison (same overhead, same interrupt mechanism).
+    cmd.extend(["--builder", builder, "--reviewer", builder, "--mode", "strict"])
 
     # Decompose strategy
     decompose = cond_cfg["decompose"]
