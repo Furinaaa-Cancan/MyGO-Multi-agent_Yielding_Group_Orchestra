@@ -425,6 +425,7 @@ def _resolve_and_validate_agents_for_run(
 @click.option("--timeout", default=1800, type=int, help="Timeout in seconds")
 @click.option("--no-watch", is_flag=True, default=False, help="Don't auto-watch (exit after start)")
 @click.option("--decompose", is_flag=True, default=False, help="Decompose complex requirement into sub-tasks first")
+@click.option("--no-decompose", is_flag=True, default=False, help="Prevent auto-decompose for complex tasks (experiment use)")
 @click.option("--auto-confirm", is_flag=True, default=False, help="Skip decompose confirmation (for automated runs)")
 @click.option("--decompose-file", default=None, type=click.Path(exists=True), help="Read decompose result from file instead of agent")
 @click.option("--no-cache", is_flag=True, default=False, help="Skip decompose result cache (force fresh decomposition)")
@@ -434,7 +435,7 @@ def _resolve_and_validate_agents_for_run(
 @click.option("--profile", "profile_name", default=None, help="Config profile name (e.g. fast, thorough, solo)")
 @click.option("--config", "mode_config_path", default="config/workmode.yaml", help="Workmode 配置路径")
 @handle_errors
-def go(requirement: str | None, template_id: str | None, var_args: tuple[str, ...], skill: str, task_id: str | None, builder: str, reviewer: str, retry_budget: int, timeout: int, no_watch: bool, decompose: bool, auto_confirm: bool, decompose_file: str | None, no_cache: bool, visible: bool, git_commit: bool, mode: str, profile_name: str | None, mode_config_path: str) -> None:
+def go(requirement: str | None, template_id: str | None, var_args: tuple[str, ...], skill: str, task_id: str | None, builder: str, reviewer: str, retry_budget: int, timeout: int, no_watch: bool, decompose: bool, no_decompose: bool, auto_confirm: bool, decompose_file: str | None, no_cache: bool, visible: bool, git_commit: bool, mode: str, profile_name: str | None, mode_config_path: str) -> None:
     """Start a new task and watch for IDE output.
 
     Starts the task, then auto-watches outbox/ for agent output.
@@ -588,7 +589,9 @@ def go(requirement: str | None, template_id: str | None, var_args: tuple[str, ..
     )
 
     # Task 16: Suggest decompose for complex requirements
-    if not decompose:
+    if no_decompose:
+        decompose = False
+    if not decompose and not no_decompose:
         from multi_agent.decompose import estimate_complexity
         from multi_agent.driver import get_agent_driver
 

@@ -1,51 +1,60 @@
-"""Unit tests for delete_user and related functions."""
+"""Unit tests for user management module."""
 
-import sys
-import os
-
-sys.path.insert(0, os.path.dirname(__file__))
-
-import app as app_mod
+import pytest
+from app import create_user, get_user, list_users, delete_user, _users, _next_id
+import app
 
 
-def _reset_store():
-    """Reset the in-memory store between tests."""
-    app_mod._store.clear()
-    app_mod._next_id = 1
+@pytest.fixture(autouse=True)
+def reset_state():
+    """Reset module state before each test."""
+    app._users.clear()
+    app._next_id = 1
+    yield
 
 
-def test_delete_existing_user_returns_true():
-    _reset_store()
-    user = app_mod.create_user("Alice", "alice@example.com")
-    assert app_mod.delete_user(user["id"]) is True
+def test_create_user_returns_dict():
+    user = create_user("Alice", "alice@example.com")
+    assert user == {"id": 1, "name": "Alice", "email": "alice@example.com"}
 
 
-def test_delete_nonexistent_user_returns_false():
-    _reset_store()
-    assert app_mod.delete_user(999) is False
+def test_create_user_auto_increments_id():
+    u1 = create_user("A", "a@x.com")
+    u2 = create_user("B", "b@x.com")
+    assert u1["id"] == 1
+    assert u2["id"] == 2
 
 
-def test_deleted_user_not_in_get_user():
-    _reset_store()
-    user = app_mod.create_user("Bob", "bob@example.com")
-    app_mod.delete_user(user["id"])
-    assert app_mod.get_user(user["id"]) is None
+def test_create_user_invalid_email():
+    with pytest.raises(ValueError):
+        create_user("Bad", "no-at-sign")
 
 
-def test_deleted_user_not_in_list_users():
-    _reset_store()
-    user = app_mod.create_user("Carol", "carol@example.com")
-    app_mod.create_user("Dave", "dave@example.com")
-    initial_count = len(app_mod.list_users())
-    app_mod.delete_user(user["id"])
-    assert len(app_mod.list_users()) == initial_count - 1
-    assert all(u["id"] != user["id"] for u in app_mod.list_users())
+def test_get_user_found():
+    create_user("Alice", "alice@example.com")
+    assert get_user(1) == {"id": 1, "name": "Alice", "email": "alice@example.com"}
 
 
-def test_delete_does_not_affect_other_users():
-    _reset_store()
-    user1 = app_mod.create_user("Eve", "eve@example.com")
-    user2 = app_mod.create_user("Frank", "frank@example.com")
-    app_mod.delete_user(user1["id"])
-    assert app_mod.get_user(user2["id"]) is not None
-    assert len(app_mod.list_users()) == 1
+def test_get_user_not_found():
+    assert get_user(999) is None
+
+
+def test_list_users_empty():
+    assert list_users() == []
+
+
+def test_list_users_multiple():
+    create_user("A", "a@x.com")
+    create_user("B", "b@x.com")
+    users = list_users()
+    assert len(users) == 2
+
+
+def test_delete_user_success():
+    create_user("A", "a@x.com")
+    assert delete_user(1) is True
+    assert get_user(1) is None
+
+
+def test_delete_user_not_found():
+    assert delete_user(999) is False

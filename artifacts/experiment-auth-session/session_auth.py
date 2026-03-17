@@ -1,75 +1,73 @@
+"""Session-based authentication management module."""
+
 import hashlib
 import secrets
 import time
 
 VALID_ROLES = {"user", "admin", "moderator"}
 
-_users: dict[str, dict] = {}
+_users: dict[int, dict] = {}
+_usernames: dict[str, int] = {}
 _sessions: dict[str, dict] = {}
-_next_id: int = 1
+_next_user_id = 1
+
+
+def _hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
 
 
 def register(username: str, password: str, role: str = "user") -> dict:
-    global _next_id
+    global _next_user_id
 
-    if username in _users:
-        raise ValueError(f"Username '{username}' already exists")
+    if role not in VALID_ROLES:
+        raise ValueError(f"Invalid role: {role}. Must be one of {VALID_ROLES}")
 
     if len(password) < 8:
         raise ValueError("Password must be at least 8 characters")
 
-    if role not in VALID_ROLES:
-        raise ValueError(f"Invalid role '{role}'. Must be one of: {', '.join(sorted(VALID_ROLES))}")
+    if username in _usernames:
+        raise ValueError(f"Username '{username}' already exists")
 
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    user_id = _next_user_id
+    _next_user_id += 1
 
-    user = {
-        "user_id": _next_id,
+    _users[user_id] = {
+        "user_id": user_id,
         "username": username,
         "role": role,
-        "password_hash": password_hash,
+        "password_hash": _hash_password(password),
     }
-    _users[username] = user
-    _next_id += 1
+    _usernames[username] = user_id
 
-    return {"user_id": user["user_id"], "username": username, "role": role}
+    return {"user_id": user_id, "username": username, "role": role}
 
 
 def login(username: str, password: str) -> dict:
-    if username not in _users:
+    user_id = _usernames.get(username)
+    if user_id is None:
         raise ValueError("Invalid username or password")
 
-    user = _users[username]
-    password_hash = hashlib.sha256(password.encode()).hexdigest()
-
-    if user["password_hash"] != password_hash:
+    user = _users[user_id]
+    if user["password_hash"] != _hash_password(password):
         raise ValueError("Invalid username or password")
 
     session_id = secrets.token_hex(32)
-    expires_at = time.time() + 3600
+    expires_at = int(time.time()) + 3600
 
     _sessions[session_id] = {
         "session_id": session_id,
-        "user_id": user["user_id"],
+        "user_id": user_id,
         "username": username,
         "role": user["role"],
         "expires_at": expires_at,
     }
 
-    return {
-        "session_id": session_id,
-        "user_id": user["user_id"],
-        "expires_at": expires_at,
-    }
+    return {"session_id": session_id, "user_id": user_id, "expires_at": expires_at}
 
 
 def get_session(session_id: str) -> dict | None:
     session = _sessions.get(session_id)
     if session is None:
-        return None
-
-    if time.time() > session["expires_at"]:
-        del _sessions[session_id]
         return None
 
     return {
@@ -87,12 +85,28 @@ def logout(session_id: str) -> bool:
     return False
 
 
+def list_active_sessions(user_id: int) -> list[dict]:
+    now = int(time.time())
+    return [
+        {
+            "session_id": s["session_id"],
+            "user_id": s["user_id"],
+            "username": s["username"],
+            "role": s["role"],
+            "expires_at": s["expires_at"],
+        }
+        for s in _sessions.values()
+        if s["user_id"] == user_id and s["expires_at"] > now
+    ]
+
+
 def require_role(session_id: str, required_role: str) -> bool:
-    session = get_session(session_id)
+    session = _sessions.get(session_id)
     if session is None:
         raise PermissionError("Invalid or expired session")
 
     user_role = session["role"]
+
     if user_role == "admin":
         return True
 
@@ -100,27 +114,5 @@ def require_role(session_id: str, required_role: str) -> bool:
         return True
 
     raise PermissionError(
-        f"Role '{user_role}' does not have '{required_role}' permission"
+        f"Insufficient permissions: requires '{required_role}', has '{user_role}'"
     )
-
-
-def list_active_sessions(username: str) -> list[dict]:
-    now = time.time()
-    active = []
-    expired = []
-
-    for sid, session in _sessions.items():
-        if session["username"] == username:
-            if now > session["expires_at"]:
-                expired.append(sid)
-            else:
-                active.append({
-                    "session_id": sid,
-                    "user_id": session["user_id"],
-                    "expires_at": session["expires_at"],
-                })
-
-    for sid in expired:
-        del _sessions[sid]
-
-    return active
