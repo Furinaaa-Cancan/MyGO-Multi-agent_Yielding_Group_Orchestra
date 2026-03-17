@@ -70,14 +70,14 @@ def discover_tasks(tasks_dir: Path) -> list[dict]:
         if not task_dir.is_dir():
             continue
         req_file = task_dir / "requirement.txt"
-        test_file = task_dir / "test_ground_truth.py"
         if not req_file.exists():
             print(f"  SKIP {task_dir.name}: missing requirement.txt")
             continue
+        has_gt = bool(list(task_dir.glob("test_gt_*.py")) or list(task_dir.glob("test_ground_truth.py")))
         tasks.append({
             "task_id": task_dir.name,
             "requirement": req_file.read_text(encoding="utf-8").strip(),
-            "has_ground_truth": test_file.exists(),
+            "has_ground_truth": has_gt,
             "task_dir": str(task_dir),
         })
     return tasks
@@ -135,14 +135,15 @@ def run_type_check() -> int:
 
 def run_ground_truth_tests(task_dir: Path) -> dict:
     """Run the ground truth tests for a task and return results."""
-    test_file = task_dir / "test_ground_truth.py"
-    if not test_file.exists():
+    # Support both test_ground_truth.py and test_gt_*.py naming
+    test_files = list(task_dir.glob("test_gt_*.py")) + list(task_dir.glob("test_ground_truth.py"))
+    if not test_files:
         return {"total": 0, "passed": 0, "failed": 0, "error": "no test file"}
+    test_file = test_files[0]
 
     try:
         r = subprocess.run(
-            ["python", "-m", "pytest", str(test_file), "-v", "--tb=short",
-             "--json-report", "--json-report-file=-"],
+            ["python3", "-m", "pytest", str(test_file), "-v", "--tb=short"],
             capture_output=True, text=True, timeout=120,
             cwd=str(PROJECT_ROOT),
             env={**os.environ, "PYTHONPATH": str(PROJECT_ROOT / "src")},

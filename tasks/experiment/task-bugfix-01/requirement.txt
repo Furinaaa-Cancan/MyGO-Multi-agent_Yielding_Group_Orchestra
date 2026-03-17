@@ -1,9 +1,10 @@
-修复 src/multi_agent/config.py 中 load_project_config 函数的问题：
-当 .ma.yaml 文件存在但内容为空时，函数应返回空 dict {}，而不是抛出 TypeError。
+修复 src/multi_agent/workspace.py 中 validate_outbox_data 函数的问题：
+当 role 为 "reviewer" 时，函数只检查 "decision" 字段是否存在，
+但没有检查 "summary" 字段。reviewer 输出也应该包含 summary。
 
 实现要求:
-1. 在 load_project_config() 中添加对 yaml.safe_load() 返回 None 的处理
-2. 返回空 dict 而非 None 或抛异常
-3. 添加 debug 级别日志记录此情况
+1. 在 validate_outbox_data() 中，当 role == "reviewer" 时，增加对 "summary" 字段的检查
+2. 如果 reviewer 输出缺少 "summary"，添加错误信息 "missing 'summary' field"
+3. builder 的验证逻辑不变
 
-不要修改函数签名，不要改动其他函数。
+不要修改函数签名。

@@ -1,9 +1,10 @@
-修复 src/multi_agent/workspace.py 中 clear_outbox 函数的问题：
-当 outbox 目录不存在时，函数应静默返回而不是抛出 FileNotFoundError。
+修复 src/multi_agent/workspace.py 中 write_inbox 函数的问题：
+当 content 参数为空字符串时，函数应抛出 ValueError("content must not be empty")，
+而不是写入一个空文件到 inbox 目录。
 
 实现要求:
-1. 在 clear_outbox() 中添加目录存在性检查
-2. 如果 outbox 目录不存在，直接 return 即可
-3. 已有的文件清理逻辑不变
+1. 在 write_inbox() 函数开头添加参数验证
+2. 当 content 为空字符串或仅包含空白字符时，抛出 ValueError("content must not be empty")
+3. 正常的 content 不受影响
 
 不要修改函数签名。

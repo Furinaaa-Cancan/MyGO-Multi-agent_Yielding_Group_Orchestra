@@ -1,9 +1,9 @@
 修复 src/multi_agent/trace.py 中的问题：
-emit_event 函数在 event_type 参数为空字符串时应抛出 ValueError，
-而不是写入一个 type 为空的事件到审计日志。
+append_trace_event 函数在 event_type 参数为空字符串时应抛出 ValueError，
+而不是写入一个 event_type 为空的事件到 trace 日志。
 
 实现要求:
-1. 在 emit_event() 函数开头添加参数验证
+1. 在 append_trace_event() 函数开头添加参数验证
 2. 当 event_type 为空字符串或仅包含空白字符时，抛出 ValueError("event_type must not be empty")
 3. 正常的 event_type 不受影响
 
