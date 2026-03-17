@@ -1,39 +1,45 @@
-"""Product management API — in-memory CRUD with stock management."""
-from __future__ import annotations
+"""Product CRUD module with in-memory storage."""
 
-_products: dict[int, dict] = {}
+products: dict[int, dict] = {}
 _next_id: int = 1
 
 
 def create_product(name: str, price: float, stock: int = 0) -> dict:
-    """Create a new product. Price must be > 0."""
+    """Create a product and return it as a dict with auto-incremented id."""
     global _next_id
     if price <= 0:
-        raise ValueError(f"Price must be positive, got {price}")
+        raise ValueError("price must be positive")
     product = {"id": _next_id, "name": name, "price": price, "stock": stock}
-    _products[_next_id] = product
+    products[_next_id] = product
     _next_id += 1
-    return dict(product)
+    return product
 
 
 def get_product(product_id: int) -> dict | None:
-    """Get product by ID."""
-    p = _products.get(product_id)
-    return dict(p) if p else None
+    """Return product by id, or None if not found."""
+    return products.get(product_id)
 
 
-def list_products(min_price: float = 0, max_price: float = float("inf")) -> list[dict]:
-    """List products, optionally filtered by price range."""
-    return [dict(p) for p in _products.values() if min_price <= p["price"] <= max_price]
+def list_products(
+    min_price: float | None = None, max_price: float | None = None
+) -> list[dict]:
+    """Return all products, optionally filtered by price range [min_price, max_price]."""
+    result = list(products.values())
+    if min_price is not None:
+        result = [p for p in result if p["price"] >= min_price]
+    if max_price is not None:
+        result = [p for p in result if p["price"] <= max_price]
+    return result
 
 
 def update_stock(product_id: int, delta: int) -> dict:
-    """Update stock by delta. Raises ValueError if result would be negative."""
-    p = _products.get(product_id)
-    if p is None:
-        raise ValueError(f"Product {product_id} not found")
-    new_stock = p["stock"] + delta
+    """Adjust stock by delta (can be negative). Raises ValueError if stock would go below 0.
+    Raises KeyError if product_id not found."""
+    product = products.get(product_id)
+    if product is None:
+        raise KeyError(f"Product {product_id} not found")
+    new_stock = product["stock"] + delta
     if new_stock < 0:
-        raise ValueError(f"Stock cannot go below 0 (current={p['stock']}, delta={delta})")
-    p["stock"] = new_stock
-    return dict(p)
+        raise ValueError("Stock cannot be negative")
+    product["stock"] = new_stock
+    return product
