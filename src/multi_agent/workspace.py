@@ -79,6 +79,8 @@ def ensure_workspace() -> Path:
 @retry_file_op()
 def write_inbox(agent_id: str, content: str) -> Path:
     """Write a prompt file to inbox/{agent_id}.md."""
+    if not content or not content.strip():
+        raise ValueError("content must not be empty")
     _validate_agent_id(agent_id)
     ensure_workspace()
     path = inbox_dir() / f"{agent_id}.md"
@@ -97,6 +99,8 @@ def validate_outbox_data(role: str, data: dict[str, Any]) -> list[str]:
     elif role == "reviewer":
         if "decision" not in data:
             errors.append("missing 'decision' field")
+        if "summary" not in data:
+            errors.append("missing 'summary' field")
     return errors
 
 

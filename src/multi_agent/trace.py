@@ -51,6 +51,8 @@ def append_trace_event(
     lane_id: str = "main",
     parent_id: str | None = None,
 ) -> dict[str, Any]:
+    if not event_type or not event_type.strip():
+        raise ValueError("event_type must not be empty")
     history_dir().mkdir(parents=True, exist_ok=True)
     path = trace_file(task_id)
     event_id = uuid4().hex[:12]

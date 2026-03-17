@@ -164,8 +164,12 @@ class TestValidateOutboxData:
         assert "missing 'decision' field" in errors
 
     def test_reviewer_valid(self):
-        errors = workspace.validate_outbox_data("reviewer", {"decision": "approve"})
+        errors = workspace.validate_outbox_data("reviewer", {"decision": "approve", "summary": "LGTM"})
         assert errors == []
+
+    def test_reviewer_missing_summary(self):
+        errors = workspace.validate_outbox_data("reviewer", {"decision": "approve"})
+        assert "missing 'summary' field" in errors
 
     def test_unknown_role_no_errors(self):
         errors = workspace.validate_outbox_data("decompose", {"anything": True})
@@ -202,7 +206,7 @@ class TestReadOutboxValidate:
 
     def test_validate_true_accepts_complete_reviewer(self, tmp_workspace):
         workspace.ensure_workspace()
-        workspace.write_outbox("reviewer", {"decision": "approve"})
+        workspace.write_outbox("reviewer", {"decision": "approve", "summary": "LGTM"})
         result = workspace.read_outbox("reviewer", validate=True)
         assert result is not None
 
