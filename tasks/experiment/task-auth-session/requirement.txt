@@ -1,0 +1,27 @@
+在 artifacts/ 目录下实现一个 Session 认证管理模块。
+
+实现要求:
+1. 创建 artifacts/experiment-auth-session/session_auth.py
+2. 实现以下功能 (纯 Python, 内存存储):
+   - register(username: str, password: str, role: str = "user") -> dict
+     返回 {"user_id": ..., "username": ..., "role": ...}
+     用户名已存在抛出 ValueError
+     密码 < 8 字符抛出 ValueError
+     role 只允许 "user", "admin", "moderator"，否则抛出 ValueError
+   - login(username: str, password: str) -> dict
+     返回 {"session_id": ..., "user_id": ..., "expires_at": ...}
+     session_id 使用 secrets.token_hex(32) 生成
+     expires_at 为当前时间 + 1 小时 (Unix timestamp)
+     用户名或密码错误抛出 ValueError
+   - get_session(session_id: str) -> dict | None
+     返回 session 信息 {"user_id": ..., "username": ..., "role": ..., "expires_at": ...}
+     session 不存在返回 None
+   - logout(session_id: str) -> bool
+     销毁 session，成功返回 True，不存在返回 False
+   - list_active_sessions(user_id: int) -> list[dict]
+     返回该用户的所有活跃 session
+   - require_role(session_id: str, required_role: str) -> bool
+     检查 session 对应用户是否有指定角色
+     admin 角色拥有所有权限
+     session 无效或角色不足抛出 PermissionError
+3. 密码使用 hashlib 哈希存储

@@ -1,0 +1,9 @@
+修复 src/multi_agent/config.py 中 load_project_config 函数的问题：
+当 .ma.yaml 文件存在但内容为空时，函数应返回空 dict {}，而不是抛出 TypeError。
+
+实现要求:
+1. 在 load_project_config() 中添加对 yaml.safe_load() 返回 None 的处理
+2. 返回空 dict 而非 None 或抛异常
+3. 添加 debug 级别日志记录此情况
+
+不要修改函数签名，不要改动其他函数。

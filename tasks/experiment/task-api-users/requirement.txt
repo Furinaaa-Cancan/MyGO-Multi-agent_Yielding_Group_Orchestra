@@ -1,0 +1,12 @@
+在 artifacts/ 目录下实现一个用户管理 REST API 模块。
+
+实现要求:
+1. 创建 artifacts/experiment-api-users/app.py
+2. 实现以下函数 (纯 Python, 不需要 Flask/FastAPI):
+   - create_user(name: str, email: str) -> dict  — 返回 {"id": ..., "name": ..., "email": ...}
+   - get_user(user_id: int) -> dict | None  — 返回用户或 None
+   - list_users() -> list[dict]  — 返回所有用户列表
+   - delete_user(user_id: int) -> bool  — 删除成功返回 True
+3. 使用内存存储 (dict)，不需要数据库
+4. user_id 自增，从 1 开始
+5. email 必须包含 @ 符号，否则 create_user 抛出 ValueError

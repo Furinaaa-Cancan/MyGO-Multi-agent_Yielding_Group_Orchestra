@@ -1,0 +1,23 @@
+在 artifacts/ 目录下实现一个完整的 JWT 认证模块。
+
+实现要求:
+1. 创建 artifacts/experiment-auth-jwt/auth.py
+2. 实现以下功能:
+   - register(username: str, password: str) -> dict
+     返回 {"user_id": ..., "username": ...}
+     用户名已存在时抛出 ValueError
+     密码必须 >= 8 字符，否则抛出 ValueError
+   - login(username: str, password: str) -> dict
+     返回 {"token": ..., "expires_in": 3600}
+     token 是一个包含 user_id 和 exp 的 JWT (使用 hmac + base64 模拟即可，不需要真正的 JWT 库)
+     用户名或密码错误时抛出 ValueError("Invalid credentials")
+   - verify_token(token: str) -> dict
+     返回 {"user_id": ..., "username": ...}
+     token 无效或过期时抛出 ValueError("Invalid token")
+   - change_password(user_id: int, old_password: str, new_password: str) -> bool
+     旧密码错误抛出 ValueError
+     新密码 < 8 字符抛出 ValueError
+     成功返回 True
+3. 密码存储必须使用 hashlib 哈希，不能明文存储
+4. 使用内存存储 (dict)
+5. user_id 自增，从 1 开始

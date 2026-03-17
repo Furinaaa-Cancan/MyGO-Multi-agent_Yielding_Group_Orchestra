@@ -1,0 +1,9 @@
+修复 src/multi_agent/workspace.py 中 clear_outbox 函数的问题：
+当 outbox 目录不存在时，函数应静默返回而不是抛出 FileNotFoundError。
+
+实现要求:
+1. 在 clear_outbox() 中添加目录存在性检查
+2. 如果 outbox 目录不存在，直接 return 即可
+3. 已有的文件清理逻辑不变
+
+不要修改函数签名。

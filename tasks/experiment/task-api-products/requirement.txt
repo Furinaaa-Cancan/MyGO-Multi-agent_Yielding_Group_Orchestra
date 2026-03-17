@@ -1,0 +1,14 @@
+在 artifacts/ 目录下实现一个产品管理模块。
+
+实现要求:
+1. 创建 artifacts/experiment-api-products/app.py
+2. 实现以下函数 (纯 Python, 内存存储):
+   - create_product(name: str, price: float, stock: int = 0) -> dict
+     返回 {"id": ..., "name": ..., "price": ..., "stock": ...}
+   - get_product(product_id: int) -> dict | None
+   - list_products(min_price: float = 0, max_price: float = float('inf')) -> list[dict]
+     支持价格范围筛选
+   - update_stock(product_id: int, delta: int) -> dict
+     增减库存 (delta 可为负数)，库存不能低于 0，否则抛出 ValueError
+3. product_id 自增，从 1 开始
+4. price 必须 > 0，否则 create_product 抛出 ValueError

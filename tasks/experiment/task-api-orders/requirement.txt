@@ -1,0 +1,18 @@
+在 artifacts/ 目录下实现一个订单管理模块。
+
+实现要求:
+1. 创建 artifacts/experiment-api-orders/app.py
+2. 实现以下函数 (纯 Python, 内存存储):
+   - create_order(customer_name: str, items: list[dict]) -> dict
+     items 格式: [{"product": "Widget", "quantity": 2, "unit_price": 9.99}, ...]
+     返回 {"id": ..., "customer_name": ..., "items": ..., "total": ..., "status": "pending"}
+     total 自动计算为所有 item 的 quantity * unit_price 之和
+   - get_order(order_id: int) -> dict | None
+   - update_order_status(order_id: int, status: str) -> dict
+     有效状态: pending, confirmed, shipped, delivered, cancelled
+     无效状态转换抛出 ValueError
+   - list_orders(status: str | None = None) -> list[dict]
+     可选按状态筛选
+3. order_id 自增，从 1 开始
+4. items 不能为空列表，否则抛出 ValueError
+5. 状态流转规则: pending -> confirmed -> shipped -> delivered; 任意状态 -> cancelled

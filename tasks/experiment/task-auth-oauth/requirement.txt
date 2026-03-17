@@ -1,0 +1,24 @@
+在 artifacts/ 目录下实现一个 OAuth2 授权码流程模拟模块。
+
+实现要求:
+1. 创建 artifacts/experiment-auth-oauth/oauth.py
+2. 实现以下功能 (纯 Python, 内存存储, 模拟 OAuth2 流程):
+   - register_client(client_name: str, redirect_uri: str) -> dict
+     返回 {"client_id": ..., "client_secret": ..., "redirect_uri": ...}
+     client_id 和 client_secret 使用 secrets.token_hex(16) 生成
+   - authorize(client_id: str, user_id: str, scope: str = "read") -> str
+     返回 authorization_code (随机字符串)
+     client_id 无效时抛出 ValueError
+     scope 只允许 "read", "write", "admin"，否则抛出 ValueError
+     authorization_code 5 分钟后过期
+   - exchange_token(client_id: str, client_secret: str, code: str) -> dict
+     返回 {"access_token": ..., "token_type": "bearer", "expires_in": 3600, "scope": ...}
+     code 无效或已使用时抛出 ValueError
+     client_secret 不匹配时抛出 ValueError
+     每个 code 只能使用一次
+   - validate_token(access_token: str) -> dict
+     返回 {"user_id": ..., "scope": ..., "client_id": ...}
+     token 无效时抛出 ValueError
+   - revoke_token(access_token: str) -> bool
+     撤销 token，成功返回 True，token 不存在返回 False
+3. 所有 token 和 code 存储在内存 dict 中
