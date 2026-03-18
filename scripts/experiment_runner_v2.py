@@ -381,6 +381,18 @@ def run_single_experiment(
         "metrics": {},
     }
 
+    # Skip if result already exists (resume support)
+    existing = results_dir / condition / task_id / f"run_{run_idx}.json"
+    if existing.exists():
+        try:
+            data = json.loads(existing.read_text(encoding="utf-8"))
+            dur = data.get("metrics", {}).get("wall_clock_sec", 0)
+            if dur > 5:  # valid result (not a stuck/failed run)
+                print(f"  SKIP {condition}/{task_id}/run_{run_idx} (already exists, {dur:.0f}s)")
+                return data
+        except Exception:
+            pass
+
     print(f"\n{'='*70}")
     print(f"  {cond_cfg['label']} | Task: {task_id} ({task.get('complexity', '?')}) | Run: {run_idx}")
     print(f"  {cond_cfg['description']}")
