@@ -115,9 +115,10 @@ def _clear_workspace_state() -> None:
 
 
 def _reset_artifacts() -> None:
-    """Reset experiment artifact directories to empty state.
+    """Reset experiment artifact directories and source files to clean state.
 
     Ensures each run starts from scratch — no leftover code from prior runs.
+    Also restores source files modified by bugfix tasks via git checkout.
     """
     import shutil
     artifact_names = [
@@ -129,6 +130,21 @@ def _reset_artifacts() -> None:
         if d.exists():
             shutil.rmtree(str(d), ignore_errors=True)
         d.mkdir(parents=True, exist_ok=True)
+
+    # Restore source files that bugfix tasks may have modified
+    bugfix_targets = [
+        "src/multi_agent/workspace.py",
+        "src/multi_agent/trace.py",
+    ]
+    for target in bugfix_targets:
+        try:
+            subprocess.run(
+                ["git", "checkout", "HEAD", "--", target],
+                capture_output=True, timeout=10,
+                cwd=str(PROJECT_ROOT),
+            )
+        except Exception:
+            pass
 
 
 def _extract_retry_count() -> int:
@@ -376,10 +392,13 @@ def run_single_experiment(
         result["metrics"]["dry_run"] = True
         return result
 
-    # Clear state — ensure each run is independent
+    # Clear ALL state — ensure each run is fully independent
     _clear_semantic_memory()
     _clear_workspace_state()
     _reset_artifacts()
+    # Clear LangGraph checkpoint DB to prevent "task in progress" conflicts
+    for db_file in (PROJECT_ROOT / ".multi-agent").glob("store.db*"):
+        db_file.unlink(missing_ok=True)
 
     # Build command
     cmd = [
