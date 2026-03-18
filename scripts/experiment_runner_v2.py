@@ -366,7 +366,7 @@ def run_single_experiment(
     # Build command
     cmd = [
         "python3", "-m", "multi_agent.cli", "go", task["requirement"],
-        "--task-id", f"exp-{condition}-{task_id}-r{run_idx}",
+        "--task-id", f"exp-{condition.replace('_', '-')}-{task_id}-r{run_idx}",
     ]
 
     # All conditions use the same execution path through the orchestration pipeline.
