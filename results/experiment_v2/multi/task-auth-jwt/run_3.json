@@ -1,0 +1,33 @@
+{
+  "experiment_version": "2.0",
+  "protocol": "experiment-protocol-v2",
+  "timestamp": "2026-03-18T07:12:08.272157+00:00",
+  "condition": "multi",
+  "condition_label": "C2: Multi",
+  "task_id": "task-auth-jwt",
+  "task_complexity": "complex",
+  "task_complexity_score": 12.38,
+  "run_idx": 3,
+  "git_commit": "c3eccd8",
+  "model_id": "claude-opus-4-6",
+  "metrics": {
+    "resolve_rate": true,
+    "test_pass_rate": 1.0,
+    "tests_total": 11,
+    "tests_passed": 11,
+    "tests_failed": 0,
+    "total_tokens": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cost_usd": 0.0,
+    "wall_clock_sec": 143.1,
+    "retry_count": 0,
+    "lint_violations": 59,
+    "type_errors": -1,
+    "decompose_decision": "",
+    "sub_task_count": 0,
+    "bridge_violations": 0,
+    "task_returncode": 0
+  },
+  "_checksum": "68aa8c0a9bf01c0d"
+}
