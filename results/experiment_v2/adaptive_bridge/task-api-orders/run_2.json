@@ -1,0 +1,33 @@
+{
+  "experiment_version": "2.0",
+  "protocol": "experiment-protocol-v2",
+  "timestamp": "2026-03-18T10:44:31.648737+00:00",
+  "condition": "adaptive_bridge",
+  "condition_label": "C6: Adaptive+Bridge",
+  "task_id": "task-api-orders",
+  "task_complexity": "complex",
+  "task_complexity_score": 10.78,
+  "run_idx": 2,
+  "git_commit": "81a929d",
+  "model_id": "claude-opus-4-6",
+  "metrics": {
+    "resolve_rate": false,
+    "test_pass_rate": 0.0,
+    "tests_total": 17,
+    "tests_passed": 0,
+    "tests_failed": 17,
+    "total_tokens": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cost_usd": 0.0,
+    "wall_clock_sec": 1805.2,
+    "retry_count": 0,
+    "lint_violations": 59,
+    "type_errors": -1,
+    "decompose_decision": "",
+    "sub_task_count": 3,
+    "bridge_violations": 0,
+    "task_returncode": 0
+  },
+  "_checksum": "5feb0009f8cd95b3"
+}
