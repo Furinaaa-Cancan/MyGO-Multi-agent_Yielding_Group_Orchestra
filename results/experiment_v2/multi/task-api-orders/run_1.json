@@ -1,26 +1,26 @@
 {
   "experiment_version": "2.0",
   "protocol": "experiment-protocol-v2",
-  "timestamp": "2026-03-18T01:47:42.701732+00:00",
+  "timestamp": "2026-03-18T01:47:34.409951+00:00",
   "condition": "multi",
   "condition_label": "C2: Multi",
-  "task_id": "task-auth-jwt",
+  "task_id": "task-api-orders",
   "task_complexity": "complex",
-  "task_complexity_score": 12.38,
+  "task_complexity_score": 10.78,
   "run_idx": 1,
   "git_commit": "65af69d",
   "model_id": "claude-opus-4-6",
   "metrics": {
     "resolve_rate": false,
     "test_pass_rate": 0.0,
-    "tests_total": 23,
+    "tests_total": 17,
     "tests_passed": 0,
-    "tests_failed": 23,
+    "tests_failed": 17,
     "total_tokens": 0,
     "input_tokens": 0,
     "output_tokens": 0,
     "cost_usd": 0.0,
-    "wall_clock_sec": 0.6,
+    "wall_clock_sec": 1.0,
     "retry_count": 0,
     "lint_violations": 59,
     "type_errors": -1,
@@ -29,5 +29,5 @@
     "bridge_violations": 0,
     "task_returncode": 1
   },
-  "_checksum": "8729833ffae321a2"
+  "_checksum": "9ecef05eabb11703"
 }
