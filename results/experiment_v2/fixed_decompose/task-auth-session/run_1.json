@@ -1,26 +1,26 @@
 {
   "experiment_version": "2.0",
   "protocol": "experiment-protocol-v2",
-  "timestamp": "2026-03-18T03:22:37.703645+00:00",
+  "timestamp": "2026-03-18T03:31:33.832204+00:00",
   "condition": "fixed_decompose",
   "condition_label": "C3: FixedDecomp",
-  "task_id": "task-auth-oauth",
+  "task_id": "task-auth-session",
   "task_complexity": "complex",
-  "task_complexity_score": 12.49,
+  "task_complexity_score": 16.55,
   "run_idx": 1,
   "git_commit": "af36f59",
   "model_id": "claude-opus-4-6",
   "metrics": {
-    "resolve_rate": true,
-    "test_pass_rate": 1.0,
-    "tests_total": 11,
-    "tests_passed": 11,
-    "tests_failed": 0,
+    "resolve_rate": false,
+    "test_pass_rate": 0.9285714285714286,
+    "tests_total": 14,
+    "tests_passed": 13,
+    "tests_failed": 1,
     "total_tokens": 0,
     "input_tokens": 0,
     "output_tokens": 0,
     "cost_usd": 0.0,
-    "wall_clock_sec": 533.5,
+    "wall_clock_sec": 377.1,
     "retry_count": 0,
     "lint_violations": 59,
     "type_errors": -1,
@@ -29,5 +29,5 @@
     "bridge_violations": 0,
     "task_returncode": 0
   },
-  "_checksum": "7a79e57359c1b752"
+  "_checksum": "57b42ba1e2a2054a"
 }
