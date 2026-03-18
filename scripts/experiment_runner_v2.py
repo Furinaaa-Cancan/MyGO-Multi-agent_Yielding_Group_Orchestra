@@ -114,6 +114,23 @@ def _clear_workspace_state() -> None:
                     f.unlink(missing_ok=True)
 
 
+def _reset_artifacts() -> None:
+    """Reset experiment artifact directories to empty state.
+
+    Ensures each run starts from scratch — no leftover code from prior runs.
+    """
+    import shutil
+    artifact_names = [
+        "experiment-auth-jwt", "experiment-auth-oauth", "experiment-auth-session",
+        "experiment-api-users", "experiment-api-products", "experiment-api-orders",
+    ]
+    for name in artifact_names:
+        d = PROJECT_ROOT / "artifacts" / name
+        if d.exists():
+            shutil.rmtree(str(d), ignore_errors=True)
+        d.mkdir(parents=True, exist_ok=True)
+
+
 def _extract_retry_count() -> int:
     """Extract retry count from the most recent report."""
     try:
@@ -359,9 +376,10 @@ def run_single_experiment(
         result["metrics"]["dry_run"] = True
         return result
 
-    # Clear state
+    # Clear state — ensure each run is independent
     _clear_semantic_memory()
     _clear_workspace_state()
+    _reset_artifacts()
 
     # Build command
     cmd = [
