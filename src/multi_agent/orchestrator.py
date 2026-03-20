@@ -17,6 +17,7 @@ from typing import Any
 from langgraph.errors import GraphInterrupt
 
 from multi_agent._utils import TERMINAL_FINAL_STATUSES
+from multi_agent.graph_infra import TaskContext
 
 _log = logging.getLogger(__name__)
 
@@ -173,14 +174,19 @@ def start_task(
     Replaces the duplicated try/except GraphInterrupt pattern in
     cli.py._run_single_task() and session.py.session_start_impl().
 
+    Each task runs inside a ``TaskContext`` so that graph_stats and
+    graph_hooks are isolated per-task (OpenClaw Gateway-inspired).
+
     Returns the TaskStatus after the first interrupt (typically waiting
     for builder input).
 
     Raises TaskStartError on failure.
     """
     config = make_config(task_id)
+    ctx = TaskContext(task_id=task_id)
     try:
-        app.invoke(initial_state, config)
+        with ctx:
+            app.invoke(initial_state, config)
     except GraphInterrupt:
         pass  # Normal — graph paused at interrupt()
     except Exception as e:
@@ -190,26 +196,44 @@ def start_task(
             cause=e,
         ) from e
 
-    return get_task_status(app, task_id)
+    status = get_task_status(app, task_id)
+    # Attach context for resume_task to reuse
+    status = TaskStatus(
+        state=status.state,
+        is_terminal=status.is_terminal,
+        waiting_role=status.waiting_role,
+        waiting_agent=status.waiting_agent,
+        final_status=status.final_status,
+        error=status.error,
+        values={**status.values, "_task_context": ctx},
+    )
+    return status
 
 
 def resume_task(
     app: Any,
     task_id: str,
     output_data: dict[str, Any],
+    *,
+    task_context: TaskContext | None = None,
 ) -> TaskStatus:
     """Resume the graph with agent output, advancing to the next interrupt.
 
     Replaces the duplicated invoke(Command(resume=...)) pattern in
     cli.py.done() and session.py.submit_output().
 
+    When *task_context* is provided, the resume executes inside that
+    context so stats/hooks remain isolated per-task.
+
     Returns the TaskStatus after resume.
     """
     from langgraph.types import Command
 
     config = make_config(task_id)
+    ctx = task_context or TaskContext(task_id=task_id)
     try:
-        app.invoke(Command(resume=output_data), config)
+        with ctx:
+            app.invoke(Command(resume=output_data), config)
     except GraphInterrupt:
         pass  # Normal — graph paused at next interrupt()
     except Exception as e:

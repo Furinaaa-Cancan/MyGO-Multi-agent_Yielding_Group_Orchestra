@@ -36,6 +36,7 @@ from multi_agent.graph_infra import (  # noqa: F401 — re-exported for backward
     MAX_SNAPSHOTS,
     EventHooks,
     GraphStats,
+    TaskContext,
     graph_hooks,
     graph_stats,
     log_timing,
@@ -245,6 +246,8 @@ def plan_node(state: WorkflowState) -> dict[str, Any]:
 
     # Reset stats on first run of a new task to prevent cross-task contamination
     # (MAST NeurIPS 2025 SD-4; MAS-FIRE 2026 reliability evaluation).
+    # With TaskContext, stats are already per-task; reset for backward compat
+    # when running without a context.
     if state.get("retry_count", 0) == 0:
         graph_stats.reset()
         # Plugin hook: task start
@@ -1025,7 +1028,8 @@ def decide_node(state: WorkflowState) -> dict[str, Any]:
     )
 
     # Task 74: trim conversation if oversized
-    trimmed = trim_conversation(original_convo)
+    # Pass task_id so pre-trim flush can persist key decisions (OpenClaw pattern)
+    trimmed = trim_conversation(original_convo, task_id=state.get("task_id", ""))
     if len(trimmed) < len(original_convo):
         state = {**state, "conversation": trimmed}
 
@@ -1212,7 +1216,10 @@ _compiled_cache: dict[str, object] = {}
 def reset_graph() -> None:
     """Clear compiled graph cache, connection pool, and stats. Used for testing."""
     _compiled_cache.clear()
+    # Reset both proxy target and default fallback
     graph_stats.reset()
+    from multi_agent.graph_infra import _default_stats
+    _default_stats.reset()
     with _conn_lock:
         for conn in _conn_pool.values():
             with contextlib.suppress(Exception):

@@ -721,7 +721,12 @@ def _ensure_outbox_written(
     outbox_file: str, stdout_text: str, stderr_text: str,
     agent_id: str, returncode: int | None,
 ) -> None:
-    """Ensure outbox file exists after CLI run; extract from stdout or write error."""
+    """Ensure outbox file exists after CLI run; extract from stdout or write error.
+
+    After ensuring the outbox file exists, sends a POST /notify to the local
+    watcher (OpenClaw-inspired event-driven notification) for immediate resume
+    instead of waiting for the next poll cycle.
+    """
     outbox_path = Path(outbox_file)
     if not outbox_path.exists() and stdout_text.strip():
         _try_extract_json(stdout_text, outbox_path)
@@ -731,6 +736,14 @@ def _ensure_outbox_written(
             _write_error(outbox_file, f"{agent_id} CLI exited with code {returncode}: {stderr_hint}")
         else:
             _write_error(outbox_file, f"{agent_id} CLI produced no parseable JSON output")
+
+    # Notify watcher for immediate resume (event-driven, OpenClaw pattern)
+    if outbox_path.exists():
+        try:
+            from multi_agent.watcher import notify_watcher
+            notify_watcher()
+        except Exception:
+            pass  # Non-critical — watcher will poll anyway
 
 
 def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:

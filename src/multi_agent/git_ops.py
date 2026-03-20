@@ -29,13 +29,21 @@ _log = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class GitConfig:
-    """Parsed git integration settings from .ma.yaml."""
+    """Parsed git integration settings from .ma.yaml.
+
+    The ``require_approval`` flag (Lobster-inspired approval gate) pauses
+    before executing side-effecting git operations (commit, branch, tag)
+    and writes an approval request to ``.multi-agent/approvals/``.
+    An external tool or the dashboard can approve/reject.
+    Default is False for backward compatibility.
+    """
 
     auto_commit: bool = False
     auto_branch: bool = False
     branch_prefix: str = "task/"
     commit_on: tuple[str, ...] = ("build", "approve")
     auto_tag: bool = False
+    require_approval: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> GitConfig:
@@ -53,6 +61,7 @@ class GitConfig:
             branch_prefix=prefix,
             commit_on=tuple(commit_on),
             auto_tag=bool(data.get("auto_tag", False)),
+            require_approval=bool(data.get("require_approval", False)),
         )
 
 
@@ -319,6 +328,70 @@ def run_tests(config: AutoTestConfig | None = None) -> AutoTestResult:
     )
 
 
+# ── Approval Gate (Lobster-inspired) ──────────────────────
+
+
+def _request_approval(action: str, details: str, *, task_id: str = "") -> bool:
+    """Request approval for a side-effecting operation.
+
+    Writes a JSON request to ``.multi-agent/approvals/<action>-<ts>.json``
+    and waits up to 30 seconds for ``.approved`` or ``.rejected`` suffix.
+    Returns True if approved (or if timeout expires — fail-open for now).
+
+    This is the Lobster-style approval gate: side effects halt execution
+    until explicitly approved.
+    """
+    from multi_agent.config import workspace_dir
+    import time as _time
+
+    approval_dir = workspace_dir() / "approvals"
+    approval_dir.mkdir(parents=True, exist_ok=True)
+
+    ts = int(_time.time())
+    safe_action = re.sub(r"[^a-zA-Z0-9._-]", "_", action)[:32]
+    req_path = approval_dir / f"{safe_action}-{ts}.json"
+    req_path.write_text(
+        __import__("json").dumps({
+            "action": action,
+            "details": details,
+            "task_id": task_id,
+            "requested_at": _time.time(),
+            "status": "pending",
+        }, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    _log.info("Approval requested for %s: %s (file: %s)", action, details, req_path.name)
+
+    # Poll for approval/rejection (max 30s, 1s intervals)
+    approved_path = req_path.with_suffix(".approved")
+    rejected_path = req_path.with_suffix(".rejected")
+    deadline = _time.time() + 30
+    while _time.time() < deadline:
+        if approved_path.exists():
+            _log.info("Approval granted for %s", action)
+            return True
+        if rejected_path.exists():
+            _log.warning("Approval rejected for %s", action)
+            return False
+        _time.sleep(1.0)
+
+    # Timeout — fail-open with warning
+    _log.warning(
+        "Approval timeout for %s (30s). Proceeding (fail-open). "
+        "Set require_approval: false to disable this gate.",
+        action,
+    )
+    return True
+
+
+def _check_approval(cfg: GitConfig, action: str, details: str, task_id: str = "") -> bool:
+    """Check approval gate if configured. Returns True to proceed."""
+    if not cfg.require_approval:
+        return True
+    return _request_approval(action, details, task_id=task_id)
+
+
 # ── Hook Handlers ─────────────────────────────────────────
 
 
@@ -340,6 +413,10 @@ def _make_on_build_submit(cfg: GitConfig) -> Callable[..., None]:
                 files = builder_out.get("changed_files", [])
 
         msg = f"build({builder_id}): {summary}" if summary else f"build({builder_id}): task {task_id}"
+        # Approval gate (Lobster-inspired)
+        if not _check_approval(cfg, "git_commit_build", msg, task_id):
+            _log.info("Auto-commit after build skipped (approval rejected)")
+            return
         auto_commit(msg, task_id=task_id, changed=files or None)
     return _on_build_submit
 
@@ -359,11 +436,14 @@ def _make_on_decide_approve(cfg: GitConfig) -> Callable[..., None]:
         task_id = state.get("task_id", "unknown") if isinstance(state, dict) else "unknown"
 
         if cfg.auto_commit and "approve" in cfg.commit_on:
-            auto_commit(f"approved: task {task_id}", task_id=task_id)
+            # Approval gate (Lobster-inspired)
+            if _check_approval(cfg, "git_commit_approve", f"approved: task {task_id}", task_id):
+                auto_commit(f"approved: task {task_id}", task_id=task_id)
 
         if cfg.auto_tag:
             tag = f"task/{task_id}"
-            create_tag(tag, f"Task {task_id} approved")
+            if _check_approval(cfg, "git_tag", f"tag {tag}", task_id):
+                create_tag(tag, f"Task {task_id} approved")
     return _on_decide_approve
 
 
@@ -376,6 +456,11 @@ def _make_on_plan_start(cfg: GitConfig) -> Callable[..., None]:
 
         task_id = state.get("task_id", "") if isinstance(state, dict) else ""
         if not task_id:
+            return
+
+        # Approval gate (Lobster-inspired)
+        if not _check_approval(cfg, "git_branch", f"create branch {cfg.branch_prefix}{task_id}", task_id):
+            _log.info("Auto-branch skipped (approval rejected)")
             return
 
         try:

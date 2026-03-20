@@ -2,6 +2,12 @@
 
 Extracted from graph.py (A3 refactor) to reduce module size and improve separation
 of concerns. All public names are re-exported from graph.py for backward compatibility.
+
+OpenClaw-inspired improvement: GraphStats and EventHooks are now per-task via
+TaskContext, eliminating cross-task contamination from global singletons.
+The module-level ``graph_stats`` and ``graph_hooks`` remain as backward-compatible
+proxies that delegate to the active TaskContext (or a default instance when no
+context is active).
 """
 
 from __future__ import annotations
@@ -10,6 +16,7 @@ import contextlib
 import json
 import logging
 import re
+import threading
 import time
 from collections.abc import Callable, Mapping
 from typing import Any
@@ -133,7 +140,68 @@ class GraphStats:
             p.write_text(json.dumps(self.summary(), indent=2), encoding="utf-8")
 
 
-graph_stats = GraphStats()
+# ── Task Context ────────────────────────────────────────
+# Per-task isolation for stats and hooks (OpenClaw Gateway-inspired).
+# Eliminates cross-task contamination when multiple tasks run concurrently.
+
+
+class TaskContext:
+    """Per-task execution context holding isolated stats and hooks.
+
+    Usage::
+
+        ctx = TaskContext(task_id="my-task")
+        with ctx:
+            # graph_stats / graph_hooks now delegate to this context
+            graph_stats.record("plan", 100, True)
+            assert graph_stats is not ctx.stats  # proxy, not identity
+    """
+
+    _current: threading.local = threading.local()
+
+    def __init__(self, task_id: str = "") -> None:
+        self.task_id = task_id
+        self.stats = GraphStats()
+        self.hooks = EventHooks()
+
+    def __enter__(self) -> "TaskContext":
+        self._prev = getattr(self._current, "ctx", None)
+        self._current.ctx = self
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self._current.ctx = self._prev
+
+    @classmethod
+    def active(cls) -> "TaskContext | None":
+        """Return the active TaskContext, or None if not inside a ``with`` block."""
+        return getattr(cls._current, "ctx", None)
+
+
+# Default fallback instances (used when no TaskContext is active).
+_default_stats = GraphStats()
+_default_hooks: EventHooks  # forward-declared, assigned after EventHooks class
+
+
+class _StatsProxy:
+    """Proxy that delegates to the active TaskContext's stats, or the default."""
+
+    def __getattr__(self, name: str) -> Any:
+        ctx = TaskContext.active()
+        target = ctx.stats if ctx else _default_stats
+        return getattr(target, name)
+
+
+class _HooksProxy:
+    """Proxy that delegates to the active TaskContext's hooks, or the default."""
+
+    def __getattr__(self, name: str) -> Any:
+        ctx = TaskContext.active()
+        target = ctx.hooks if ctx else _default_hooks
+        return getattr(target, name)
+
+
+graph_stats: Any = _StatsProxy()
 
 
 # ── Timing ───────────────────────────────────────────────
@@ -163,7 +231,60 @@ def log_timing(task_id: str, node: str, start: float, end: float) -> None:
 # ── Conversation Trimming ────────────────────────────────
 
 
-def trim_conversation(conversation: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _flush_decisions_to_memory(
+    removed: list[dict[str, Any]], task_id: str,
+) -> None:
+    """Flush key decisions from trimmed conversation entries into semantic memory.
+
+    Inspired by OpenClaw's pre-compaction memory flush: before discarding
+    conversation entries, extract critical decision context (reviewer feedback,
+    retry reasons, approval/reject rationale) so Smart Retry can leverage them
+    in future attempts.
+    """
+    decision_entries = [
+        e for e in removed
+        if e.get("action") in (
+            "retry", "request_changes", "approved", "escalated",
+            "rubber_stamp_warning", "precondition_failed",
+        )
+    ]
+    if not decision_entries:
+        return
+
+    parts: list[str] = []
+    for e in decision_entries:
+        action = e.get("action", "")
+        feedback = e.get("feedback", "")
+        details = e.get("details", "")
+        reason = e.get("reason", "")
+        text = feedback or details or reason
+        if text:
+            parts.append(f"[{action}] {str(text)[:300]}")
+
+    if not parts:
+        return
+
+    content = f"Task {task_id} decision history (auto-flushed before trim):\n" + "\n".join(parts)
+
+    try:
+        from multi_agent.semantic_memory import store
+        store(
+            content,
+            category="context",
+            source="trim_flush",
+            task_id=task_id,
+            tags=["decision_history", "auto_flush"],
+        )
+        _log.info("Flushed %d decision entries to semantic memory before trim", len(parts))
+    except Exception as exc:
+        _log.debug("Failed to flush decisions to memory: %s", exc)
+
+
+def trim_conversation(
+    conversation: list[dict[str, Any]],
+    *,
+    task_id: str = "",
+) -> list[dict[str, Any]]:
     """Keep conversation within MAX_CONVERSATION_SIZE, preserving first and last entries.
 
     NOTE: This trims a *local copy* used for prompt rendering, dashboard display,
@@ -174,12 +295,21 @@ def trim_conversation(conversation: list[dict[str, Any]]) -> list[dict[str, Any]
 
     Includes a lightweight summary of removed entries so downstream AI agents
     retain context awareness (literature: JetBrains context management research).
+
+    OpenClaw-inspired: before discarding entries, flushes key decisions to
+    semantic memory so retry prompts can recover lost context.
     """
     if len(conversation) <= MAX_CONVERSATION_SIZE:
         return conversation
     keep_head = 5
     keep_tail = MAX_CONVERSATION_SIZE - keep_head - 1
     removed = conversation[keep_head:-keep_tail]
+
+    # Pre-trim flush: persist key decisions to semantic memory (OpenClaw pattern)
+    if task_id:
+        with contextlib.suppress(Exception):
+            _flush_decisions_to_memory(removed, task_id)
+
     # Build lightweight summary of what was removed.
     # Keep ALL retry/request_changes feedback (not just 3) to prevent
     # critical bug context loss (RepairAgent ICSE 2025, Redis 2026).
@@ -290,8 +420,11 @@ class EventHooks:
                 _hook_logger.warning("Hook error handler error: %s", e)
 
 
-# Global hooks instance — importable by consumers
-graph_hooks = EventHooks()
+# Complete forward declaration now that EventHooks is defined
+_default_hooks = EventHooks()
+
+# Backward-compatible proxy — delegates to active TaskContext or default
+graph_hooks: Any = _HooksProxy()
 
 
 def register_hook(event: str, callback: Callable[..., Any]) -> None:
