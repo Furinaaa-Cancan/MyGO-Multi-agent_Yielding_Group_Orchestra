@@ -337,7 +337,7 @@ def setup_swebench_instance(task: dict[str, Any]) -> Path:
         if setup_files:
             _log.info("Installing repo dependencies (pip install -e .) ...")
             r = subprocess.run(
-                ["pip", "install", "-e", "."],
+                [sys.executable, "-m", "pip", "install", "-e", "."],
                 capture_output=True, text=True, timeout=300,
                 cwd=str(workspace),
             )
@@ -411,7 +411,7 @@ def evaluate_swebench_instance(
 
     try:
         r = subprocess.run(
-            ["python", "-m", "pytest", *test_files, "-v", "--tb=short", "-x"],
+            [sys.executable, "-m", "pytest", *test_files, "-v", "--tb=short", "-x"],
             capture_output=True, text=True, timeout=300,
             cwd=str(workspace),
             env={**os.environ, "PYTHONPATH": str(workspace)},
