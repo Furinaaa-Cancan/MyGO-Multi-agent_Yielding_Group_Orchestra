@@ -145,7 +145,7 @@ class OutboxPoller:
                  min_interval: float = 0.5, max_interval: float = 5.0,
                  watch_dir: Path | None = None,
                  notify_port: int = DEFAULT_NOTIFY_PORT,
-                 enable_notify: bool = True):
+                 enable_notify: bool = False):
         self.poll_interval = poll_interval
         self.min_interval = min_interval
         self.max_interval = max_interval
