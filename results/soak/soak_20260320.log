@@ -1,0 +1,65 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.0, pytest-9.0.2, pluggy-1.6.0 -- /Volumes/Seagate/Multi-Agent/.venv/bin/python
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Volumes/Seagate/Multi-Agent
+configfile: pyproject.toml
+plugins: anyio-4.12.1, asyncio-1.3.0, langsmith-0.7.9, cov-7.0.0, hypothesis-6.151.9
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 53 items
+
+tests/test_overnight_soak.py::TestSchemaPropertyBased::test_task_roundtrip PASSED [  1%]
+tests/test_overnight_soak.py::TestSchemaPropertyBased::test_builder_output_roundtrip PASSED [  3%]
+tests/test_overnight_soak.py::TestSchemaPropertyBased::test_reviewer_output_roundtrip PASSED [  5%]
+tests/test_overnight_soak.py::TestSchemaPropertyBased::test_subtask_roundtrip PASSED [  7%]
+tests/test_overnight_soak.py::TestSchemaPropertyBased::test_make_event_always_valid PASSED [  9%]
+tests/test_overnight_soak.py::TestAdaptiveDecomposeStress::test_estimate_never_crashes PASSED [ 11%]
+tests/test_overnight_soak.py::TestAdaptiveDecomposeStress::test_classify_always_returns_valid_level PASSED [ 13%]
+tests/test_overnight_soak.py::TestAdaptiveDecomposeStress::test_select_strategy_never_crashes PASSED [ 15%]
+tests/test_overnight_soak.py::TestAdaptiveDecomposeStress::test_determinism_over_1000_runs PASSED [ 16%]
+tests/test_overnight_soak.py::TestAdaptiveDecomposeStress::test_score_is_finite PASSED [ 18%]
+tests/test_overnight_soak.py::TestRepairCycleStress::test_diagnose_never_crashes_on_any_feedback PASSED [ 20%]
+tests/test_overnight_soak.py::TestRepairCycleStress::test_diagnose_with_verification_never_crashes PASSED [ 22%]
+tests/test_overnight_soak.py::TestRepairCycleStress::test_diagnose_polymorphic_inputs PASSED [ 24%]
+tests/test_overnight_soak.py::TestRepairCycleStress::test_full_repair_pipeline_never_crashes PASSED [ 26%]
+tests/test_overnight_soak.py::TestVerifierParsingStress::test_parse_pytest_counts_never_crashes PASSED [ 28%]
+tests/test_overnight_soak.py::TestVerifierParsingStress::test_parse_lint_error_count_never_crashes PASSED [ 30%]
+tests/test_overnight_soak.py::TestVerifierParsingStress::test_format_for_reviewer_never_crashes PASSED [ 32%]
+tests/test_overnight_soak.py::TestVerifierParsingStress::test_known_pytest_formats PASSED [ 33%]
+tests/test_overnight_soak.py::TestSandboxStress::test_rapid_fire_1000_subprocesses PASSED [ 35%]
+tests/test_overnight_soak.py::TestSandboxStress::test_alternating_success_failure PASSED [ 37%]
+tests/test_overnight_soak.py::TestSandboxStress::test_large_output_handling PASSED [ 39%]
+tests/test_overnight_soak.py::TestSandboxStress::test_many_timeouts PASSED [ 41%]
+tests/test_overnight_soak.py::TestContextBridgeStress::test_1000_different_functions PASSED [ 43%]
+tests/test_overnight_soak.py::TestContextBridgeStress::test_deeply_nested_classes PASSED [ 45%]
+tests/test_overnight_soak.py::TestContextBridgeStress::test_syntax_error_file_is_skipped PASSED [ 47%]
+tests/test_overnight_soak.py::TestContextBridgeStress::test_empty_file PASSED [ 49%]
+tests/test_overnight_soak.py::TestContextBridgeStress::test_conformance_check_no_violations_stress PASSED [ 50%]
+tests/test_overnight_soak.py::TestBridgeExtractorsStress::test_js_100_exports PASSED [ 52%]
+tests/test_overnight_soak.py::TestBridgeExtractorsStress::test_go_100_exported_funcs PASSED [ 54%]
+tests/test_overnight_soak.py::TestBridgeExtractorsStress::test_rust_50_pub_fns PASSED [ 56%]
+tests/test_overnight_soak.py::TestBridgeExtractorsStress::test_java_many_methods PASSED [ 58%]
+tests/test_overnight_soak.py::TestBridgeExtractorsStress::test_js_extractor_never_crashes_on_any_input PASSED [ 60%]
+tests/test_overnight_soak.py::TestBridgeExtractorsStress::test_go_extractor_never_crashes_on_any_input PASSED [ 62%]
+tests/test_overnight_soak.py::TestRolePipelineExhaustive::test_all_combinations PASSED [ 64%]
+tests/test_overnight_soak.py::TestRolePipelineExhaustive::test_all_pipelines_have_valid_roles PASSED [ 66%]
+tests/test_overnight_soak.py::TestCostRouterExhaustive::test_score_agent_never_crashes PASSED [ 67%]
+tests/test_overnight_soak.py::TestCostRouterExhaustive::test_estimate_cost_all_pipelines PASSED [ 69%]
+tests/test_overnight_soak.py::TestDynamicPipelineStress::test_classify_never_crashes PASSED [ 71%]
+tests/test_overnight_soak.py::TestDynamicPipelineStress::test_select_pipeline_all_combos PASSED [ 73%]
+tests/test_overnight_soak.py::TestDynamicPipelineStress::test_enrich_large_batch PASSED [ 75%]
+tests/test_overnight_soak.py::TestMetaGraphStress::test_generate_sub_task_id_always_valid PASSED [ 77%]
+tests/test_overnight_soak.py::TestMetaGraphStress::test_1000_unique_ids PASSED [ 79%]
+tests/test_overnight_soak.py::TestMetaGraphStress::test_format_prior_context_large PASSED [ 81%]
+tests/test_overnight_soak.py::TestRouterStress::test_resolve_role_100_agents PASSED [ 83%]
+tests/test_overnight_soak.py::TestRouterStress::test_resolve_role_explicit_always_wins PASSED [ 84%]
+tests/test_overnight_soak.py::TestFinOpsStress::test_aggregate_10000_entries PASSED [ 86%]
+tests/test_overnight_soak.py::TestFinOpsStress::test_estimate_cost_never_negative PASSED [ 88%]
+tests/test_overnight_soak.py::TestMemoryStability::test_complexity_estimation_no_leak PASSED [ 90%]
+tests/test_overnight_soak.py::TestMemoryStability::test_diagnosis_no_leak PASSED [ 92%]
+tests/test_overnight_soak.py::TestDeterminism::test_complexity_features_deterministic PASSED [ 94%]
+tests/test_overnight_soak.py::TestDeterminism::test_classify_subtask_deterministic PASSED [ 96%]
+tests/test_overnight_soak.py::TestDeterminism::test_diagnose_deterministic PASSED [ 98%]
+tests/test_overnight_soak.py::TestSoakLoop::test_soak_continuous PASSED  [100%]
+
+======================= 53 passed in 21802.67s (6:03:22) =======================
