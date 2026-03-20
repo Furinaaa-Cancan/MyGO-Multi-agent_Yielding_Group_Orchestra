@@ -539,7 +539,7 @@ def build_node(state: WorkflowState) -> dict[str, Any]:
         if changed:
             from multi_agent.config import root_dir
             vr = run_verification(changed, root_dir())
-            if vr:
+            if vr and (vr.test_passed + vr.test_failed + vr.test_errors > 0 or vr.lint_errors > 0):
                 verification_context = format_verification_for_reviewer(vr)
                 _log.info("Verification: %d passed, %d failed, %d lint errors",
                           vr.test_passed, vr.test_failed, vr.lint_errors)

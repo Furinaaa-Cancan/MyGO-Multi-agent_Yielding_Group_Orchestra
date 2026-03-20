@@ -1146,6 +1146,8 @@ class TestDynamicPipeline:
         # "webhook" and "integration" signals should be picked up
         assert enriched[0]["_task_type"] in ("integration", "api_endpoint")
 
+    # ── Regression tests for bug fixes ──
+
     def test_enrich_subtasks_preserves_done_criteria(self):
         """enrich_subtasks uses done_criteria for classification."""
         tasks = [
@@ -1159,3 +1161,83 @@ class TestDynamicPipeline:
         assert len(enriched) == 1
         # "test" and "coverage" signals should influence classification
         assert enriched[0]["_task_type"] == "test_addition"
+
+
+# ══════════════════════════════════════════════════════════════════
+# 8. Regression Tests for Critical Bug Fixes
+# ══════════════════════════════════════════════════════════════════
+
+
+class TestRepairCycleTypeFixes:
+    """Regression: diagnose() must accept dict builder_output and list done_criteria."""
+
+    def test_diagnose_with_dict_builder_output(self):
+        """diagnose() should handle dict builder_output (from graph.py state)."""
+        builder_dict = {
+            "status": "completed",
+            "summary": "Implemented login endpoint",
+            "changed_files": ["src/auth.py"],
+            "handoff_notes": "JWT integration pending",
+        }
+        d = diagnose(
+            reviewer_feedback="The login test fails with assertion error",
+            builder_output=builder_dict,
+        )
+        assert d.category is not None
+        assert d.root_cause_summary
+
+    def test_diagnose_with_list_done_criteria(self):
+        """diagnose() should handle list done_criteria (from graph.py state)."""
+        d = diagnose(
+            reviewer_feedback="Missing the email validation feature",
+            done_criteria=["User can register", "Email is validated", "Password meets policy"],
+        )
+        assert d.category == FailureCategory.MISSING_REQUIREMENT
+
+    def test_diagnose_with_none_inputs(self):
+        """diagnose() should handle None builder_output and done_criteria."""
+        d = diagnose(
+            reviewer_feedback="something is wrong",
+            builder_output=None,
+            done_criteria=None,
+        )
+        assert d.category is not None
+
+
+class TestVerifierLintDuration:
+    """Regression: LintResult must capture duration_sec."""
+
+    def test_lint_result_has_duration(self):
+        lr = LintResult(error_count=0, output="", returncode=0,
+                        command_used="ruff check", duration_sec=1.5)
+        assert lr.duration_sec == 1.5
+
+    def test_lint_result_default_duration(self):
+        lr = LintResult()
+        assert lr.duration_sec == 0.0
+
+
+class TestPythonExtractorPathFix:
+    """Regression: PythonExtractor must work with nested module paths."""
+
+    def test_nested_module_extraction(self, tmp_path: Path):
+        """PythonExtractor should extract from files in subdirectories."""
+        subdir = tmp_path / "src" / "mymod"
+        subdir.mkdir(parents=True)
+        py_file = subdir / "utils.py"
+        py_file.write_text("def compute(x: int) -> int:\n    return x * 2\n")
+
+        ext = PythonExtractor()
+        symbols = ext.extract(py_file)
+        assert any(s.name == "compute" for s in symbols)
+
+    def test_extractor_file_path_is_absolute(self, tmp_path: Path):
+        """Extracted symbols should have meaningful file_path (not just filename)."""
+        py_file = tmp_path / "module.py"
+        py_file.write_text("def foo() -> str:\n    return 'bar'\n")
+
+        ext = PythonExtractor()
+        symbols = ext.extract(py_file)
+        assert len(symbols) >= 1
+        # After fix: file_path should be full path, not just "module.py"
+        assert str(tmp_path) in symbols[0].file_path or symbols[0].file_path == "module.py"

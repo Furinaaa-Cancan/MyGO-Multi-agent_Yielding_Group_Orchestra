@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from typing import Any
+
 from multi_agent.verifier import VerificationResult
 
 
@@ -162,8 +164,8 @@ _LINT_RE = re.compile(
 def diagnose(
     reviewer_feedback: str,
     verification_result: VerificationResult | None = None,
-    builder_output: str = "",
-    done_criteria: str = "",
+    builder_output: str | dict[str, Any] | None = None,
+    done_criteria: str | list[str] | None = None,
 ) -> DiagnosisReport:
     """Analyze what went wrong based on feedback and verification signals.
 
@@ -173,14 +175,23 @@ def diagnose(
     Args:
         reviewer_feedback: The reviewer's feedback text.
         verification_result: Results from automated verification, if available.
-        builder_output: Raw output from the builder agent.
-        done_criteria: The task's acceptance criteria for gap analysis.
+        builder_output: Raw output from the builder agent (str or dict).
+        done_criteria: The task's acceptance criteria (str or list).
 
     Returns:
         A :class:`DiagnosisReport` with classified failure and evidence.
     """
     evidence: list[str] = []
-    combined_text = f"{reviewer_feedback}\n{builder_output}"
+    # Normalize inputs: dict → extract summary/feedback; list → join
+    if isinstance(builder_output, dict):
+        builder_str = builder_output.get("summary", "") + "\n" + builder_output.get("handoff_notes", "")
+    else:
+        builder_str = str(builder_output or "")
+    if isinstance(done_criteria, list):
+        criteria_str = " ".join(str(c) for c in done_criteria)
+    else:
+        criteria_str = str(done_criteria or "")
+    combined_text = f"{reviewer_feedback}\n{builder_str}\n{criteria_str}"
 
     # ── Check verification results first (ground truth) ──
     if verification_result and not verification_result.tests_ok:

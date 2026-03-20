@@ -75,12 +75,22 @@ class PythonExtractor:
         return [".py"]
 
     def extract(self, file_path: Path) -> list[ExportedSymbol]:
-        """Delegate to ``extract_interface_contract`` for a single file."""
+        """Delegate to ``extract_interface_contract`` for a single file.
+
+        Uses the file's parent directory as codebase_root and the filename
+        as the relative path, ensuring correct resolution for any nesting.
+        """
+        # extract_interface_contract expects relative paths from codebase_root.
+        # Use parent as root and name as relative path so root/name = file_path.
         contract = extract_interface_contract(
             changed_files=[file_path.name],
             codebase_root=file_path.parent,
             subtask_id="",
         )
+        # Fix file_path references in exports: replace filename-only with full path
+        for sym in contract.exports:
+            if sym.file_path == file_path.name:
+                sym.file_path = str(file_path)
         return contract.exports
 
 

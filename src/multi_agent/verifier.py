@@ -50,6 +50,7 @@ class LintResult:
     output: str = ""
     returncode: int = 0
     command_used: str = ""
+    duration_sec: float = 0.0
 
 
 @dataclass
@@ -213,6 +214,7 @@ def run_lint(
         output=_truncate_output(combined_output, max_chars),
         returncode=result.returncode,
         command_used=command,
+        duration_sec=result.duration_sec,
     )
 
 
@@ -270,7 +272,7 @@ def run_verification(
 
     # ── Run lint ─────────────────────────────────────────
     lint_result = run_lint(changed_files, codebase_root, cfg)
-    total_duration += 0  # lint duration already counted internally
+    total_duration += lint_result.duration_sec
 
     # ── Parse coverage if present ────────────────────────
     coverage_pct = None
