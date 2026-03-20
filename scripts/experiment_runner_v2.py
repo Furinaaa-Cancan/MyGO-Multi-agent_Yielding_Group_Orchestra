@@ -40,6 +40,7 @@ SCRIPT_DIR = Path(__file__).parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 DEFAULT_TASKS_DIR = PROJECT_ROOT / "tasks" / "experiment"
 DEFAULT_RESULTS_DIR = PROJECT_ROOT / "results" / "experiment_v2"
+SWEBENCH_RESULTS_DIR = PROJECT_ROOT / "results" / "swebench_v1"
 
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
@@ -145,6 +146,37 @@ def _reset_artifacts() -> None:
             )
         except Exception:
             pass
+
+
+def _reset_swebench_instance(task: dict) -> None:
+    """Reset a SWE-bench instance to its base commit state."""
+    workspace = Path(task["task_dir"])
+    if not workspace.exists() or not (workspace / ".git").exists():
+        return
+    base_commit = task.get("base_commit", "")
+    if not base_commit:
+        return
+    try:
+        subprocess.run(
+            ["git", "checkout", "-f", base_commit],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(workspace), check=True,
+        )
+        subprocess.run(
+            ["git", "clean", "-fdx"],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(workspace), check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        print(f"  WARNING: reset failed for {task['task_id']}: {e}")
+
+
+def _reset_for_task(task: dict) -> None:
+    """Dispatch reset logic based on task source."""
+    if task.get("task_source") == "swebench":
+        _reset_swebench_instance(task)
+    else:
+        _reset_artifacts()
 
 
 def _extract_retry_count() -> int:
@@ -269,12 +301,26 @@ def discover_tasks(tasks_dir: Path) -> list[dict]:
         )
         tasks.append({
             "task_id": task_dir.name,
+            "task_source": "custom",
             "requirement": requirement,
             "has_ground_truth": has_gt,
             "task_dir": str(task_dir),
             "complexity": complexity.value,
             "complexity_score": round(features.complexity_score, 2),
         })
+    return tasks
+
+
+def discover_swebench_tasks(
+    split: str = "verified",
+    sample_size: int | None = None,
+    seed: int = 42,
+) -> list[dict]:
+    """Discover SWE-bench tasks via the adapter."""
+    from swebench_adapter import load_swebench_tasks
+
+    tasks = load_swebench_tasks(split=split, sample_size=sample_size, seed=seed)
+    print(f"Loaded {len(tasks)} SWE-bench tasks (split={split}, sample={sample_size})")
     return tasks
 
 
@@ -407,14 +453,25 @@ def run_single_experiment(
     # Clear ALL state — ensure each run is fully independent
     _clear_semantic_memory()
     _clear_workspace_state()
-    _reset_artifacts()
+    _reset_for_task(task)
     # Clear LangGraph checkpoint DB to prevent "task in progress" conflicts
     for db_file in (PROJECT_ROOT / ".multi-agent").glob("store.db*"):
         db_file.unlink(missing_ok=True)
 
+    # Build requirement text — SWE-bench tasks need working directory context
+    is_swebench = task.get("task_source") == "swebench"
+    requirement_text = task["requirement"]
+    if is_swebench:
+        workspace = Path(task["task_dir"])
+        requirement_text = (
+            f"[Working directory: {workspace.resolve()}]\n\n"
+            f"Fix the following issue in the repository:\n\n"
+            f"{requirement_text}"
+        )
+
     # Build command
     cmd = [
-        "python3", "-m", "multi_agent.cli", "go", task["requirement"],
+        "python3", "-m", "multi_agent.cli", "go", requirement_text,
         "--task-id", f"exp-{condition.replace('_', '-')}-{task_id}-r{run_idx}",
     ]
 
@@ -461,9 +518,13 @@ def run_single_experiment(
         sys.exit(1)
     duration_sec = time.time() - t0
 
-    # Collect metrics
+    # Collect metrics — dispatch test evaluation by task source
     task_dir = Path(task["task_dir"])
-    test_results = run_ground_truth_tests(task_dir)
+    if is_swebench:
+        from swebench_adapter import evaluate_swebench_instance
+        test_results = evaluate_swebench_instance(task, workspace=task_dir)
+    else:
+        test_results = run_ground_truth_tests(task_dir)
     token_usage = _extract_token_usage()
 
     # Estimate cost (Claude Opus 4.6 pricing: $15/M input, $75/M output)
@@ -493,9 +554,9 @@ def run_single_experiment(
         # Efficiency
         "wall_clock_sec": round(duration_sec, 1),
         "retry_count": _extract_retry_count(),
-        # Quality
-        "lint_violations": run_lint_check(),
-        "type_errors": run_type_check(),
+        # Quality (skip for swebench — lint/type checks are for MyGO source)
+        "lint_violations": -1 if is_swebench else run_lint_check(),
+        "type_errors": -1 if is_swebench else run_type_check(),
         # Decomposition
         "decompose_decision": _extract_decompose_decision(),
         "sub_task_count": _extract_sub_task_count() if decompose != "none" else 0,
@@ -751,10 +812,22 @@ def main():
     parser.add_argument("--analyze", action="store_true")
     parser.add_argument("--calibrate", action="store_true")
     parser.add_argument("--list", action="store_true")
+    # SWE-bench options
+    parser.add_argument("--swebench", action="store_true",
+                        help="Use SWE-bench tasks instead of custom tasks")
+    parser.add_argument("--swebench-sample", type=int, default=None,
+                        help="Number of SWE-bench tasks to sample")
+    parser.add_argument("--swebench-seed", type=int, default=42,
+                        help="Random seed for SWE-bench sampling")
+    parser.add_argument("--swebench-split", default="verified",
+                        choices=["verified", "lite"])
     args = parser.parse_args()
 
     if args.analyze:
-        analyze_results(args.results_dir)
+        results = args.results_dir
+        if args.swebench and results == DEFAULT_RESULTS_DIR:
+            results = SWEBENCH_RESULTS_DIR
+        analyze_results(results)
         return
 
     if args.calibrate:
@@ -762,9 +835,19 @@ def main():
         return
 
     # Discover tasks
-    tasks = discover_tasks(args.tasks_dir)
+    if args.swebench:
+        tasks = discover_swebench_tasks(
+            split=args.swebench_split,
+            sample_size=args.swebench_sample,
+            seed=args.swebench_seed,
+        )
+        # Override results dir for swebench
+        if args.results_dir == DEFAULT_RESULTS_DIR:
+            args.results_dir = SWEBENCH_RESULTS_DIR
+    else:
+        tasks = discover_tasks(args.tasks_dir)
     if not tasks:
-        print(f"No experiment tasks found in {args.tasks_dir}")
+        print(f"No experiment tasks found")
         sys.exit(1)
 
     if args.task:

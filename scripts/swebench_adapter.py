@@ -150,6 +150,7 @@ def load_swebench_tasks(
 
         task = {
             "task_id": _sanitize_instance_id(instance_id),
+            "task_source": "swebench",
             "instance_id": instance_id,
             "requirement": problem_statement,
             "has_ground_truth": bool(test_patch),
@@ -330,6 +331,21 @@ def setup_swebench_instance(task: dict[str, Any]) -> Path:
         _log.error("Git operation failed: %s\n%s", e, e.stderr)
         raise RuntimeError(f"Failed to set up instance {instance_id}: {e}") from e
 
+    # Try to install the repo as editable package
+    try:
+        setup_files = list(workspace.glob("setup.py")) + list(workspace.glob("setup.cfg")) + list(workspace.glob("pyproject.toml"))
+        if setup_files:
+            _log.info("Installing repo dependencies (pip install -e .) ...")
+            r = subprocess.run(
+                ["pip", "install", "-e", "."],
+                capture_output=True, text=True, timeout=300,
+                cwd=str(workspace),
+            )
+            if r.returncode != 0:
+                _log.warning("pip install -e . failed (non-blocking): %s", r.stderr[:200])
+    except Exception as e:
+        _log.warning("pip install -e . skipped: %s", e)
+
     # Write requirement.txt for experiment runner compatibility
     req_file = workspace / "requirement.txt"
     req_file.write_text(task["requirement"], encoding="utf-8")
@@ -482,6 +498,7 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--complexity", choices=["simple", "medium", "complex"])
     parser.add_argument("--setup", type=str, help="Setup a specific instance by ID")
+    parser.add_argument("--setup-all", action="store_true", help="Clone all sampled instances")
     parser.add_argument("--evaluate", type=str, help="Evaluate a specific instance")
     parser.add_argument("--export", type=Path, help="Export tasks to experiment directory")
     parser.add_argument("--stats", action="store_true", help="Show dataset statistics")
@@ -517,6 +534,19 @@ def main():
             )
         if len(tasks) > 50:
             print(f"  ... and {len(tasks) - 50} more")
+        return
+
+    if args.setup_all:
+        print(f"Setting up {len(tasks)} instances...")
+        ok, fail = 0, 0
+        for t in tasks:
+            try:
+                setup_swebench_instance(t)
+                ok += 1
+            except Exception as e:
+                print(f"  FAILED {t['instance_id']}: {e}")
+                fail += 1
+        print(f"Setup complete: {ok} ok, {fail} failed")
         return
 
     if args.setup:
