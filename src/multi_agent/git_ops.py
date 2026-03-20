@@ -9,6 +9,7 @@ Safety: never force-pushes, never commits on detached HEAD, checks for
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import shlex
@@ -351,7 +352,7 @@ def _request_approval(action: str, details: str, *, task_id: str = "") -> bool:
     safe_action = re.sub(r"[^a-zA-Z0-9._-]", "_", action)[:32]
     req_path = approval_dir / f"{safe_action}-{ts}.json"
     req_path.write_text(
-        __import__("json").dumps({
+        json.dumps({
             "action": action,
             "details": details,
             "task_id": task_id,

@@ -163,6 +163,7 @@ class TaskContext:
         self.task_id = task_id
         self.stats = GraphStats()
         self.hooks = EventHooks()
+        self._prev: TaskContext | None = None
 
     def __enter__(self) -> "TaskContext":
         self._prev = getattr(self._current, "ctx", None)

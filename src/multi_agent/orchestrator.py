@@ -155,6 +155,12 @@ def get_task_status(app: Any, task_id: str) -> TaskStatus:
 # ── Task Lifecycle ───────────────────────────────────────
 
 
+# Per-task context registry — maps task_id to its TaskContext so
+# resume_task can reuse the same context created by start_task.
+# Entries are cleaned up when the task reaches a terminal state.
+_active_contexts: dict[str, TaskContext] = {}
+
+
 class TaskStartError(RuntimeError):
     """Raised when a task fails to start."""
 
@@ -197,16 +203,10 @@ def start_task(
         ) from e
 
     status = get_task_status(app, task_id)
-    # Attach context for resume_task to reuse
-    status = TaskStatus(
-        state=status.state,
-        is_terminal=status.is_terminal,
-        waiting_role=status.waiting_role,
-        waiting_agent=status.waiting_agent,
-        final_status=status.final_status,
-        error=status.error,
-        values={**status.values, "_task_context": ctx},
-    )
+    # Store context reference alongside status for resume_task to reuse.
+    # Do NOT put ctx inside status.values — that dict gets serialized to
+    # SQLite checkpoint and TaskContext is not JSON-serializable.
+    _active_contexts[task_id] = ctx
     return status
 
 
@@ -230,7 +230,7 @@ def resume_task(
     from langgraph.types import Command
 
     config = make_config(task_id)
-    ctx = task_context or TaskContext(task_id=task_id)
+    ctx = task_context or _active_contexts.get(task_id) or TaskContext(task_id=task_id)
     try:
         with ctx:
             app.invoke(Command(resume=output_data), config)
@@ -240,4 +240,8 @@ def resume_task(
         _log.exception("Graph error during resume for task %s: %s", task_id, e)
         raise
 
-    return get_task_status(app, task_id)
+    status = get_task_status(app, task_id)
+    # Clean up context when task reaches terminal state
+    if status.is_terminal:
+        _active_contexts.pop(task_id, None)
+    return status

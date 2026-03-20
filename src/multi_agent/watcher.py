@@ -101,10 +101,13 @@ class NotifyServer:
             self._server = None
 
     def wait(self, timeout: float) -> bool:
-        """Wait for a notify event. Returns True if notified, False on timeout."""
-        result = self.event.wait(timeout=timeout)
+        """Wait for a notify event. Returns True if notified, False on timeout.
+
+        Clears the event before waiting to avoid missing notifications that
+        arrive between clear() and wait() (classic lost-wakeup race).
+        """
         self.event.clear()
-        return result
+        return self.event.wait(timeout=timeout)
 
 
 def notify_watcher(port: int = DEFAULT_NOTIFY_PORT) -> bool:
