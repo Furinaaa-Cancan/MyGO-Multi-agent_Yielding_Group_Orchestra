@@ -57,6 +57,9 @@ from multi_agent.workspace import (
     write_inbox,
 )
 
+from multi_agent.verifier import run_verification, format_for_reviewer as format_verification_for_reviewer
+from multi_agent.repair_cycle import diagnose, localize, build_repair_plan, format_repair_prompt
+
 _log = logging.getLogger(__name__)
 
 MAX_REQUEST_CHANGES = 3  # DDI research: effectiveness decays 60-80% after 2-3 attempts
@@ -154,6 +157,9 @@ class WorkflowState(TypedDict, total=False):
 
     # Accumulate
     conversation: Annotated[list[dict[str, Any]], add]
+
+    # Verification
+    verification_result: dict[str, Any] | None
 
     # Hierarchy
     parent_task_id: str | None
@@ -526,6 +532,18 @@ def build_node(state: WorkflowState) -> dict[str, Any]:
     # C3 + A4: Semantic validation + quality gate enforcement
     _enrich_builder_result(result, state)
 
+    # Optimization 1: Verifier — run tests/lint before review (AgentCoder/MAGIS pattern)
+    verification_context = ""
+    with contextlib.suppress(Exception):
+        changed = result.get("changed_files", [])
+        if changed:
+            from multi_agent.config import root_dir
+            vr = run_verification(changed, root_dir())
+            if vr:
+                verification_context = format_verification_for_reviewer(vr)
+                _log.info("Verification: %d passed, %d failed, %d lint errors",
+                          vr.test_passed, vr.test_failed, vr.lint_errors)
+
     skill_id = state["skill_id"]
     contract = load_contract(skill_id)
     task = Task(
@@ -543,6 +561,8 @@ def build_node(state: WorkflowState) -> dict[str, Any]:
         builder_output=result,
         builder_id=builder_id,
     )
+    if verification_context:
+        reviewer_prompt += "\n\n" + verification_context
 
     clear_outbox("reviewer")
     write_inbox("reviewer", reviewer_prompt)
@@ -829,6 +849,22 @@ def _decide_reject_retry(
         if gw:
             sections.append("### Quality Gate Warnings\n" + "\n".join(f"- {w}" for w in gw))
     sections.append(f"### Retry Status\nAttempt {retry_count}/{budget}")
+
+    # Optimization 3: Structured Repair Cycle (MapCoder/RepairAgent pattern)
+    with contextlib.suppress(Exception):
+        from multi_agent.repair_cycle import diagnose, localize, build_repair_plan, format_repair_prompt as fmt_repair
+        diagnosis = diagnose(
+            reviewer_feedback=raw_feedback,
+            verification_result=state.get("verification_result"),
+            builder_output=prev_builder,
+            done_criteria=state.get("done_criteria", []),
+        )
+        targets = localize(diagnosis, prev_builder.get("changed_files", []) if prev_builder else [], state.get("verification_result"))
+        plan = build_repair_plan(diagnosis, targets, retry_count, budget)
+        repair_prompt = fmt_repair(plan)
+        if repair_prompt:
+            sections.append(repair_prompt)
+
     feedback = "\n\n".join(sections)
 
     # DDI decay warning

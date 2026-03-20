@@ -10,6 +10,7 @@ the existing 4-node LangGraph workflow. The meta-graph coordinates:
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -221,6 +222,15 @@ def build_sub_task_state(
     from multi_agent.router import get_defaults as _get_defaults
     _defaults = _get_defaults()
     _orchestrator = str(_defaults.get("orchestrator", "")).strip() or "codex"
+
+    # Optimization 6: Dynamic pipeline selection per sub-task
+    pipeline_name = ""
+    with contextlib.suppress(Exception):
+        if hasattr(sub_task, 'pipeline_hint') and sub_task.pipeline_hint:
+            pipeline_name = sub_task.pipeline_hint
+    if pipeline_name:
+        # Store pipeline hint in input_payload for graph to use
+        pass  # Pipeline routing is handled by role_pipeline module
 
     return {
         "task_id": task_id,

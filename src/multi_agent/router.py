@@ -459,6 +459,42 @@ def check_agent_health(agents: list[AgentProfile]) -> list[dict[str, Any]]:
     return results
 
 
+def resolve_role(
+    agents: list[AgentProfile],
+    contract: SkillContract,
+    role_name: str,
+    *,
+    explicit: str | None = None,
+    exclude: list[str] | None = None,
+    capability: str | None = None,
+) -> str:
+    """Generalized role resolution for configurable pipelines.
+
+    Extends resolve_builder/resolve_reviewer pattern to arbitrary role names.
+    Used by role_pipeline.py for dynamic pipeline roles (architect, verifier).
+    """
+    cap = capability or role_name
+    if explicit:
+        return explicit
+
+    defaults = get_defaults()
+    default_val = defaults.get(role_name)
+    if default_val:
+        return str(default_val)
+
+    candidates = _eligible(agents, contract, [cap], exclude=exclude or [])
+    if candidates:
+        return candidates[0].id
+
+    # Fallback to any available agent
+    available = [a for a in agents if a.id not in (exclude or [])]
+    if available:
+        _log.warning("No agent with '%s' capability for role '%s', falling back to '%s'",
+                     cap, role_name, available[0].id)
+        return available[0].id
+    raise ValueError(f"No agent available for role '{role_name}'")
+
+
 # Legacy API kept for test compatibility
 def eligible_agents(
     agents: list[AgentProfile],

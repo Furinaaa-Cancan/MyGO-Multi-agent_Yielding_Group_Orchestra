@@ -369,6 +369,7 @@ def select_strategy(
     codebase_root: Path | None = None,
     enable_bridge: bool = False,
     force_level: ComplexityLevel | None = None,
+    budget_remaining: float | None = None,
 ) -> DecomposeStrategy:
     """Select decomposition strategy based on requirement analysis.
 
@@ -415,6 +416,18 @@ def select_strategy(
             max_subtasks=6,
             enable_bridge=enable_bridge,
             confidence=confidence,
+            features=features.to_dict(),
+        )
+
+    # Optimization 4: Budget-aware decomposition adjustment
+    if budget_remaining is not None and budget_remaining < 2.0 and strategy.kind == StrategyKind.DEEP_DECOMPOSE:
+        _log.info("Budget low ($%.2f remaining), downgrading DEEP→SHALLOW", budget_remaining)
+        strategy = DecomposeStrategy(
+            kind=StrategyKind.SHALLOW_DECOMPOSE,
+            level=level,
+            max_subtasks=3,
+            enable_bridge=enable_bridge,
+            confidence=confidence * 0.8,
             features=features.to_dict(),
         )
 

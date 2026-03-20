@@ -234,6 +234,7 @@ class SubTask(BaseModel):
     estimated_minutes: int = 30
     acceptance_criteria: list[str] = Field(default_factory=list)
     parent_task_id: str | None = None
+    pipeline_hint: str = ""  # pipeline name hint from dynamic classification
 
 
 class DecomposeResult(BaseModel):
@@ -310,6 +311,18 @@ class ConversationEvent(BaseModel):
     node: str | None = None
     elapsed: int | None = None
     reviewer_id: str | None = None
+
+
+class VerificationSummary(BaseModel):
+    """Summary of automated verification results injected into review context."""
+    model_config = ConfigDict(extra="ignore")
+    test_passed: int = 0
+    test_failed: int = 0
+    test_errors: int = 0
+    lint_errors: int = 0
+    coverage_pct: float | None = None
+    all_passed: bool = False
+    output_snippet: str = ""
 
 
 def make_event(role: str, *, action: str | None = None, **kwargs: Any) -> dict[str, Any]:
