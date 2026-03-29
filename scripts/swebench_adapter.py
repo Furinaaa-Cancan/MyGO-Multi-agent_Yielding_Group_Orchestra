@@ -362,25 +362,194 @@ def setup_swebench_instance(task: dict[str, Any]) -> Path:
 # ── Evaluation ───────────────────────────────────────────
 
 
+def _collect_agent_patch(workspace: Path) -> str:
+    """Collect the agent's code changes as a unified diff (git diff)."""
+    try:
+        r = subprocess.run(
+            ["git", "diff", "HEAD"],
+            capture_output=True, text=True, timeout=30,
+            cwd=str(workspace),
+        )
+        return r.stdout if r.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
 def evaluate_swebench_instance(
     task: dict[str, Any],
     workspace: Path | None = None,
 ) -> dict[str, Any]:
-    """Evaluate a SWE-bench instance by applying the test patch and running tests.
+    """Evaluate a SWE-bench instance using the official Docker-based harness.
+
+    Tries the swebench Docker harness first (reliable, standard evaluation).
+    Falls back to local pytest if Docker is unavailable.
 
     Returns metrics dict compatible with experiment_runner_v2.
     """
     task_id = task["task_id"]
-    workspace = workspace or INSTANCES_DIR / task_id
+    instance_id = task["instance_id"]
+    workspace = (workspace or INSTANCES_DIR / task_id).resolve()
 
     if not workspace.exists():
         return {"total": 0, "passed": 0, "failed": 0, "error": "workspace not found"}
 
+    # Collect the agent's patch
+    model_patch = _collect_agent_patch(workspace)
+    if not model_patch.strip():
+        _log.warning("No code changes detected for %s", task_id)
+        return {"total": 0, "passed": 0, "failed": 0, "error": "no code changes"}
+
+    # Try Docker-based evaluation first
+    result = _evaluate_with_docker(instance_id, model_patch, task)
+    if result is not None:
+        return result
+
+    # Fallback: local pytest evaluation
+    _log.warning("Docker evaluation unavailable, falling back to local pytest for %s", task_id)
+    return _evaluate_local_pytest(task, workspace)
+
+
+def _evaluate_with_docker(
+    instance_id: str,
+    model_patch: str,
+    task: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Evaluate using the official swebench Docker harness.
+
+    Returns None if Docker is unavailable, otherwise returns metrics dict.
+    """
+    try:
+        # Check Docker is running
+        r = subprocess.run(
+            ["docker", "info"], capture_output=True, timeout=10,
+        )
+        if r.returncode != 0:
+            _log.info("Docker not available (docker info failed)")
+            return None
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+
+    # Write predictions file in SWE-bench format
+    predictions_dir = PROJECT_ROOT / ".multi-agent" / "swebench_predictions"
+    predictions_dir.mkdir(parents=True, exist_ok=True)
+    predictions_file = predictions_dir / f"{instance_id}.jsonl"
+
+    prediction = {
+        "instance_id": instance_id,
+        "model_name_or_path": "mygo-experiment",
+        "model_patch": model_patch,
+    }
+    predictions_file.write_text(
+        json.dumps(prediction, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+    # Run evaluation via swebench harness
+    try:
+        from swebench.harness.run_evaluation import main as run_evaluation_main
+        from swebench.harness.constants import SWEbenchInstance
+
+        # The harness outputs results to a directory
+        output_dir = PROJECT_ROOT / ".multi-agent" / "swebench_eval_output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        run_evaluation_main(
+            dataset_name="princeton-nlp/SWE-bench_Verified",
+            predictions_path=str(predictions_file),
+            run_id="mygo_eval",
+            max_workers=1,
+            timeout=600,
+        )
+
+        # Parse evaluation results
+        return _parse_swebench_eval_results(instance_id, output_dir)
+
+    except ImportError:
+        _log.info("swebench.harness not available, trying CLI fallback")
+    except Exception as e:
+        _log.warning("Docker evaluation failed: %s", e)
+
+    # CLI fallback: use swebench command directly
+    try:
+        result = subprocess.run(
+            [
+                sys.executable, "-m", "swebench.harness.run_evaluation",
+                "--dataset_name", "princeton-nlp/SWE-bench_Verified",
+                "--predictions_path", str(predictions_file),
+                "--run_id", "mygo_eval",
+                "--max_workers", "1",
+                "--timeout", "600",
+            ],
+            capture_output=True, text=True, timeout=900,
+        )
+        if result.returncode == 0:
+            output_dir = PROJECT_ROOT / ".multi-agent" / "swebench_eval_output"
+            return _parse_swebench_eval_results(instance_id, output_dir)
+        else:
+            _log.warning("swebench CLI failed: %s", result.stderr[:200])
+            return None
+    except Exception as e:
+        _log.warning("swebench CLI evaluation failed: %s", e)
+        return None
+
+
+def _parse_swebench_eval_results(
+    instance_id: str,
+    output_dir: Path,
+) -> dict[str, Any]:
+    """Parse SWE-bench evaluation output to extract pass/fail metrics."""
+    # SWE-bench writes results as JSON files
+    for report_file in output_dir.rglob("*.json"):
+        try:
+            report = json.loads(report_file.read_text(encoding="utf-8"))
+            # The report format varies; handle common patterns
+            if isinstance(report, dict):
+                resolved = report.get("resolved", [])
+                if instance_id in resolved:
+                    return {"total": 1, "passed": 1, "failed": 0, "resolve_rate": True}
+                # Check per-instance results
+                for inst_result in report.get("results", []):
+                    if inst_result.get("instance_id") == instance_id:
+                        passed = inst_result.get("resolved", False)
+                        return {
+                            "total": 1,
+                            "passed": 1 if passed else 0,
+                            "failed": 0 if passed else 1,
+                            "resolve_rate": passed,
+                        }
+        except (json.JSONDecodeError, KeyError):
+            continue
+
+    # Check for the standard report format: {instance_id: {"resolved": bool}}
+    for report_file in output_dir.rglob("*.jsonl"):
+        try:
+            for line in report_file.read_text(encoding="utf-8").strip().splitlines():
+                entry = json.loads(line)
+                if entry.get("instance_id") == instance_id:
+                    resolved = entry.get("resolved", False)
+                    return {
+                        "total": 1,
+                        "passed": 1 if resolved else 0,
+                        "failed": 0 if resolved else 1,
+                        "resolve_rate": resolved,
+                    }
+        except (json.JSONDecodeError, KeyError):
+            continue
+
+    _log.warning("No evaluation result found for %s", instance_id)
+    return {"total": 0, "passed": 0, "failed": 0, "error": "no eval result"}
+
+
+def _evaluate_local_pytest(
+    task: dict[str, Any],
+    workspace: Path,
+) -> dict[str, Any]:
+    """Fallback: evaluate using local pytest (less reliable than Docker)."""
+    workspace = workspace.resolve()  # Ensure absolute path
     test_patch = task.get("test_patch", "")
     if not test_patch:
         return {"total": 0, "passed": 0, "failed": 0, "error": "no test patch"}
 
-    # Apply test patch
     test_patch_file = workspace / "test_patch.diff"
     if not test_patch_file.exists():
         test_patch_file.write_text(test_patch, encoding="utf-8")
@@ -393,7 +562,6 @@ def evaluate_swebench_instance(
             cwd=str(workspace),
         )
         if check.returncode != 0:
-            # Patch not applied yet, apply it
             subprocess.run(
                 ["git", "apply", str(test_patch_file)],
                 capture_output=True, text=True, timeout=30,
@@ -403,10 +571,8 @@ def evaluate_swebench_instance(
         _log.warning("Failed to apply test patch: %s", e.stderr)
         return {"total": 0, "passed": 0, "failed": 0, "error": f"patch failed: {e.stderr}"}
 
-    # Run pytest on the test files mentioned in the patch
     test_files = _extract_test_files_from_patch(test_patch)
     if not test_files:
-        # Fallback: run all tests
         test_files = ["tests/"]
 
     try:

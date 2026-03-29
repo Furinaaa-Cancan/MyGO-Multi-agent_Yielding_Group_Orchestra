@@ -1,0 +1,8 @@
+failure_id,task_id,condition,run_idx,a_tests,b_tests,sub_task_count,primary_failure_mode,secondary_failure_mode,confidence,notes
+F001,task-api-orders,adaptive_bridge,2,8/8,0/17,3,,,,
+F002,task-api-products,adaptive_bridge,3,8/8,0/17,2,,,,
+F003,task-api-users,adaptive_bridge,2,8/8,0/17,3,,,,
+F004,task-api-users,adaptive_bridge,3,8/8,0/17,3,,,,
+F005,task-auth-oauth,adaptive_bridge,1,11/11,7/11,3,,,,
+F006,task-auth-session,adaptive_bridge,2,14/14,13/14,3,,,,
+F007,task-auth-session,adaptive_bridge,3,14/14,13/14,3,,,,

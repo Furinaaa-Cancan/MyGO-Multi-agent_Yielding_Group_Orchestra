@@ -44,56 +44,54 @@ SWEBENCH_RESULTS_DIR = PROJECT_ROOT / "results" / "swebench_v1"
 
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-# ── Experimental Conditions (Protocol v2 §3) ────────────
+# ── Experimental Conditions (Protocol v3 — Diagnostic Study) ────────────
+#
+# Simplified from 6 to 3+1 conditions for the diagnostic paper.
+# Key insight from v2 pilot: C1≡C2 (reviewer adds nothing), so we drop C2.
+# Focus: single vs decomposed, with bridge ablation.
 
 CONDITIONS = {
     "single": {
-        "label": "C1: Single",
-        "description": "Single agent (Claude CLI only, no reviewer)",
+        "label": "A: Single",
+        "description": "Single agent baseline (no decomposition, no reviewer)",
         "use_reviewer": False,
         "decompose": "none",      # none | fixed | adaptive
         "bridge": False,
     },
-    "multi": {
-        "label": "C2: Multi",
-        "description": "Multi-agent (builder + reviewer, strict mode)",
-        "use_reviewer": True,
-        "decompose": "none",
-        "bridge": False,
-    },
-    "fixed_decompose": {
-        "label": "C3: FixedDecomp",
-        "description": "Multi-agent + always decompose, no bridge",
+    "decompose": {
+        "label": "B: Decompose",
+        "description": "Always decompose into sub-tasks, no context bridge",
         "use_reviewer": True,
         "decompose": "fixed",
         "bridge": False,
     },
-    "fixed_bridge": {
-        "label": "C4: FixedDecomp+Bridge",
-        "description": "Multi-agent + always decompose + context bridge",
+    "decompose_bridge": {
+        "label": "C: Decompose+Bridge",
+        "description": "Always decompose + AST-based context bridge injection",
         "use_reviewer": True,
         "decompose": "fixed",
         "bridge": True,
     },
-    "adaptive": {
-        "label": "C5: Adaptive",
-        "description": "Multi-agent + adaptive decompose, no bridge",
-        "use_reviewer": True,
-        "decompose": "adaptive",
-        "bridge": False,
-    },
     "adaptive_bridge": {
-        "label": "C6: Adaptive+Bridge",
-        "description": "Multi-agent + adaptive decompose + context bridge",
+        "label": "D: Adaptive+Bridge",
+        "description": "Adaptive decomposition routing + context bridge (diagnostic)",
         "use_reviewer": True,
         "decompose": "adaptive",
         "bridge": True,
     },
 }
 
-RUNS_PER_CONDITION = 5
-PILOT_RUNS = 3
-TASK_TIMEOUT_SEC = 3600  # 1 hour max per task
+# Legacy condition aliases for backward compatibility with v2 results
+_LEGACY_CONDITIONS = {
+    "multi": "single",            # C2 ≡ C1 (proven in pilot)
+    "fixed_decompose": "decompose",
+    "fixed_bridge": "decompose_bridge",
+    "adaptive": "decompose",       # closest mapping
+}
+
+RUNS_PER_CONDITION = 3
+PILOT_RUNS = 1  # calibration uses 1 rep
+TASK_TIMEOUT_SEC = 1800  # 30 min max per task (was 60 min, reduced for SWE-bench)
 
 
 # ── Utility Functions ────────────────────────────────────
@@ -215,22 +213,40 @@ def _extract_sub_task_count() -> int:
     return 0
 
 
-def _extract_token_usage() -> dict[str, int]:
-    """Extract token usage from finops log for the most recent task."""
-    usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+def _clear_token_log() -> None:
+    """Clear the token usage log before each run to ensure per-run isolation."""
+    token_log = PROJECT_ROOT / ".multi-agent" / "logs" / "token-usage.jsonl"
+    if token_log.exists():
+        token_log.write_text("", encoding="utf-8")
+
+
+def _extract_token_usage() -> dict[str, int | float]:
+    """Extract token usage from finops log for the most recent task.
+
+    Reads ALL entries in the token-usage.jsonl log (cleared before each run)
+    and sums them. Supports both the new driver-level extraction (from Claude
+    --output-format json) and the legacy finops path.
+    """
+    usage: dict[str, int | float] = {
+        "input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
+        "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0,
+        "cost_usd": 0.0,
+    }
     token_log = PROJECT_ROOT / ".multi-agent" / "logs" / "token-usage.jsonl"
     if not token_log.exists():
         return usage
     try:
         lines = token_log.read_text(encoding="utf-8").strip().splitlines()
-        if not lines:
-            return usage
-        # Sum all entries (they're per-node within a task)
-        for line in lines[-20:]:  # last 20 entries should cover one task
+        for line in lines:
+            if not line.strip():
+                continue
             entry = json.loads(line)
             usage["input_tokens"] += entry.get("input_tokens", 0)
             usage["output_tokens"] += entry.get("output_tokens", 0)
             usage["total_tokens"] += entry.get("total_tokens", 0)
+            usage["cache_creation_input_tokens"] += entry.get("cache_creation_input_tokens", 0)
+            usage["cache_read_input_tokens"] += entry.get("cache_read_input_tokens", 0)
+            usage["cost_usd"] += entry.get("cost_usd", 0.0)
     except Exception:
         pass
     return usage
@@ -453,6 +469,7 @@ def run_single_experiment(
     # Clear ALL state — ensure each run is fully independent
     _clear_semantic_memory()
     _clear_workspace_state()
+    _clear_token_log()
     _reset_for_task(task)
     # Clear LangGraph checkpoint DB to prevent "task in progress" conflicts
     for db_file in (PROJECT_ROOT / ".multi-agent").glob("store.db*"):
@@ -527,11 +544,15 @@ def run_single_experiment(
         test_results = run_ground_truth_tests(task_dir)
     token_usage = _extract_token_usage()
 
-    # Estimate cost (Claude Opus 4.6 pricing: $15/M input, $75/M output)
-    cost_usd = (
-        token_usage["input_tokens"] * 15 / 1_000_000
-        + token_usage["output_tokens"] * 75 / 1_000_000
-    )
+    # Use actual cost from Claude CLI if available, otherwise estimate
+    # Default pricing: Sonnet 4.6 ($3/M input, $15/M output)
+    if token_usage.get("cost_usd", 0) > 0:
+        cost_usd = token_usage["cost_usd"]
+    else:
+        cost_usd = (
+            token_usage["input_tokens"] * 3 / 1_000_000
+            + token_usage["output_tokens"] * 15 / 1_000_000
+        )
 
     result["metrics"] = {
         # Primary
@@ -550,7 +571,9 @@ def run_single_experiment(
         "total_tokens": token_usage["total_tokens"],
         "input_tokens": token_usage["input_tokens"],
         "output_tokens": token_usage["output_tokens"],
-        "cost_usd": round(cost_usd, 4),
+        "cache_creation_input_tokens": token_usage.get("cache_creation_input_tokens", 0),
+        "cache_read_input_tokens": token_usage.get("cache_read_input_tokens", 0),
+        "cost_usd": round(cost_usd, 6),
         # Efficiency
         "wall_clock_sec": round(duration_sec, 1),
         "retry_count": _extract_retry_count(),
@@ -608,8 +631,7 @@ def analyze_results(results_dir: Path) -> None:
         return
 
     condition_order = [
-        "single", "multi", "fixed_decompose",
-        "fixed_bridge", "adaptive", "adaptive_bridge",
+        "single", "decompose", "decompose_bridge", "adaptive_bridge",
     ]
 
     # ── Summary Table ──
@@ -672,10 +694,10 @@ def analyze_results(results_dir: Path) -> None:
         from scipy.stats import mannwhitneyu, fisher_exact
 
         comparisons = [
-            ("adaptive_bridge", "fixed_decompose", "C6 vs C3 (primary)"),
-            ("adaptive_bridge", "multi", "C6 vs C2 (no degradation)"),
-            ("adaptive", "fixed_decompose", "C5 vs C3 (adaptive ablation)"),
-            ("fixed_bridge", "fixed_decompose", "C4 vs C3 (bridge ablation)"),
+            ("single", "decompose", "A vs B: Does decomposition hurt?"),
+            ("single", "decompose_bridge", "A vs C: Does decomp+bridge hurt?"),
+            ("decompose", "decompose_bridge", "B vs C: Does bridge mitigate?"),
+            ("single", "adaptive_bridge", "A vs D: Full system vs baseline"),
         ]
 
         for cond_a, cond_b, label in comparisons:
@@ -729,10 +751,71 @@ def analyze_results(results_dir: Path) -> None:
             )
             print(f"    {label}: δ={delta:+.3f} ({magnitude})")
 
+        # McNemar's test (paired binary outcomes — correct test for this design)
+        print(f"\n  McNemar's Test (paired by task × rep):")
+        for cond_a, cond_b, label in comparisons:
+            runs_a = all_results.get(cond_a, [])
+            runs_b = all_results.get(cond_b, [])
+            if not runs_a or not runs_b:
+                continue
+            # Build paired observations by (task_id, run_idx)
+            map_a = {(r["task_id"], r["run_idx"]): r["metrics"]["resolve_rate"] for r in runs_a}
+            map_b = {(r["task_id"], r["run_idx"]): r["metrics"]["resolve_rate"] for r in runs_b}
+            keys = sorted(set(map_a.keys()) & set(map_b.keys()))
+            if len(keys) < 5:
+                print(f"    {label}: insufficient paired data ({len(keys)} pairs)")
+                continue
+            # 2x2 contingency: (a_pass & b_pass, a_pass & b_fail, a_fail & b_pass, a_fail & b_fail)
+            b_count = 0  # a passes, b fails (discordant)
+            c_count = 0  # a fails, b passes (discordant)
+            for k in keys:
+                a_pass = bool(map_a[k])
+                b_pass = bool(map_b[k])
+                if a_pass and not b_pass:
+                    b_count += 1
+                elif not a_pass and b_pass:
+                    c_count += 1
+            n_discord = b_count + c_count
+            if n_discord == 0:
+                print(f"    {label}: no discordant pairs (identical outcomes)")
+                continue
+            # McNemar's exact test (binomial) for small samples
+            from scipy.stats import binom_test
+            try:
+                p = binom_test(b_count, n_discord, 0.5)
+            except Exception:
+                # Fallback: chi-squared approximation
+                chi2 = (b_count - c_count) ** 2 / n_discord
+                from scipy.stats import chi2 as chi2_dist
+                p = 1 - chi2_dist.cdf(chi2, df=1)
+            sig = "***" if p < 0.0167 else "**" if p < 0.05 else "ns"
+            print(f"    {label}: A↑B↓={b_count}, A↓B↑={c_count}, p={p:.4f} {sig}")
+
+        # Bootstrap CI for resolve rate difference
+        print(f"\n  Bootstrap 95% CI (resolve rate difference):")
+        import numpy as np
+        for cond_a, cond_b, label in comparisons:
+            runs_a = all_results.get(cond_a, [])
+            runs_b = all_results.get(cond_b, [])
+            if len(runs_a) < 3 or len(runs_b) < 3:
+                continue
+            scores_a = np.array([1 if r["metrics"]["resolve_rate"] else 0 for r in runs_a])
+            scores_b = np.array([1 if r["metrics"]["resolve_rate"] else 0 for r in runs_b])
+            rng = np.random.default_rng(42)
+            diffs = []
+            for _ in range(10000):
+                sa = rng.choice(scores_a, size=len(scores_a), replace=True)
+                sb = rng.choice(scores_b, size=len(scores_b), replace=True)
+                diffs.append(sa.mean() - sb.mean())
+            diffs = np.array(diffs)
+            ci_lo, ci_hi = np.percentile(diffs, [2.5, 97.5])
+            mean_diff = scores_a.mean() - scores_b.mean()
+            print(f"    {label}: Δ={mean_diff:+.3f} [{ci_lo:+.3f}, {ci_hi:+.3f}]")
+
     except ImportError:
         print("  (scipy not installed — pip install scipy)")
 
-    print(f"\n  Note: *** p<0.0083 (Holm-Bonferroni), ** p<0.05, ns = not significant")
+    print(f"\n  Note: *** p<0.0167 (Holm-Bonferroni for 3 comparisons), ** p<0.05, ns = not significant")
     print(f"{'='*90}")
 
 

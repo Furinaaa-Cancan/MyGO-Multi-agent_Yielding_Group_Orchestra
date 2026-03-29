@@ -315,6 +315,9 @@ def spawn_cli_agent(
             stdout_text = stdout_lines[0] if stdout_lines else ""
             stderr_text = stderr_lines[0] if stderr_lines else ""
 
+            # Extract token usage from Claude JSON output before outbox processing
+            _extract_and_log_token_usage(stdout_text, agent_id, role)
+
             _ensure_outbox_written(
                 outbox_file, stdout_text, stderr_text,
                 agent_id, proc.returncode,
@@ -717,6 +720,58 @@ def close_all_visible_terminals() -> None:
     _open_terminals.clear()
 
 
+def _extract_and_log_token_usage(stdout_text: str, agent_id: str, role: str) -> None:
+    """Extract token usage from Claude CLI JSON output and write to token-usage.jsonl.
+
+    When claude is invoked with --output-format json, stdout is a JSON object
+    containing 'usage' and 'total_cost_usd' fields. We extract these and append
+    to the finops log so experiment_runner can read them.
+    """
+    if not stdout_text.strip():
+        return
+    try:
+        data = json.loads(stdout_text)
+    except (json.JSONDecodeError, ValueError):
+        return
+    usage = data.get("usage", {})
+    model_usage = data.get("modelUsage", {})
+    if not usage and not model_usage:
+        return
+
+    input_tokens = usage.get("input_tokens", 0)
+    output_tokens = usage.get("output_tokens", 0)
+    cache_creation = usage.get("cache_creation_input_tokens", 0)
+    cache_read = usage.get("cache_read_input_tokens", 0)
+    total_cost = data.get("total_cost_usd", 0.0)
+
+    # total_tokens = input + output + cache (all billable tokens)
+    total_tokens = input_tokens + output_tokens + cache_creation + cache_read
+
+    entry = {
+        "agent_id": agent_id,
+        "role": role,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_creation_input_tokens": cache_creation,
+        "cache_read_input_tokens": cache_read,
+        "total_tokens": total_tokens,
+        "cost_usd": total_cost,
+        "model_usage": model_usage,
+    }
+
+    token_log = Path(os.environ.get("MULTI_AGENT_ROOT", ".")) / ".multi-agent" / "logs" / "token-usage.jsonl"
+    token_log.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with open(token_log, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        logger.info(
+            "[%s/%s] Token usage: in=%d out=%d cache_create=%d cache_read=%d total=%d cost=$%.4f",
+            agent_id, role, input_tokens, output_tokens, cache_creation, cache_read, total_tokens, total_cost,
+        )
+    except Exception as exc:
+        logger.warning("Failed to write token usage: %s", exc)
+
+
 def _ensure_outbox_written(
     outbox_file: str, stdout_text: str, stderr_text: str,
     agent_id: str, returncode: int | None,
@@ -791,17 +846,28 @@ def _try_extract_json(text: str, outbox_path: Path) -> None:
     """Try to find and extract a JSON object from CLI output text.
 
     Handles multiple output patterns from Claude CLI, Codex, and other agents:
-    1. Fenced code blocks: ```json ... ``` or ``` ... ```
-    2. Bare JSON objects in text
-    3. Pure JSON output
+    1. Claude --output-format json wrapper: extract 'result' field first
+    2. Fenced code blocks: ```json ... ``` or ``` ... ```
+    3. Bare JSON objects in text
+    4. Pure JSON output
     Picks the best candidate (prefers one with 'status' field).
     """
-    candidates = _extract_fenced_json(text)
+    # Handle Claude CLI --output-format json: unwrap the 'result' field
+    inner_text = text
+    try:
+        wrapper = json.loads(text.strip())
+        if isinstance(wrapper, dict) and "result" in wrapper and "usage" in wrapper:
+            # This is a Claude CLI JSON wrapper — the agent's actual output is in 'result'
+            inner_text = wrapper["result"]
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    candidates = _extract_fenced_json(inner_text)
     if not candidates:
-        candidates = _extract_bare_json(text)
+        candidates = _extract_bare_json(inner_text)
     if not candidates:
         try:
-            data = json.loads(text.strip())
+            data = json.loads(inner_text.strip())
             if isinstance(data, dict):
                 candidates.append(data)
         except json.JSONDecodeError:

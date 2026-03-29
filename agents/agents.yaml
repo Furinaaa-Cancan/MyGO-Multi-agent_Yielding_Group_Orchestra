@@ -29,7 +29,7 @@ agents:
     
   - id: claude
     driver: cli
-    command: "claude -p 'Read {task_file} and complete ALL tasks described in it. After finishing, save a JSON object to {outbox_file} with these REQUIRED fields: status (completed/blocked), summary (what you did), changed_files (list of absolute paths you modified). Example: {{\"status\":\"completed\",\"summary\":\"Added auth middleware\",\"changed_files\":[\"/src/auth.py\"]}}' --allowedTools Read,Edit,Bash,Write --output-format text"
+    command: "claude -p 'Read {task_file} and complete ALL tasks described in it. After finishing, save a JSON object to {outbox_file} with these REQUIRED fields: status (completed/blocked), summary (what you did), changed_files (list of absolute paths you modified). Example: {{\"status\":\"completed\",\"summary\":\"Added auth middleware\",\"changed_files\":[\"/src/auth.py\"]}}' --allowedTools Read,Edit,Bash,Write --output-format json"
     auth_check: "claude --version"
     login_hint: "Run: claude auth login"
     capabilities: [planning, implementation, testing, review, docs, security]
